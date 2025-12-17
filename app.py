@@ -1,23 +1,20 @@
 import os
-import requests
-from flask import Flask, session, abort, redirect, request, url_for
+import re
+import base64
+from flask import Flask, session, redirect, request, url_for
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from pip._vendor import cachecontrol
-import google.auth.transport.requests
+from bs4 import BeautifulSoup  # Notre nouvel outil de nettoyage
 
 app = Flask(__name__)
 
-# --- CONFIGURATION DE SÉCURITÉ ---
+# --- CONFIGURATION ---
 app.secret_key = os.environ.get("SECRET_KEY", "azerty_super_secret_key")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-
-# Cette ligne permet au HTTPS de fonctionner correctement sur Render
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
-# Configuration de la connexion Google
 client_secrets_config = {
     "web": {
         "client_id": GOOGLE_CLIENT_ID,
@@ -29,7 +26,6 @@ client_secrets_config = {
     }
 }
 
-# Les permissions qu'on demande au client (Profil + Lire les mails)
 SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -37,7 +33,6 @@ SCOPES = [
     "openid"
 ]
 
-# Petite fonction utilitaire pour gérer les clés
 def credentials_to_dict(credentials):
     return {
         'token': credentials.token,
@@ -48,145 +43,134 @@ def credentials_to_dict(credentials):
         'scopes': credentials.scopes
     }
 
-# --- PAGE D'ACCUEIL ---
+# --- FONCTION INTELLIGENTE : EXTRACTEUR DE PRIX ---
+def extract_money(text):
+    # On cherche des motifs comme "25.00€", "25 €", "25,00 EUR"
+    pattern = r"(\d+[.,]\d{2})\s?(€|EUR)"
+    match = re.search(pattern, text)
+    if match:
+        return match.group(0) # On retourne "25.00€"
+    return None
+
+# --- ACCUEIL ---
 @app.route("/")
 def index():
     if "credentials" in session:
-        # Si connecté : Affiche le Tableau de bord
         return f"""
-        <div style='font-family: 'Segoe UI', sans-serif; text-align: center; margin-top: 50px; color: #333;'>
-            <h1 style='font-size: 3em;'>⚖️ JUSTICIO</h1>
-            <p style='color: green; font-weight: bold; font-size: 1.2em;'>✅ Connecté en tant que : {session.get('name', 'Spy One')}</p>
+        <div style='font-family: sans-serif; text-align: center; margin-top: 50px; color: #333;'>
+            <h1>⚖️ JUSTICIO</h1>
+            <p style='color: green; font-weight: bold;'>✅ Connecté : {session.get('name', 'Spy One')}</p>
             <br>
-            <div style='background: #f0fdf4; padding: 30px; display: inline-block; border-radius: 15px; border: 1px solid #bbf7d0;'>
-                <p>Le robot est prêt à scanner : <strong>Uber, Amazon, SNCF, Temu...</strong></p>
+            <div style='background: #e8f5e9; padding: 30px; border-radius: 15px; display: inline-block; border: 2px solid #4caf50;'>
+                <h3>🕵️‍♂️ Prêt à trouver l'argent ?</h3>
+                <p>Le robot va analyser les montants et les retards.</p>
                 <a href='/scan'>
-                    <button style='padding: 20px 40px; font-size: 20px; background-color: #16a34a; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.1s;'>
-                        🕵️‍♂️ LANCER LE SCAN INTELLIGENT
+                    <button style='padding: 15px 30px; font-size: 20px; background-color: #2e7d32; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;'>
+                        LANCER L'ANALYSE FINANCIÈRE 💰
                     </button>
                 </a>
             </div>
             <br><br>
-            <a href='/logout' style='color: #666; text-decoration: none;'>Se déconnecter</a>
+            <a href='/logout' style='color: #888;'>Déconnexion</a>
         </div>
         """
     else:
-        # Si pas connecté : Affiche la page de vente
-        return """
-        <div style='font-family: 'Segoe UI', sans-serif; text-align: center; margin-top: 50px; color: #333;'>
-            <h1 style='font-size: 3em;'>⚖️ JUSTICIO</h1>
-            <h2 style='color: #555;'>Récupérez votre argent caché.</h2>
-            <p style='font-size: 1.1em;'>Connectez votre boîte mail. Nous trouvons vos remboursements oubliés.</p>
-            <br>
-            <a href='/login'>
-                <button style='padding: 15px 30px; font-size: 18px; background-color: #4285F4; color: white; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>
-                    👉 Se connecter avec Google
-                </button>
-            </a>
-        </div>
-        """
-
-# --- LE SCANNEUR (C'est ici que la magie opère) ---
-@app.route("/scan")
-def scan_emails():
-    # Vérification de sécurité
-    if "credentials" not in session:
         return redirect("/login")
 
-    # On récupère les clés de la session
+# --- LE SCANNEUR (VERSION COMPTABLE) ---
+@app.route("/scan")
+def scan_emails():
+    if "credentials" not in session: return redirect("/login")
     credentials = Credentials(**session["credentials"])
     
     try:
-        # On lance le service Gmail
         service = build('gmail', 'v1', credentials=credentials)
         
-        # REQUÊTE DE RECHERCHE (C'est ici qu'on filtre)
-        query = "subject:(Uber OR Amazon OR SNCF OR Facture OR Commande OR Temu)"
-        
-        # On demande les 15 derniers résultats
-        results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
+        # On cherche Temu, Uber, Amazon...
+        query = "subject:(Uber OR Amazon OR SNCF OR Temu OR Facture)"
+        results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
         messages = results.get('messages', [])
 
-        if not messages:
-            return "<h1>Aucun email trouvé !</h1><a href='/'>Retour</a>"
+        if not messages: return "<h1>Rien trouvé !</h1><a href='/'>Retour</a>"
 
-        # On construit l'affichage des résultats (HTML)
-        html_content = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #fafafa; min-height: 100vh;'>"
-        html_content += "<h1 style='text-align: center; color: #333;'>💰 Trésors Potentiels Trouvés</h1>"
+        html_content = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f9f9f9;'>"
+        html_content += "<h1 style='text-align: center;'>💸 Analyse des Dépenses</h1>"
         html_content += "<ul style='list-style: none; padding: 0;'>"
 
         for msg in messages:
-            # Pour chaque mail, on va chercher les détails (Snippet + Sujet)
-            msg_detail = service.users().messages().get(userId='me', id=msg['id'], format='metadata').execute()
+            # On récupère le mail COMPLET (pas juste l'aperçu)
+            full_msg = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
             
-            # On récupère l'aperçu du texte (le début du mail)
-            snippet = msg_detail.get('snippet', 'Pas d\'aperçu disponible')
+            headers = full_msg['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Sans objet')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Inconnu')
+
+            # DÉCODAGE DU CORPS DU MAIL (C'est technique !)
+            body_text = ""
+            if 'parts' in full_msg['payload']:
+                for part in full_msg['payload']['parts']:
+                    if part['mimeType'] == 'text/plain' or part['mimeType'] == 'text/html':
+                        data = part['body'].get('data')
+                        if data:
+                            decoded_bytes = base64.urlsafe_b64decode(data)
+                            body_text += decoded_bytes.decode('utf-8', errors='ignore')
+            elif 'body' in full_msg['payload']:
+                data = full_msg['payload']['body'].get('data')
+                if data:
+                    decoded_bytes = base64.urlsafe_b64decode(data)
+                    body_text = decoded_bytes.decode('utf-8', errors='ignore')
+
+            # NETTOYAGE (On enlève le HTML moche)
+            clean_text = BeautifulSoup(body_text, "html.parser").get_text()
             
-            # On cherche le Sujet et l'Expéditeur dans les en-têtes
-            headers = msg_detail['payload']['headers']
-            subject = next((header['value'] for header in headers if header['name'] == 'Subject'), 'Sans objet')
-            sender = next((header['value'] for header in headers if header['name'] == 'From'), 'Inconnu')
+            # ANALYSE (Le cerveau cherche l'argent)
+            price = extract_money(clean_text)
             
-            # On crée une jolie carte pour chaque mail
+            # DETECTION DE PROBLÈMES (Mots clés)
+            is_problem = "retard" in clean_text.lower() or "remboursement" in clean_text.lower()
+            
+            # --- AFFICHAGE DE LA CARTE ---
+            border_color = "#e53935" if is_problem else "#43a047" # Rouge si problème, Vert sinon
+            bg_color = "#ffebee" if is_problem else "#ffffff"
+            
             html_content += f"""
-            <li style='background: #fff; margin-bottom: 20px; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-left: 6px solid #28a745;'>
-                <div style='font-weight: bold; color: #2c3e50; font-size: 1.1em; margin-bottom: 5px;'>{subject}</div>
-                <div style='color: #7f8c8d; font-size: 0.9em; margin-bottom: 12px;'>De : {sender}</div>
-                <div style='background: #f1f8e9; padding: 12px; border-radius: 8px; font-style: italic; color: #558b2f; border: 1px dashed #c5e1a5;'>
-                    " {snippet}... "
+            <li style='background: {bg_color}; margin-bottom: 15px; padding: 20px; border-radius: 10px; border-left: 8px solid {border_color}; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+                <div style='font-weight: bold; font-size: 1.1em; color: #333;'>{subject}</div>
+                <div style='color: #666; font-size: 0.9em; margin-bottom: 10px;'>De : {sender}</div>
+                
+                <div style='display: flex; gap: 10px; margin-top: 10px;'>
+                    {'<span style="background: #c8e6c9; color: #2e7d32; padding: 5px 10px; border-radius: 20px; font-weight: bold;">💰 ' + price + '</span>' if price else ''}
+                    {'<span style="background: #ffcdd2; color: #c62828; padding: 5px 10px; border-radius: 20px; font-weight: bold;">⚠️ Retard détecté</span>' if is_problem else ''}
                 </div>
+                
+                <p style='color: #555; font-size: 0.85em; margin-top: 10px; font-style: italic;'>
+                    "{clean_text[:150]}..."
+                </p>
             </li>
             """
 
-        html_content += "</ul>"
-        html_content += "<div style='text-align: center; margin-top: 30px;'><a href='/'><button style='padding:12px 24px; background: #333; color: white; border: none; border-radius: 50px; cursor: pointer;'>Retour au menu</button></a></div></div>"
-        
+        html_content += "</ul><div style='text-align:center'><a href='/'><button style='padding:10px 20px;'>Retour</button></a></div></div>"
         return html_content
-
+        
     except Exception as e:
-        return f"<h1>Erreur technique lors du scan :</h1><p>{str(e)}</p><a href='/logout'>Se reconnecter</a>"
+        return f"Erreur : {e} <a href='/logout'>Reconnecter</a>"
 
-# --- ROUTES DE CONNEXION (Ne pas toucher) ---
+# --- LOGIN & CALLBACK ---
 @app.route("/login")
 def login():
-    # On gère l'URL de retour (Callback) pour Render
-    redirect_uri = url_for('callback', _external=True)
-    if "http://" in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://")
-
-    flow = Flow.from_client_config(
-        client_secrets_config,
-        scopes=SCOPES,
-        redirect_uri=redirect_uri
-    )
-    authorization_url, state = flow.authorization_url()
+    redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
+    flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
+    auth_url, state = flow.authorization_url()
     session["state"] = state
-    return redirect(authorization_url)
+    return redirect(auth_url)
 
 @app.route("/callback")
 def callback():
-    redirect_uri = url_for('callback', _external=True)
-    if "http://" in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://")
-
-    flow = Flow.from_client_config(
-        client_secrets_config,
-        scopes=SCOPES,
-        redirect_uri=redirect_uri
-    )
+    redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
+    flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
     flow.fetch_token(authorization_response=request.url)
-
-    # On enregistre les infos de connexion
-    credentials = flow.credentials
-    session["credentials"] = credentials_to_dict(credentials)
-    
-    # On essaie de récupérer le vrai nom de l'utilisateur (Bonus)
-    try:
-        session["name"] = "Spy One" # Valeur par défaut
-        # Ici on pourrait appeler l'API userinfo pour avoir le vrai nom
-    except:
-        pass
-    
+    session["credentials"] = credentials_to_dict(flow.credentials)
+    session["name"] = "Spy One"
     return redirect("/")
 
 @app.route("/logout")
