@@ -1,97 +1,130 @@
-from flask import Flask, render_template_string, jsonify
-import time
-import random
 import os
+import pathlib
+import requests
+from flask import Flask, session, abort, redirect, request
+from google.oauth2 import id_token
+from google_auth_oauthlib.flow import Flow
+from pip._vendor import cachecontrol
+import google.auth.transport.requests
 
 app = Flask(__name__)
 
-# --- LE CERVEAU ---
-def robot_scan_intelligence():
-    time.sleep(1.5) 
-    montant_trouve = random.choice([125.50, 340.00, 45.00, 600.00])
-    sources = [
-        {"nom": "SNCF (Retard)", "montant": montant_trouve * 0.4},
-        {"nom": "Air France (Annulation)", "montant": montant_trouve * 0.5},
-        {"nom": "Uber (Frais cachés)", "montant": montant_trouve * 0.1}
-    ]
-    commission = montant_trouve * 0.30
-    client_net = montant_trouve - commission
-    return {"total": montant_trouve, "commission": commission, "client": client_net, "details": sources}
+# 1. On récupère les clés secrètes qu'on a mises sur Render
+app.secret_key = os.environ.get("SECRET_KEY")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 
-# --- LE SITE WEB ---
+# Cette astuce permet de faire fonctionner le HTTPS sur Render
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1" 
+
+# Configuration pour Google
+client_secrets_config = {
+    "web": {
+        "client_id": GOOGLE_CLIENT_ID,
+        "project_id": "justicio-app",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_secret": GOOGLE_CLIENT_SECRET
+    }
+}
+
 @app.route("/")
-def home():
-    html_code = """
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>JUSTICIO</title>
-        <style>
-            body { font-family: 'Segoe UI', sans-serif; background-color: #050505; color: white; text-align: center; padding: 20px; }
-            h1 { font-size: 3rem; margin: 0; color: #4CAF50; letter-spacing: -2px; }
-            .tagline { color: #888; text-transform: uppercase; letter-spacing: 3px; font-size: 0.8rem; margin-bottom: 40px; }
-            .btn-main { background-color: white; color: black; padding: 15px 40px; font-size: 18px; border-radius: 50px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; width: 100%; max-width: 300px; box-shadow: 0 0 20px rgba(255,255,255,0.1); }
-            .btn-main:hover { transform: scale(1.05); background-color: #eee; }
-            .card { background: #111; padding: 30px; margin: 0 auto; border-radius: 20px; max-width: 400px; border: 1px solid #333; }
-            .hidden { display: none; }
-            .amount { float: right; color: #4CAF50; font-weight: bold; }
-            .big-number { font-size: 3.5rem; color: #4CAF50; font-weight: bold; margin: 20px 0; }
-        </style>
-    </head>
-    <body>
-        <div id="screen1">
-            <h1>JUSTICIO</h1>
-            <div class="tagline">Service de Récupération</div>
-            <div class="card">
-                <p>Scanner votre historique maintenant.</p>
-                <br>
-                <button class="btn-main" onclick="lancerScan()">LANCER LE SCAN</button>
-            </div>
+def index():
+    # Si l'utilisateur est déjà connecté, on lui montre ses infos
+    if "google_id" in session:
+        return f"""
+        <div style='font-family: sans-serif; text-align: center; margin-top: 50px;'>
+            <h1>⚖️ JUSTICIO</h1>
+            <p style='color: green;'>Connecté en tant que : {session['name']}</p>
+            <p>Email : {session.get('email')}</p>
+            <br>
+            <button style='padding: 15px 30px; font-size: 18px; background-color: #28a745; color: white; border: none; border-radius: 5px;'>
+                🔍 LANCER L'ANALYSE DES EMAILS
+            </button>
+            <br><br>
+            <a href='/logout'>Se déconnecter</a>
         </div>
-
-        <div id="screen2" class="hidden">
-            <h1>RÉSULTAT</h1>
-            <div class="card">
-                <div id="loading" style="color:#888">Connexion aux serveurs...</div>
-                <div id="results" class="hidden">
-                    <div class="big-number" id="totalDisplay">0 €</div>
-                    <div id="detailsList" style="text-align:left; font-size:0.9rem; color:#ccc;"></div>
-                    <hr style="border-color: #333; margin: 20px 0;">
-                    <p>Votre part : <span id="clientDisplay" style="font-weight:bold; color:white;"></span></p>
-                    <button class="btn-main" style="background:#4CAF50; color:white;">RÉCUPÉRER L'ARGENT</button>
-                </div>
-            </div>
+        """
+    # Sinon, on affiche le bouton de connexion
+    else:
+        return """
+        <div style='font-family: sans-serif; text-align: center; margin-top: 50px;'>
+            <h1>⚖️ JUSTICIO</h1>
+            <h2>Récupérez votre argent caché.</h2>
+            <p>Connectez votre boîte mail pour scanner vos factures (Train, Avion, Uber, Amazon).</p>
+            <br>
+            <a href='/login'>
+                <button style='padding: 15px 30px; font-size: 18px; background-color: #4285F4; color: white; border: none; border-radius: 5px; cursor: pointer;'>
+                    👉 Se connecter avec Google
+                </button>
+            </a>
         </div>
+        """
 
-        <script>
-            function lancerScan() {
-                document.getElementById('screen1').classList.add('hidden');
-                document.getElementById('screen2').classList.remove('hidden');
-                fetch('/api/scan').then(r => r.json()).then(data => {
-                    setTimeout(() => {
-                        document.getElementById('loading').classList.add('hidden');
-                        document.getElementById('results').classList.remove('hidden');
-                        document.getElementById('totalDisplay').innerText = data.total.toFixed(2) + " €";
-                        document.getElementById('clientDisplay').innerText = data.client.toFixed(2) + " €";
-                        let html = "";
-                        data.details.forEach(i => html += `<p>${i.nom} <span class="amount">${i.montant.toFixed(2)}€</span></p>`);
-                        document.getElementById('detailsList').innerHTML = html;
-                    }, 1500);
-                });
-            }
-        </script>
-    </body>
-    </html>
-    """
-    return render_template_string(html_code)
+@app.route("/login")
+def login():
+    # On prépare la connexion avec Google
+    # IMPORTANT : On doit dire à Google où nous renvoyer (le callback)
+    # Sur Render, l'URL change, donc on la construit dynamiquement ou on la force
+    # Pour l'instant on tente de construire l'URL de callback
+    
+    redirect_uri = url_for('callback', _external=True)
+    # Petite correction pour s'assurer qu'on est en HTTPS (Render est en HTTPS)
+    if "http://" in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
 
-@app.route("/api/scan")
-def api_scan():
-    return jsonify(robot_scan_intelligence())
+    flow = Flow.from_client_config(
+        client_secrets_config,
+        scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "openid"],
+        redirect_uri=redirect_uri
+    )
+    
+    authorization_url, state = flow.authorization_url()
+    session["state"] = state
+    return redirect(authorization_url)
 
-if __name__ == '__main__':
-    # Configuration automatique pour le Cloud
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+@app.route("/callback")
+def callback():
+    # C'est ici que Google nous renvoie après la connexion
+    
+    redirect_uri = url_for('callback', _external=True)
+    if "http://" in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
+
+    flow = Flow.from_client_config(
+        client_secrets_config,
+        scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "openid"],
+        redirect_uri=redirect_uri
+    )
+    
+    flow.fetch_token(authorization_response=request.url)
+
+    credentials = flow.credentials
+    request_session = requests.session()
+    cached_session = cachecontrol.CacheControl(request_session)
+    token_request = google.auth.transport.requests.Request(session=cached_session)
+
+    id_info = id_token.verify_oauth2_token(
+        id_token=credentials._id_token,
+        request=token_request,
+        audience=GOOGLE_CLIENT_ID
+    )
+
+    # On sauvegarde les infos de l'utilisateur dans le "Cookie" (Session)
+    session["google_id"] = id_info.get("sub")
+    session["name"] = id_info.get("name")
+    session["email"] = id_info.get("email")
+    
+    return redirect("/")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+# Cette fonction sert juste à obtenir l'URL complète dans les autres fonctions
+from flask import url_for
+
+if __name__ == "__main__":
+    app.run(debug=True)
