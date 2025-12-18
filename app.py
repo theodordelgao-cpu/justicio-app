@@ -5,14 +5,18 @@ from flask import Flask, session, redirect, request, url_for
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from bs4 import BeautifulSoup  # L'outil de nettoyage
+from bs4 import BeautifulSoup
+from openai import OpenAI  # Le cerveau est là !
 
 app = Flask(__name__)
 
-# --- 1. CONFIGURATION ---
+# --- CONFIGURATION ---
 app.secret_key = os.environ.get("SECRET_KEY", "azerty_super_secret_key")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+# On récupère la clé OpenAI qu'on a mise sur Render
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 client_secrets_config = {
@@ -43,16 +47,52 @@ def credentials_to_dict(credentials):
         'scopes': credentials.scopes
     }
 
-# --- 2. FONCTION INTELLIGENTE (EXTRACTION ARGENT) ---
-def extract_money(text):
-    # Cherche des motifs comme "25.00€", "25 €", "25,00 EUR"
-    pattern = r"(\d+[.,]\d{2})\s?(€|EUR)"
-    match = re.search(pattern, text)
-    if match:
-        return match.group(0)
-    return None
+# --- FONCTION INTELLIGENTE : L'IA GPT ---
+def analyze_with_ai(text, subject, sender):
+    # Si pas de clé, on renvoie une erreur silencieuse
+    if not OPENAI_API_KEY:
+        return {"amount": "Erreur Clé", "status": "Clé OpenAI manquante", "color": "gray"}
 
-# --- 3. PAGE D'ACCUEIL ---
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    # Le Prompt (L'ordre qu'on donne au robot)
+    prompt = f"""
+    Agis comme un expert comptable. Analyse cet email de {sender} avec le sujet "{subject}".
+    Le contenu est : "{text[:500]}"...
+
+    Tu dois extraire 3 informations précises :
+    1. Le montant exact (ex: "25.50€") ou "0€" si aucun prix.
+    2. Le statut en 3 mots max (ex: "Livré", "Remboursement Validé", "Retard de livraison", "Commande confirmée").
+    3. Le niveau de risque : "DANGER" (si retard, problème, annulation) ou "SAFE" (si tout va bien).
+
+    Réponds UNIQUEMENT sous ce format strict :
+    MONTANT | STATUT | RISQUE
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", # Modèle rapide et pas cher
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50
+        )
+        result = response.choices[0].message.content.strip()
+        
+        # On découpe la réponse (Montant | Statut | Risque)
+        parts = result.split("|")
+        if len(parts) == 3:
+            return {
+                "amount": parts[0].strip(),
+                "status": parts[1].strip(),
+                "color": "red" if "DANGER" in parts[2] else "green"
+            }
+        else:
+            return {"amount": "?", "status": "Analyse incertaine", "color": "gray"}
+            
+    except Exception as e:
+        print(f"Erreur IA: {e}")
+        return {"amount": "Erreur", "status": "IA indisponible", "color": "gray"}
+
+# --- ROUTES ---
 @app.route("/")
 def index():
     if "credentials" in session:
@@ -61,12 +101,12 @@ def index():
             <h1>⚖️ JUSTICIO</h1>
             <p style='color: green; font-weight: bold;'>✅ Connecté : {session.get('name', 'Spy One')}</p>
             <br>
-            <div style='background: #e8f5e9; padding: 30px; border-radius: 15px; display: inline-block; border: 2px solid #4caf50;'>
-                <h3>🕵️‍♂️ Prêt à trouver l'argent ?</h3>
-                <p>Analyse propre (sans code bizarre).</p>
+            <div style='background: #e3f2fd; padding: 30px; border-radius: 15px; display: inline-block; border: 2px solid #2196f3;'>
+                <h3>🧠 IA CONNECTÉE</h3>
+                <p>Analyse par Intelligence Artificielle (GPT-4o)</p>
                 <a href='/scan'>
-                    <button style='padding: 15px 30px; font-size: 20px; background-color: #2e7d32; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;'>
-                        LANCER L'ANALYSE FINANCIÈRE 💰
+                    <button style='padding: 15px 30px; font-size: 20px; background-color: #1976d2; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;'>
+                        LANCER L'ANALYSE IA 🤖
                     </button>
                 </a>
             </div>
@@ -77,7 +117,6 @@ def index():
     else:
         return redirect("/login")
 
-# --- 4. LE SCANNEUR NETTOYÉ ---
 @app.route("/scan")
 def scan_emails():
     if "credentials" not in session: return redirect("/login")
@@ -86,84 +125,73 @@ def scan_emails():
     try:
         service = build('gmail', 'v1', credentials=credentials)
         
-        # On cherche Temu, Uber, Amazon...
+        # On cherche un peu de tout pour tester l'IA
         query = "subject:(Uber OR Amazon OR SNCF OR Temu OR Facture)"
-        results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=8).execute() # On limite à 8 pour économiser l'IA au début
         messages = results.get('messages', [])
 
         if not messages: return "<h1>Rien trouvé !</h1><a href='/'>Retour</a>"
 
-        html_content = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f9f9f9;'>"
-        html_content += "<h1 style='text-align: center;'>💸 Analyse des Dépenses (Nettoyée)</h1>"
+        html_content = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f6f8;'>"
+        html_content += "<h1 style='text-align: center;'>🤖 Rapport de l'Intelligence Artificielle</h1>"
         html_content += "<ul style='list-style: none; padding: 0;'>"
 
         for msg in messages:
-            # Récupération du mail complet
             full_msg = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
-            
             headers = full_msg['payload']['headers']
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Sans objet')
             sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Inconnu')
 
-            # Décodage du contenu
+            # Décodage
             body_text = ""
             if 'parts' in full_msg['payload']:
                 for part in full_msg['payload']['parts']:
                     if part['mimeType'] == 'text/plain' or part['mimeType'] == 'text/html':
                         data = part['body'].get('data')
                         if data:
-                            decoded_bytes = base64.urlsafe_b64decode(data)
-                            body_text += decoded_bytes.decode('utf-8', errors='ignore')
+                            body_text += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
             elif 'body' in full_msg['payload']:
                 data = full_msg['payload']['body'].get('data')
                 if data:
-                    decoded_bytes = base64.urlsafe_b64decode(data)
-                    body_text = decoded_bytes.decode('utf-8', errors='ignore')
+                    body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
 
-            # --- NETTOYAGE PUISSANT ---
+            # Nettoyage rapide
             soup = BeautifulSoup(body_text, "html.parser")
+            for script in soup(["script", "style"]): script.extract()
+            clean_text = " ".join(soup.get_text(separator=' ').split())
             
-            # 1. On vire les styles et scripts invisibles
-            for script in soup(["script", "style"]):
-                script.extract()
+            # --- APPEL À L'IA ---
+            # C'est ici qu'on paie l'IA pour réfléchir
+            analysis = analyze_with_ai(clean_text, subject, sender)
             
-            # 2. On récupère le texte avec des espaces
-            text = soup.get_text(separator=' ')
-            
-            # 3. On supprime les espaces multiples et les sauts de ligne inutiles
-            clean_text = " ".join(text.split())
-            
-            # --- ANALYSE ---
-            price = extract_money(clean_text)
-            is_problem = "retard" in clean_text.lower() or "remboursement" in clean_text.lower()
-            
-            # --- AFFICHAGE ---
-            border_color = "#e53935" if is_problem else "#43a047"
-            bg_color = "#ffebee" if is_problem else "#ffffff"
-            
+            # Couleurs dynamiques
+            border_color = "#d32f2f" if analysis['color'] == "red" else "#388e3c" # Rouge ou Vert
+            bg_color = "#ffebee" if analysis['color'] == "red" else "#e8f5e9"
+            badge_bg = "#ffcdd2" if analysis['color'] == "red" else "#c8e6c9"
+            badge_text = "#b71c1c" if analysis['color'] == "red" else "#1b5e20"
+
             html_content += f"""
-            <li style='background: {bg_color}; margin-bottom: 15px; padding: 20px; border-radius: 10px; border-left: 8px solid {border_color}; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
-                <div style='font-weight: bold; font-size: 1.1em; color: #333;'>{subject}</div>
-                <div style='color: #666; font-size: 0.9em; margin-bottom: 10px;'>De : {sender}</div>
+            <li style='background: {bg_color}; margin-bottom: 20px; padding: 20px; border-radius: 12px; border-left: 8px solid {border_color}; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                <div style='font-weight: bold; font-size: 1.2em; color: #333; margin-bottom: 5px;'>{subject}</div>
+                <div style='color: #666; font-size: 0.9em; margin-bottom: 15px;'>De : {sender}</div>
                 
-                <div style='display: flex; gap: 10px; margin-top: 10px;'>
-                    {'<span style="background: #c8e6c9; color: #2e7d32; padding: 5px 10px; border-radius: 20px; font-weight: bold;">💰 ' + price + '</span>' if price else ''}
-                    {'<span style="background: #ffcdd2; color: #c62828; padding: 5px 10px; border-radius: 20px; font-weight: bold;">⚠️ Retard détecté</span>' if is_problem else ''}
+                <div style='display: flex; gap: 15px; align-items: center;'>
+                    <span style="background: {badge_bg}; color: {badge_text}; padding: 8px 15px; border-radius: 25px; font-weight: bold; font-size: 1.1em;">
+                        💰 {analysis['amount']}
+                    </span>
+                    <span style="background: #fff; border: 1px solid {border_color}; color: {border_color}; padding: 8px 15px; border-radius: 25px; font-weight: bold;">
+                        📝 {analysis['status']}
+                    </span>
                 </div>
-                
-                <p style='color: #555; font-size: 0.85em; margin-top: 10px; font-style: italic; line-height: 1.4;'>
-                    "{clean_text[:200]}..."
-                </p>
             </li>
             """
 
-        html_content += "</ul><div style='text-align:center'><a href='/'><button style='padding:10px 20px;'>Retour</button></a></div></div>"
+        html_content += "</ul><div style='text-align:center'><a href='/'><button style='padding:12px 25px; background: #333; color: white; border: none; border-radius: 50px; cursor: pointer;'>Retour</button></a></div></div>"
         return html_content
         
     except Exception as e:
         return f"Erreur : {e} <a href='/logout'>Reconnecter</a>"
 
-# --- 5. ROUTES DE CONNEXION ---
 @app.route("/login")
 def login():
     redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
