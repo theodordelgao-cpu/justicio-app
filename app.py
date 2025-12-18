@@ -5,11 +5,11 @@ from flask import Flask, session, redirect, request, url_for
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from bs4 import BeautifulSoup  # Notre nouvel outil de nettoyage
+from bs4 import BeautifulSoup  # L'outil de nettoyage
 
 app = Flask(__name__)
 
-# --- CONFIGURATION ---
+# --- 1. CONFIGURATION ---
 app.secret_key = os.environ.get("SECRET_KEY", "azerty_super_secret_key")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
@@ -43,16 +43,16 @@ def credentials_to_dict(credentials):
         'scopes': credentials.scopes
     }
 
-# --- FONCTION INTELLIGENTE : EXTRACTEUR DE PRIX ---
+# --- 2. FONCTION INTELLIGENTE (EXTRACTION ARGENT) ---
 def extract_money(text):
-    # On cherche des motifs comme "25.00€", "25 €", "25,00 EUR"
+    # Cherche des motifs comme "25.00€", "25 €", "25,00 EUR"
     pattern = r"(\d+[.,]\d{2})\s?(€|EUR)"
     match = re.search(pattern, text)
     if match:
-        return match.group(0) # On retourne "25.00€"
+        return match.group(0)
     return None
 
-# --- ACCUEIL ---
+# --- 3. PAGE D'ACCUEIL ---
 @app.route("/")
 def index():
     if "credentials" in session:
@@ -63,7 +63,7 @@ def index():
             <br>
             <div style='background: #e8f5e9; padding: 30px; border-radius: 15px; display: inline-block; border: 2px solid #4caf50;'>
                 <h3>🕵️‍♂️ Prêt à trouver l'argent ?</h3>
-                <p>Le robot va analyser les montants et les retards.</p>
+                <p>Analyse propre (sans code bizarre).</p>
                 <a href='/scan'>
                     <button style='padding: 15px 30px; font-size: 20px; background-color: #2e7d32; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;'>
                         LANCER L'ANALYSE FINANCIÈRE 💰
@@ -77,7 +77,7 @@ def index():
     else:
         return redirect("/login")
 
-# --- LE SCANNEUR (VERSION COMPTABLE) ---
+# --- 4. LE SCANNEUR NETTOYÉ ---
 @app.route("/scan")
 def scan_emails():
     if "credentials" not in session: return redirect("/login")
@@ -94,18 +94,18 @@ def scan_emails():
         if not messages: return "<h1>Rien trouvé !</h1><a href='/'>Retour</a>"
 
         html_content = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f9f9f9;'>"
-        html_content += "<h1 style='text-align: center;'>💸 Analyse des Dépenses</h1>"
+        html_content += "<h1 style='text-align: center;'>💸 Analyse des Dépenses (Nettoyée)</h1>"
         html_content += "<ul style='list-style: none; padding: 0;'>"
 
         for msg in messages:
-            # On récupère le mail COMPLET (pas juste l'aperçu)
+            # Récupération du mail complet
             full_msg = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
             
             headers = full_msg['payload']['headers']
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Sans objet')
             sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Inconnu')
 
-            # DÉCODAGE DU CORPS DU MAIL (C'est technique !)
+            # Décodage du contenu
             body_text = ""
             if 'parts' in full_msg['payload']:
                 for part in full_msg['payload']['parts']:
@@ -120,17 +120,25 @@ def scan_emails():
                     decoded_bytes = base64.urlsafe_b64decode(data)
                     body_text = decoded_bytes.decode('utf-8', errors='ignore')
 
-            # NETTOYAGE (On enlève le HTML moche)
-            clean_text = BeautifulSoup(body_text, "html.parser").get_text()
+            # --- NETTOYAGE PUISSANT ---
+            soup = BeautifulSoup(body_text, "html.parser")
             
-            # ANALYSE (Le cerveau cherche l'argent)
+            # 1. On vire les styles et scripts invisibles
+            for script in soup(["script", "style"]):
+                script.extract()
+            
+            # 2. On récupère le texte avec des espaces
+            text = soup.get_text(separator=' ')
+            
+            # 3. On supprime les espaces multiples et les sauts de ligne inutiles
+            clean_text = " ".join(text.split())
+            
+            # --- ANALYSE ---
             price = extract_money(clean_text)
-            
-            # DETECTION DE PROBLÈMES (Mots clés)
             is_problem = "retard" in clean_text.lower() or "remboursement" in clean_text.lower()
             
-            # --- AFFICHAGE DE LA CARTE ---
-            border_color = "#e53935" if is_problem else "#43a047" # Rouge si problème, Vert sinon
+            # --- AFFICHAGE ---
+            border_color = "#e53935" if is_problem else "#43a047"
             bg_color = "#ffebee" if is_problem else "#ffffff"
             
             html_content += f"""
@@ -143,8 +151,8 @@ def scan_emails():
                     {'<span style="background: #ffcdd2; color: #c62828; padding: 5px 10px; border-radius: 20px; font-weight: bold;">⚠️ Retard détecté</span>' if is_problem else ''}
                 </div>
                 
-                <p style='color: #555; font-size: 0.85em; margin-top: 10px; font-style: italic;'>
-                    "{clean_text[:150]}..."
+                <p style='color: #555; font-size: 0.85em; margin-top: 10px; font-style: italic; line-height: 1.4;'>
+                    "{clean_text[:200]}..."
                 </p>
             </li>
             """
@@ -155,7 +163,7 @@ def scan_emails():
     except Exception as e:
         return f"Erreur : {e} <a href='/logout'>Reconnecter</a>"
 
-# --- LOGIN & CALLBACK ---
+# --- 5. ROUTES DE CONNEXION ---
 @app.route("/login")
 def login():
     redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
