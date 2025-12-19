@@ -152,7 +152,7 @@ def analyze_with_ai(text, subject, sender):
     Contenu : "{text[:300]}..."
     
     Règles :
-    1. Si livré (Delivered), Expédié, En route -> SAFE (Vert).
+    1. Si livré (Delivered), Expédié, En route, Avis -> SAFE (Vert).
     2. Si Retard, Perdu, Annulé, Remboursement, Problème -> DANGER (Rouge).
     
     Réponds UNIQUEMENT : MONTANT | STATUT | RISQUE
@@ -280,32 +280,4 @@ def auto_send(msg_id):
             <div class='card'>
                 <p><strong>Le Service Contentieux Justicio a pris le relais.</strong></p>
                 <p>La mise en demeure officielle a été envoyée à <br><strong>{sender_email}</strong>.</p>
-                <p class='meta'>Vous recevrez leur réponse directement par email.</p>
-            </div>
-            <br>
-            <a href='/scan'><button class='btn btn-primary'>📂 Retour aux dossiers</button></a>
-        </div>
-        """
-    except Exception as e: return f"Erreur: {e}"
-
-@app.route("/login")
-def login():
-    redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
-    flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
-    auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
-    session["state"] = state
-    return redirect(authorization_url)
-
-@app.route("/callback")
-def callback():
-    redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
-    flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
-    flow.fetch_token(authorization_response=request.url)
-    session["credentials"] = credentials_to_dict(flow.credentials)
-    session["name"] = "Spy One" 
-    return redirect("/")
-
-@app.route("/logout")
-def logout(): session.clear(); return redirect("/")
-
-if __name__ == "__main__": app.run(debug=True)
+                <p class='meta'>Vous recevrez leur réponse directement
