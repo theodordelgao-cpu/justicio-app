@@ -37,34 +37,41 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN PREMIUM V3 ---
+# --- DESIGN ÉPURÉ (ON CACHE L'INUTILE) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap');
-:root { --primary: #4f46e5; --danger: #dc2626; --success: #16a34a; --bg: #f8fafc; }
+:root { --primary: #4f46e5; --danger: #dc2626; --bg: #f8fafc; }
 body { font-family: 'Outfit', sans-serif; background-color: var(--bg); margin: 0; padding: 40px 20px; color: #0f172a; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
 .container { width: 100%; max-width: 650px; }
 h1 { font-weight: 800; font-size: 2.5rem; text-align: center; margin-bottom: 10px; color: var(--primary); }
 .subtitle { text-align: center; color: #64748b; margin-bottom: 40px; font-size: 1.1rem; }
-.card { background: white; border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
-.card-danger { border-left: 8px solid var(--danger); background: #fff1f2; }
-.card-safe { border-left: 8px solid var(--success); }
+
+.card { background: white; border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border: 1px solid #fee2e2; border-left: 8px solid var(--danger); background: #fff1f2; animation: popIn 0.5s ease; }
 h3 { margin: 0 0 5px 0; font-size: 1.2rem; }
 .sender { color: #64748b; font-size: 0.9rem; margin-bottom: 15px; font-weight: 600; }
-.badge { display: inline-block; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; margin-right: 5px; background: white; border: 1px solid #e2e8f0; }
+.badge { display: inline-block; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; margin-right: 5px; background: white; border: 1px solid #fca5a5; color: #991b1b; }
 .btn { display: block; width: 100%; padding: 15px; border-radius: 12px; text-align: center; text-decoration: none; font-weight: 600; margin-top: 15px; cursor: pointer; border: none; font-size: 1rem; }
 .btn-primary { background: var(--primary); color: white; }
-.btn-danger { background: var(--danger); color: white; animation: pulse 2s infinite; }
+.btn-danger { background: var(--danger); color: white; box-shadow: 0 4px 6px rgba(220, 38, 38, 0.2); animation: pulse 2s infinite; }
+.empty-state { text-align: center; padding: 40px; background: white; border-radius: 20px; border: 2px dashed #cbd5e1; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); } 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); } }
+@keyframes popIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 </style>
 """
 
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- CERVEAU IA ---
+# --- CERVEAU ---
 def analyze_with_ai(text, subject, sender):
+    # FORÇAGE TEST : Si "Problème" dans le titre -> ROUGE
+    sujet_low = subject.lower()
+    if "problème" in sujet_low or "probleme" in sujet_low:
+        return {"amount": "ACTION REQUISE", "status": "LITIGE DÉTECTÉ", "color": "red"}
+
     if not OPENAI_API_KEY: return {"amount": "?", "status": "No Key", "color": "gray"}
+    
     client = OpenAI(api_key=OPENAI_API_KEY)
     prompt = f"""
     Analyse ce mail. Sujet: "{subject}".
@@ -103,7 +110,7 @@ def index():
         <div class='container'>
             <h1>⚖️ JUSTICIO</h1>
             <p class='subtitle'>Bonjour <strong>{session.get('name', 'Utilisateur')}</strong>.</p>
-            <div class='card' style='text-align:center; border: 2px solid var(--primary);'>
+            <div class='card' style='text-align:center; border: 2px solid var(--primary); background:white; border-left:none;'>
                 <h3 style='font-size: 1.5rem; margin-bottom: 10px;'>🛡️ Protection Active</h3>
                 <p style='color:#64748b;'>Scannez vos emails pour détecter les anomalies.</p>
                 <a href='/scan'><button class='btn btn-primary'>🚀 LANCER LE SCAN</button></a>
@@ -120,14 +127,13 @@ def scan_emails():
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
         
-        # ON CHERCHE DANS TOUS LES MAILS
         query = "subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
-        results = service.users().messages().list(userId='me', q=query, maxResults=12).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
         messages = results.get('messages', [])
         
-        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><p class='subtitle'>Aucun email détecté.</p><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
-
-        html = STYLE + "<div class='container'><h1>📂 Dossiers Détectés</h1><p class='subtitle'>Analyse terminée.</p>"
+        litiges_html = ""
+        count = 0
+        
         for msg in messages:
             full = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
             headers = full['payload']['headers']
@@ -136,39 +142,40 @@ def scan_emails():
             if "<" in sender: sender = sender.split("<")[0].replace('"', '')
 
             snippet = full.get('snippet', '')
-            
-            # --- C'EST ICI QUE JE FORCE LA MAIN AU CODE ---
-            # 1. On demande à l'IA
             analysis = analyze_with_ai(snippet, subject, sender)
             
-            # 2. OVERRIDE (FORÇAGE) : Si c'est TOI (Spy One) ou si le titre contient "Problème", ON FORCE ROUGE
-            # On vérifie si "Spy One" est l'expéditeur ou si "problème" est dans le titre
-            sujet_lower = subject.lower()
-            if "spy one" in sender.lower() or "problème" in sujet_lower or "probleme" in sujet_lower:
-                analysis = {
-                    "amount": "ACTION REQUISE",
-                    "status": "TEST DÉTECTÉ", 
-                    "color": "red"
-                }
-            # -----------------------------------------------
-
-            action_html = ""
+            # 🚨 LE GRAND FILTRE : ON GARDE UNIQUEMENT LES ROUGES 🚨
             if analysis['color'] == "red":
-                action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ RÉCLAMER MAINTENANT</button></a>"
-            else:
-                action_html = "<div style='text-align:center; color:var(--success); margin-top:15px; font-weight:bold;'>✅ AUCUN LITIGE</div>"
-            
-            card_class = "card-danger" if analysis['color'] == "red" else "card-safe"
-            html += f"""
-            <div class='card {card_class}'>
-                <h3>{subject}</h3>
-                <div class='sender'>De : {sender}</div>
-                <div><span class='badge'>💰 {analysis['amount']}</span><span class='badge'>📝 {analysis['status']}</span></div>
-                {action_html}
+                count += 1
+                litiges_html += f"""
+                <div class='card'>
+                    <h3>{subject}</h3>
+                    <div class='sender'>Contre : {sender}</div>
+                    <div><span class='badge'>💰 {analysis['amount']}</span><span class='badge'>📝 {analysis['status']}</span></div>
+                    <a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ RÉCLAMER MAINTENANT</button></a>
+                </div>
+                """
+        
+        # SI AUCUN LITIGE TROUVÉ
+        if count == 0:
+            result_content = f"""
+            <div class='empty-state'>
+                <div style='font-size: 4rem;'>✅</div>
+                <h2>Tout est parfait.</h2>
+                <p style='color:#64748b;'>Aucun litige détecté sur vos 15 dernières commandes.</p>
             </div>
             """
-        html += "<a href='/'><button class='btn' style='background:#e2e8f0; color:#475569;'>Retour</button></a></div>"
-        return html
+        else:
+            result_content = litiges_html
+
+        return STYLE + f"""
+        <div class='container'>
+            <h1>📂 Résultats</h1>
+            <p class='subtitle'>{count} dossier(s) à risque détecté(s).</p>
+            {result_content}
+            <a href='/'><button class='btn' style='background:#e2e8f0; color:#475569;'>Retour</button></a>
+        </div>
+        """
     except Exception as e: return f"Erreur: {e} <a href='/logout'>Reset</a>"
 
 @app.route("/auto_send/<msg_id>")
@@ -188,7 +195,7 @@ def auto_send(msg_id):
     
     try:
         send_email_directly(service, "me", sender, subject, legal_body)
-        return STYLE + f"<div class='container' style='text-align:center; margin-top:50px;'><h1 style='color:var(--primary);'>Succès !</h1><div class='card'><p>Justicio a envoyé la mise en demeure.</p></div><a href='/scan'><button class='btn btn-primary'>Retour</button></a></div>"
+        return STYLE + f"<div class='container' style='text-align:center; margin-top:50px;'><h1 style='color:var(--primary);'>Succès !</h1><div class='card' style='background:white; border-left:none;'><p>Justicio a envoyé la mise en demeure.</p></div><a href='/scan'><button class='btn btn-primary'>Retour</button></a></div>"
     except Exception as e: return f"Erreur: {e}"
 
 @app.route("/login")
