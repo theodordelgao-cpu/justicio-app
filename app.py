@@ -47,7 +47,7 @@ def credentials_to_dict(credentials):
         'scopes': credentials.scopes
     }
 
-# --- 1. LE CERVEAU (ANALYSE STRICTE) ---
+# --- 1. LE CERVEAU ---
 def analyze_with_ai(text, subject, sender):
     if not OPENAI_API_KEY: return {"amount": "?", "status": "Pas de clé", "color": "gray"}
     client = OpenAI(api_key=OPENAI_API_KEY)
@@ -75,10 +75,10 @@ def analyze_with_ai(text, subject, sender):
     except:
         return {"amount": "Err", "status": "Erreur IA", "color": "gray"}
 
-# --- 2. LA PLUME "JUSTICIO PRO" (Le gros changement est ici) ---
+# --- 2. LA PLUME "AGENCE JURIDIQUE" ---
 def generate_agency_email(text, subject, sender, user_name):
     client = OpenAI(api_key=OPENAI_API_KEY)
-    case_number = random.randint(10000, 99999) # On invente un numéro de dossier pour faire pro
+    case_number = random.randint(10000, 99999) # Numéro de dossier fictif
     
     prompt = f"""
     Tu es le "SERVICE JURIDIQUE DE JUSTICIO".
@@ -109,9 +109,8 @@ def generate_agency_email(text, subject, sender, user_name):
     )
     return response.choices[0].message.content.replace("```", "").strip()
 
-# --- 3. L'ENVOI AUTOMATIQUE ---
+# --- 3. L'ENVOI ---
 def send_email_directly(service, user_email, to_email, subject, body):
-    # On ajoute un titre très officiel
     official_subject = f"MISE EN DEMEURE - DOSSIER JUSTICIO (Réf: {subject})"
     
     message = MIMEText(body)
@@ -136,7 +135,7 @@ def index():
             <br>
             <div style='background: #e3f2fd; padding: 30px; border-radius: 15px; display: inline-block; border: 2px solid #2196f3;'>
                 <h3>AGENCE DE RECOUVREMENT IA 🤖</h3>
-                <p>Nous intervenons à votre place.</p>
+                <p>Mode Test Activé : Boutons forcés.</p>
                 <a href='/scan'><button style='padding: 15px 30px; font-size: 20px; background-color: #0d47a1; color: white; border: none; border-radius: 8px; cursor: pointer;'>🚔 LANCER LA PROCÉDURE</button></a>
             </div>
             <br><br><a href='/logout'>Déconnexion</a>
@@ -168,9 +167,8 @@ def scan_emails():
             
             analysis = analyze_with_ai(snippet, subject, sender)
             
-            action_button = ""
-            if analysis['color'] == "red":
-                # Le bouton est ROUGE FONCÉ pour faire sérieux
+            # --- CHEAT CODE : ON FORCE LE BOUTON ROUGE ---
+            if True: # On force l'affichage du bouton pour tester
                 action_button = f"""
                 <div style='margin-top: 15px;'>
                     <a href='/auto_send/{msg['id']}' style='text-decoration: none;'>
@@ -181,7 +179,7 @@ def scan_emails():
                 </div>
                 """
             else:
-                action_button = "<div style='margin-top: 10px; color: green; font-style: italic;'>✅ Dossier sain</div>"
+                action_button = ""
 
             html += f"""
             <div style='background: white; margin-bottom: 20px; padding: 20px; border-radius: 10px; border-left: 5px solid {analysis['color']}; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
@@ -205,7 +203,7 @@ def auto_send(msg_id):
     credentials = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=credentials)
     
-    # Récupération infos
+    # Infos
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = msg['payload']['headers']
     subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
@@ -213,7 +211,7 @@ def auto_send(msg_id):
     if "<" in sender_email: sender_email = sender_email.split("<")[1].replace(">", "")
     snippet = msg.get('snippet', '')
     
-    # ICI : On appelle la fonction "AGENCY" et pas "User"
+    # Génération Agence
     legal_body = generate_agency_email(snippet, subject, sender_email, session.get('name', 'Client'))
     
     try:
@@ -224,7 +222,7 @@ def auto_send(msg_id):
             <div style='background: #e3f2fd; padding: 40px; max-width: 600px; margin: 0 auto; border-radius: 20px; border: 2px solid #0d47a1;'>
                 <h2>Justicio a pris le relais.</h2>
                 <p style='font-size: 1.2em;'>Une mise en demeure officielle a été envoyée à <strong>{sender_email}</strong>.</p>
-                <p>Nous agissons en tant que votre mandataire.</p>
+                <p>Signature : <em>Service Contentieux Justicio</em></p>
                 <br>
                 <a href='/scan'>
                     <button style='padding: 15px 30px; background-color: #333; color: white; border: none; font-size: 18px; cursor: pointer; border-radius: 50px;'>
@@ -237,7 +235,7 @@ def auto_send(msg_id):
     except Exception as e:
         return f"Erreur envoi : {e}"
 
-# --- AUTH SYSTEM (Identique) ---
+# --- AUTH ---
 @app.route("/login")
 def login():
     redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
