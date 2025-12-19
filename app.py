@@ -37,7 +37,7 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN V2 (Moderne & Propre) ---
+# --- DESIGN V2 (Celui qui est beau) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap');
@@ -46,12 +46,12 @@ body { font-family: 'Outfit', sans-serif; background: linear-gradient(135deg, #f
 .container { width: 100%; max-width: 600px; animation: slideUp 0.8s; }
 h1 { font-weight: 800; font-size: 2.5rem; text-align: center; background: linear-gradient(to right, #4f46e5, #ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 5px; }
 .card { background: rgba(255,255,255,0.95); border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border: 1px solid #fff; }
-.card-danger { border-left: 6px solid var(--danger); }
-.card-safe { border-left: 6px solid var(--success); }
+.card-danger { border-left: 8px solid var(--danger); background: #fff1f2; }
+.card-safe { border-left: 8px solid var(--success); }
 .btn { display: block; width: 100%; padding: 15px; border-radius: 12px; font-weight: 700; text-align: center; text-decoration: none; border: none; cursor: pointer; color: white; margin-top: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
 .btn-primary { background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%); }
 .btn-danger { background: linear-gradient(135deg, #e11d48 0%, #be123c 100%); }
-.badge { display: inline-block; padding: 5px 10px; border-radius: 10px; font-size: 0.8rem; margin-right: 5px; background: #f1f5f9; font-weight: 600; }
+.badge { display: inline-block; padding: 5px 10px; border-radius: 10px; font-size: 0.8rem; margin-right: 5px; background: #fff; border: 1px solid #e2e8f0; font-weight: 600; }
 @keyframes slideUp { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 """
@@ -59,19 +59,25 @@ h1 { font-weight: 800; font-size: 2.5rem; text-align: center; background: linear
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- CERVEAU IA (STRICT) ---
+# --- CERVEAU IA (AVEC SÉCURITÉ PYTHON) ---
 def analyze_with_ai(text, subject, sender):
+    # 1. RÈGLE FORCE BRUTE (Priorité absolue)
+    # Si le mot "Problème" est là, on met ROUGE direct, sans discuter avec l'IA.
+    sujet_lower = subject.lower()
+    if "problème" in sujet_lower or "réclamation" in sujet_lower or "vol" in sujet_lower:
+        return {"amount": "À vérifier", "status": "LITIGE DÉTECTÉ", "color": "red"}
+
+    # 2. Sinon, on demande à l'IA normalement
     if not OPENAI_API_KEY: return {"amount": "?", "status": "Pas de clé", "color": "gray"}
     client = OpenAI(api_key=OPENAI_API_KEY)
     
-    # PROMPT CORRIGÉ : Il force le ROUGE sur le mot "Problème"
     prompt = f"""
     Analyse ce mail : "{subject}" de "{sender}".
     Contenu : "{text[:300]}..."
     
-    RÈGLES ABSOLUES :
-    1. Si le sujet ou le texte contient "Problème", "Réclamation", "Jamais reçu", "Vol" -> C'est DANGER (Rouge).
-    2. Si le sujet dit "Bientôt", "Arrive", "En cours", "Livré" -> C'est SAFE (Vert).
+    Règles :
+    1. Si livré/expédié/en route -> SAFE (Vert).
+    2. Si Retard/Annulé/Remboursement -> DANGER (Rouge).
     
     Réponds UNIQUEMENT : MONTANT | STATUT | RISQUE
     """
@@ -79,7 +85,7 @@ def analyze_with_ai(text, subject, sender):
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=50)
         parts = response.choices[0].message.content.strip().split("|")
         if len(parts) == 3: return {"amount": parts[0].strip(), "status": parts[1].strip(), "color": "red" if "DANGER" in parts[2] else "green"}
-        return {"amount": "?", "status": "Inconnu", "color": "gray"}
+        return {"amount": "?", "status": "Analyse...", "color": "gray"}
     except: return {"amount": "Err", "status": "Erreur IA", "color": "gray"}
 
 def generate_agency_email(text, subject, sender, user_name):
@@ -104,10 +110,10 @@ def index():
         return STYLE + f"""
         <div class='container'>
             <h1>⚖️ JUSTICIO</h1>
-            <p style='text-align:center; color:#64748b;'>Bonjour <strong>{session.get('name', 'Utilisateur')}</strong></p>
+            <p style='text-align:center; color:#64748b;'>Compte : <strong>{session.get('name', 'Utilisateur')}</strong></p>
             <div class='card' style='text-align:center; border: 2px solid #4f46e5;'>
                 <h3>Scan de Recouvrement</h3>
-                <p>Détecter les litiges dans la boîte de réception.</p>
+                <p>Détecter les litiges (Boîte de réception uniquement)</p>
                 <a href='/scan'><button class='btn btn-primary'>🚀 LANCER LE SCAN</button></a>
             </div>
             <div style='text-align:center;'><a href='/logout' style='color:#94a3b8;'>Déconnexion</a></div>
@@ -122,11 +128,10 @@ def scan_emails():
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
         
-        # ICI : "label:INBOX" force à ne regarder que les messages REÇUS
-        # On exclut "label:SENT" implicitement
+        # CORRECTIF MAJEUR : "label:INBOX" est vital pour ignorer tes messages envoyés
         query = "label:INBOX subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
         
-        results = service.users().messages().list(userId='me', q=query, maxResults=12).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
         messages = results.get('messages', [])
         
         if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
@@ -137,20 +142,21 @@ def scan_emails():
             headers = full['payload']['headers']
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
             sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
-            # Nettoyage du nom sender
             if "<" in sender: sender = sender.split("<")[0].replace('"', '').strip()
 
             snippet = full.get('snippet', '')
             analysis = analyze_with_ai(snippet, subject, sender)
             
             action_html = ""
-            # LOGIQUE STRICTE : Bouton seulement si ROUGE
+            status_icon = "✅"
+            
             if analysis['color'] == "red":
-                action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ RÉCLAMER {analysis['amount']}</button></a>"
-                status_icon = "⚠️"
+                # Si c'est rouge, on affiche le bouton DANGER
+                status_icon = "🚨"
+                action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ ACTIVER PROTECTION JURIDIQUE</button></a>"
             else:
-                action_html = "<div style='text-align:center; color:#059669; margin-top:10px;'>✅ Commande conforme</div>"
-                status_icon = "✅"
+                # Si c'est vert, on affiche juste le texte
+                action_html = "<div style='text-align:center; color:#059669; margin-top:10px; font-weight:bold;'>✅ Commande conforme</div>"
             
             card_class = "card-danger" if analysis['color'] == "red" else "card-safe"
             html += f"""
@@ -189,7 +195,7 @@ def auto_send(msg_id):
                 <p><strong>Justicio a pris le relais.</strong></p>
                 <p>Mise en demeure envoyée à :<br><strong>{sender}</strong></p>
             </div>
-            <a href='/scan'><button class='btn btn-primary'>Retour aux dossiers</button></a>
+            <a href='/scan'><button class='btn btn-primary'>Retour</button></a>
         </div>
         """
     except Exception as e: return f"Erreur: {e}"
