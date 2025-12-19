@@ -37,125 +37,56 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN PREMIUM (CLAIRE & PRO) ---
+# --- DESIGN PREMIUM (V3 - Celui que tu aimes) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap');
-
-:root {
-    --primary: #4f46e5;
-    --danger: #dc2626;
-    --success: #16a34a;
-    --bg: #f8fafc;
-}
-
-body {
-    font-family: 'Outfit', sans-serif;
-    background-color: var(--bg);
-    margin: 0;
-    padding: 40px 20px;
-    color: #0f172a;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 100vh;
-}
-
-.container {
-    width: 100%;
-    max-width: 650px;
-}
-
-h1 {
-    font-weight: 800;
-    font-size: 2.5rem;
-    text-align: center;
-    margin-bottom: 10px;
-    color: var(--primary);
-    letter-spacing: -1px;
-}
-
-.subtitle {
-    text-align: center;
-    color: #64748b;
-    margin-bottom: 40px;
-    font-size: 1.1rem;
-}
-
-.card {
-    background: white;
-    border-radius: 20px;
-    padding: 25px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-    border: 1px solid #e2e8f0;
-    transition: transform 0.2s;
-}
-
-.card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-}
-
+:root { --primary: #4f46e5; --danger: #dc2626; --success: #16a34a; --bg: #f8fafc; }
+body { font-family: 'Outfit', sans-serif; background-color: var(--bg); margin: 0; padding: 40px 20px; color: #0f172a; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+.container { width: 100%; max-width: 650px; }
+h1 { font-weight: 800; font-size: 2.5rem; text-align: center; margin-bottom: 10px; color: var(--primary); letter-spacing: -1px; }
+.subtitle { text-align: center; color: #64748b; margin-bottom: 40px; font-size: 1.1rem; }
+.card { background: white; border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; transition: transform 0.2s; }
+.card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
 .card-danger { border-left: 6px solid var(--danger); background: #fef2f2; }
 .card-safe { border-left: 6px solid var(--success); }
-
 h3 { margin: 0 0 5px 0; font-size: 1.2rem; }
 .sender { color: #64748b; font-size: 0.9rem; margin-bottom: 15px; font-weight: 600; }
-
-.badge {
-    display: inline-block;
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    margin-right: 5px;
-    background: white;
-    border: 1px solid #e2e8f0;
-}
-
-.btn {
-    display: block;
-    width: 100%;
-    padding: 15px;
-    border-radius: 12px;
-    text-align: center;
-    text-decoration: none;
-    font-weight: 600;
-    margin-top: 15px;
-    cursor: pointer;
-    border: none;
-    font-size: 1rem;
-}
-
+.badge { display: inline-block; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; margin-right: 5px; background: white; border: 1px solid #e2e8f0; }
+.btn { display: block; width: 100%; padding: 15px; border-radius: 12px; text-align: center; text-decoration: none; font-weight: 600; margin-top: 15px; cursor: pointer; border: none; font-size: 1rem; }
 .btn-primary { background: var(--primary); color: white; }
 .btn-danger { background: var(--danger); color: white; box-shadow: 0 4px 6px rgba(220, 38, 38, 0.2); }
 .btn-danger:hover { background: #b91c1c; }
-
 </style>
 """
 
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- CERVEAU (AVEC FORÇAGE MANUEL) ---
+# --- CERVEAU (MODE FORCE BRUTE) ---
 def analyze_with_ai(text, subject, sender):
-    # 🚨 RÈGLE SUPRÊME : SI "PROBLÈME" EST DANS LE TITRE, C'EST ROUGE.
-    # On court-circuite l'IA pour être sûr que ton test marche.
-    sujet_clean = subject.lower()
-    if "problème" in sujet_clean or "probleme" in sujet_clean:
-        return {"amount": "À définir", "status": "LITIGE SIGNALÉ", "color": "red"}
+    # 🚨 LE BLOC MAGIQUE : FORÇAGE MANUEL
+    # On met tout en minuscule pour être sûr
+    sujet_low = subject.lower()
+    texte_low = text.lower()
+    
+    # LISTE DES MOTS QUI DÉCLENCHENT L'ALARME QUOI QU'IL ARRIVE
+    mots_interdits = ["problème", "probleme", "réclamation", "erreur", "jamais reçu", "volé", "remboursement"]
+    
+    for mot in mots_interdits:
+        if mot in sujet_low:
+            # Si un mot interdit est dans le TITRE, c'est ROUGE DIRECT.
+            return {"amount": "À RÉCUPÉRER", "status": "LITIGE DÉTECTÉ", "color": "red"}
 
+    # Si pas de mot clé évident, on demande à l'IA
     if not OPENAI_API_KEY: return {"amount": "?", "status": "No Key", "color": "gray"}
     
     client = OpenAI(api_key=OPENAI_API_KEY)
-    
-    # Prompt normal pour les autres cas
     prompt = f"""
-    Analyse ce mail. Sujet: "{subject}". Texte: "{text[:200]}".
+    Analyse ce mail. Sujet: "{subject}".
     Règles:
-    1. Si "Retard", "Vol", "Perdu", "Remboursement" -> DANGER (Rouge).
-    2. Si "Livré", "Expédié" -> SAFE (Vert).
+    1. Si retard, perte, vol, problème -> DANGER (Rouge).
+    2. Si livré, expédié, en route -> SAFE (Vert).
     Réponds: MONTANT | STATUT | RISQUE
     """
     try:
@@ -188,13 +119,11 @@ def index():
         <div class='container'>
             <h1>⚖️ JUSTICIO</h1>
             <p class='subtitle'>Bonjour <strong>{session.get('name', 'Utilisateur')}</strong>.</p>
-            
             <div class='card' style='text-align:center; border: 2px solid var(--primary);'>
                 <h3 style='font-size: 1.5rem; margin-bottom: 10px;'>🛡️ Protection Active</h3>
                 <p style='color:#64748b;'>Scannez vos emails pour détecter les anomalies.</p>
                 <a href='/scan'><button class='btn btn-primary'>🚀 LANCER LE SCAN</button></a>
             </div>
-            
             <div style='text-align:center; margin-top:30px;'><a href='/logout' style='color:#94a3b8; text-decoration:none;'>Déconnexion</a></div>
         </div>
         """
@@ -207,45 +136,38 @@ def scan_emails():
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
         
-        # FILTRE STRICT : Uniquement la boîte de réception
+        # ON SCANNE UNIQUEMENT LA BOITE DE RECEPTION
         query = "label:INBOX subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
         
         results = service.users().messages().list(userId='me', q=query, maxResults=12).execute()
         messages = results.get('messages', [])
         
-        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><p class='subtitle'>Aucun email détecté.</p><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
+        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
 
-        html = STYLE + "<div class='container'><h1>📂 Dossiers Détectés</h1><p class='subtitle'>Résultats de l'analyse.</p>"
+        html = STYLE + "<div class='container'><h1>📂 Dossiers Détectés</h1><p class='subtitle'>Analyse terminée.</p>"
         for msg in messages:
             full = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
             headers = full['payload']['headers']
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
             sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
-            
-            # Nettoyage nom expéditeur
-            if "<" in sender: sender_clean = sender.split("<")[0].replace('"', '')
-            else: sender_clean = sender
+            if "<" in sender: sender = sender.split("<")[0].replace('"', '')
 
             snippet = full.get('snippet', '')
             analysis = analyze_with_ai(snippet, subject, sender)
             
-            # AFFICHAGE
             action_html = ""
+            # SI C'EST ROUGE -> BOUTON
             if analysis['color'] == "red":
                 action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ RÉCLAMER MAINTENANT</button></a>"
             else:
                 action_html = "<div style='text-align:center; color:var(--success); margin-top:15px; font-weight:bold;'>✅ AUCUN LITIGE</div>"
             
             card_class = "card-danger" if analysis['color'] == "red" else "card-safe"
-            
             html += f"""
             <div class='card {card_class}'>
                 <h3>{subject}</h3>
-                <div class='sender'>De : {sender_clean}</div>
-                <div>
-                    <span class='badge'>💰 {analysis['amount']}</span>
-                    <span class='badge'>📝 {analysis['status']}</span>
-                </div>
+                <div class='sender'>De : {sender}</div>
+                <div><span class='badge'>💰 {analysis['amount']}</span><span class='badge'>📝 {analysis['status']}</span></div>
                 {action_html}
             </div>
             """
@@ -270,16 +192,7 @@ def auto_send(msg_id):
     
     try:
         send_email_directly(service, "me", sender, subject, legal_body)
-        return STYLE + f"""
-        <div class='container' style='text-align:center; margin-top:50px;'>
-            <h1 style='color:var(--primary);'>Procédure Lancée</h1>
-            <div class='card'>
-                <p><strong>Justicio a pris le relais.</strong></p>
-                <p>La mise en demeure a été envoyée.</p>
-            </div>
-            <a href='/scan'><button class='btn btn-primary'>Retour</button></a>
-        </div>
-        """
+        return STYLE + f"<div class='container' style='text-align:center; margin-top:50px;'><h1 style='color:var(--primary);'>Succès !</h1><div class='card'><p>Justicio a envoyé la mise en demeure.</p></div><a href='/scan'><button class='btn btn-primary'>Retour</button></a></div>"
     except Exception as e: return f"Erreur: {e}"
 
 @app.route("/login")
