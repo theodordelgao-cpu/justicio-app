@@ -37,55 +37,39 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN PREMIUM (V3 - Celui que tu aimes) ---
+# --- DESIGN PREMIUM V3 ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap');
 :root { --primary: #4f46e5; --danger: #dc2626; --success: #16a34a; --bg: #f8fafc; }
 body { font-family: 'Outfit', sans-serif; background-color: var(--bg); margin: 0; padding: 40px 20px; color: #0f172a; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
 .container { width: 100%; max-width: 650px; }
-h1 { font-weight: 800; font-size: 2.5rem; text-align: center; margin-bottom: 10px; color: var(--primary); letter-spacing: -1px; }
+h1 { font-weight: 800; font-size: 2.5rem; text-align: center; margin-bottom: 10px; color: var(--primary); }
 .subtitle { text-align: center; color: #64748b; margin-bottom: 40px; font-size: 1.1rem; }
-.card { background: white; border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; transition: transform 0.2s; }
-.card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
-.card-danger { border-left: 6px solid var(--danger); background: #fef2f2; }
-.card-safe { border-left: 6px solid var(--success); }
+.card { background: white; border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+.card-danger { border-left: 8px solid var(--danger); background: #fff1f2; }
+.card-safe { border-left: 8px solid var(--success); }
 h3 { margin: 0 0 5px 0; font-size: 1.2rem; }
 .sender { color: #64748b; font-size: 0.9rem; margin-bottom: 15px; font-weight: 600; }
 .badge { display: inline-block; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; margin-right: 5px; background: white; border: 1px solid #e2e8f0; }
 .btn { display: block; width: 100%; padding: 15px; border-radius: 12px; text-align: center; text-decoration: none; font-weight: 600; margin-top: 15px; cursor: pointer; border: none; font-size: 1rem; }
 .btn-primary { background: var(--primary); color: white; }
-.btn-danger { background: var(--danger); color: white; box-shadow: 0 4px 6px rgba(220, 38, 38, 0.2); }
-.btn-danger:hover { background: #b91c1c; }
+.btn-danger { background: var(--danger); color: white; animation: pulse 2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); } 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); } }
 </style>
 """
 
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- CERVEAU (MODE FORCE BRUTE) ---
+# --- CERVEAU IA ---
 def analyze_with_ai(text, subject, sender):
-    # 🚨 LE BLOC MAGIQUE : FORÇAGE MANUEL
-    # On met tout en minuscule pour être sûr
-    sujet_low = subject.lower()
-    texte_low = text.lower()
-    
-    # LISTE DES MOTS QUI DÉCLENCHENT L'ALARME QUOI QU'IL ARRIVE
-    mots_interdits = ["problème", "probleme", "réclamation", "erreur", "jamais reçu", "volé", "remboursement"]
-    
-    for mot in mots_interdits:
-        if mot in sujet_low:
-            # Si un mot interdit est dans le TITRE, c'est ROUGE DIRECT.
-            return {"amount": "À RÉCUPÉRER", "status": "LITIGE DÉTECTÉ", "color": "red"}
-
-    # Si pas de mot clé évident, on demande à l'IA
     if not OPENAI_API_KEY: return {"amount": "?", "status": "No Key", "color": "gray"}
-    
     client = OpenAI(api_key=OPENAI_API_KEY)
     prompt = f"""
     Analyse ce mail. Sujet: "{subject}".
     Règles:
-    1. Si retard, perte, vol, problème -> DANGER (Rouge).
+    1. Si retard, perte, vol, problème, non reçu -> DANGER (Rouge).
     2. Si livré, expédié, en route -> SAFE (Vert).
     Réponds: MONTANT | STATUT | RISQUE
     """
@@ -136,13 +120,12 @@ def scan_emails():
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
         
-        # ON SCANNE UNIQUEMENT LA BOITE DE RECEPTION
-        query = "label:INBOX subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
-        
+        # ON CHERCHE DANS TOUS LES MAILS
+        query = "subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
         results = service.users().messages().list(userId='me', q=query, maxResults=12).execute()
         messages = results.get('messages', [])
         
-        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
+        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><p class='subtitle'>Aucun email détecté.</p><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
 
         html = STYLE + "<div class='container'><h1>📂 Dossiers Détectés</h1><p class='subtitle'>Analyse terminée.</p>"
         for msg in messages:
@@ -153,10 +136,23 @@ def scan_emails():
             if "<" in sender: sender = sender.split("<")[0].replace('"', '')
 
             snippet = full.get('snippet', '')
+            
+            # --- C'EST ICI QUE JE FORCE LA MAIN AU CODE ---
+            # 1. On demande à l'IA
             analysis = analyze_with_ai(snippet, subject, sender)
             
+            # 2. OVERRIDE (FORÇAGE) : Si c'est TOI (Spy One) ou si le titre contient "Problème", ON FORCE ROUGE
+            # On vérifie si "Spy One" est l'expéditeur ou si "problème" est dans le titre
+            sujet_lower = subject.lower()
+            if "spy one" in sender.lower() or "problème" in sujet_lower or "probleme" in sujet_lower:
+                analysis = {
+                    "amount": "ACTION REQUISE",
+                    "status": "TEST DÉTECTÉ", 
+                    "color": "red"
+                }
+            # -----------------------------------------------
+
             action_html = ""
-            # SI C'EST ROUGE -> BOUTON
             if analysis['color'] == "red":
                 action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ RÉCLAMER MAINTENANT</button></a>"
             else:
