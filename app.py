@@ -37,33 +37,149 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN (CSS COMPRESSÉ POUR ÉVITER LES ERREURS) ---
+# --- DESIGN "LUXE" (V2) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap');
-:root { --primary: #4f46e5; --danger: #ef4444; --success: #10b981; --bg: #f8fafc; --card: #fff; }
-body { font-family: 'Outfit', sans-serif; background: var(--bg); margin: 0; padding: 20px; color: #1e293b; display: flex; flex-direction: column; align-items: center; }
-.container { width: 100%; max-width: 600px; animation: fadeIn 0.8s; }
-h1 { font-weight: 700; font-size: 2.5rem; text-align: center; color: var(--primary); margin-bottom: 10px; }
-.card { background: var(--card); border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
-.card-danger { border-left: 5px solid var(--danger); }
-.card-safe { border-left: 5px solid var(--success); }
-.btn { display: block; width: 100%; padding: 14px; border-radius: 12px; font-weight: 600; text-align: center; text-decoration: none; border: none; cursor: pointer; margin-top: 10px; }
-.btn-primary { background: var(--primary); color: white; }
-.btn-danger { background: var(--danger); color: white; }
-.badge { display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 0.8rem; margin-right: 5px; background: #f1f5f9; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+:root {
+    --primary: #4f46e5;
+    --primary-dark: #3730a3;
+    --danger: #e11d48;
+    --success: #059669;
+    --bg-gradient: linear-gradient(135deg, #f0f9ff 0%, #e0e7ff 100%);
+    --card-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg-gradient);
+    margin: 0;
+    padding: 20px;
+    color: #1e293b;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.container {
+    width: 100%;
+    max-width: 600px;
+    animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+h1 {
+    font-weight: 800;
+    font-size: 2.8rem;
+    text-align: center;
+    margin-bottom: 5px;
+    background: linear-gradient(to right, #4f46e5, #ec4899);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -1px;
+}
+
+p.subtext {
+    text-align: center;
+    color: #64748b;
+    margin-bottom: 30px;
+    font-size: 1.1rem;
+}
+
+.card {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    padding: 25px;
+    margin-bottom: 25px;
+    box-shadow: var(--card-shadow);
+    border: 1px solid #fff;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.card-danger { border-left: 6px solid var(--danger); }
+.card-safe { border-left: 6px solid var(--success); }
+
+h3 { margin: 0 0 10px 0; font-size: 1.2rem; font-weight: 700; color: #0f172a; }
+
+.meta { font-size: 0.9rem; color: #64748b; margin-bottom: 15px; display: flex; align-items: center; gap: 5px; }
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.badge-money { background: #dcfce7; color: #166534; }
+.badge-status { background: #f1f5f9; color: #475569; }
+
+.btn {
+    display: block;
+    width: 100%;
+    padding: 16px;
+    border-radius: 14px;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: all 0.2s;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+    color: white;
+}
+.btn-primary:hover { filter: brightness(1.1); transform: scale(1.02); }
+
+.btn-danger {
+    background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+    color: white;
+    margin-top: 15px;
+}
+.btn-danger:hover { filter: brightness(1.1); transform: scale(1.02); }
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(40px); }
+    to { opacity: 1; transform: translateY(0); }
+}
 </style>
 """
 
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- CERVEAU IA ---
+# --- CERVEAU IA (MODIFIÉ POUR ÊTRE AGRESSIF) ---
 def analyze_with_ai(text, subject, sender):
     if not OPENAI_API_KEY: return {"amount": "?", "status": "Pas de clé", "color": "gray"}
     client = OpenAI(api_key=OPENAI_API_KEY)
-    prompt = f"Analyse mail de {sender}: '{subject}'. Contenu: '{text[:300]}'. Si livré/expédié/en route -> SAFE. Si Retard/Annulé/Problème -> DANGER. Réponds: MONTANT | STATUT | RISQUE"
+    
+    # Prompt plus agressif sur les mots clés "Problème"
+    prompt = f"""
+    Tu es un auditeur de litiges. Analyse ce mail :
+    Sujet : "{subject}"
+    Expéditeur : "{sender}"
+    Contenu : "{text[:300]}..."
+    
+    RÈGLES D'OR :
+    1. Si le Sujet contient "Problème", "Réclamation", "Erreur" -> C'est DANGER (Rouge).
+    2. Si le texte parle de "Retard", "Jamais reçu", "Vol", "Remboursement", "Endommagé" -> C'est DANGER (Rouge).
+    3. Si c'est juste "Livré", "Expédié", "En route" -> C'est SAFE (Vert).
+    
+    Réponds UNIQUEMENT : MONTANT | STATUT (3 mots max) | RISQUE (SAFE ou DANGER)
+    """
     try:
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=50)
         parts = response.choices[0].message.content.strip().split("|")
@@ -74,7 +190,7 @@ def analyze_with_ai(text, subject, sender):
 def generate_agency_email(text, subject, sender, user_name):
     client = OpenAI(api_key=OPENAI_API_KEY)
     case_num = random.randint(10000, 99999)
-    prompt = f"Tu es le SERVICE JURIDIQUE JUSTICIO. Rédige MISE EN DEMEURE pour '{user_name}' contre '{sender}'. Sujet: '{subject}'. Contexte: '{text[:500]}'. Ton autoritaire. Cite Art L.216-1. Exige remboursement. Signe: 'SERVICE CONTENTIEUX JUSTICIO, Dossier #{case_num}, Mandataire de {user_name}'. Pas de Markdown."
+    prompt = f"Tu es le SERVICE JURIDIQUE JUSTICIO. Rédige MISE EN DEMEURE pour '{user_name}' contre '{sender}'. Sujet: '{subject}'. Contexte: '{text[:500]}'. Ton autoritaire et juridique. Cite Art L.216-1. Exige remboursement sous 48h. Signe: 'SERVICE CONTENTIEUX JUSTICIO, Dossier #{case_num}, Mandataire de {user_name}'. Pas de Markdown."
     response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=600)
     return response.choices[0].message.content.replace("```", "").strip()
 
@@ -93,13 +209,16 @@ def index():
         return STYLE + f"""
         <div class='container'>
             <h1>⚖️ JUSTICIO</h1>
-            <p style='text-align:center; color:#64748b;'>Bonjour <strong>{session.get('name', 'Utilisateur')}</strong></p>
-            <div class='card' style='text-align:center; border:2px solid #4f46e5;'>
-                <h3>Analyse de Recouvrement</h3>
-                <p>Scannez vos emails pour détecter les litiges.</p>
+            <p class='subtext'>Bonjour <strong>{session.get('name', 'Utilisateur')}</strong>. Tout est sous contrôle.</p>
+            
+            <div class='card' style='text-align:center; border: 2px solid #4f46e5; background: #fff;'>
+                <div style='font-size: 3rem; margin-bottom: 10px;'>🛡️</div>
+                <h3>Protection Active</h3>
+                <p style='color:#64748b; margin-bottom:20px;'>Scannez vos derniers emails pour détecter les anomalies et récupérer votre argent.</p>
                 <a href='/scan'><button class='btn btn-primary'>🚀 LANCER LE SCAN</button></a>
             </div>
-            <div style='text-align:center;'><a href='/logout' style='color:#94a3b8;'>Déconnexion</a></div>
+            
+            <div style='text-align:center;'><a href='/logout' style='color:#94a3b8; text-decoration:none;'>Se déconnecter</a></div>
         </div>
         """
     return redirect("/login")
@@ -110,37 +229,54 @@ def scan_emails():
     try:
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
-        results = service.users().messages().list(userId='me', q="subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande)", maxResults=10).execute()
+        
+        # ICI : On ajoute "label:INBOX" pour ne PAS scanner les messages envoyés
+        # ICI : On garde ta liste de recherche
+        query = "label:INBOX subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
+        
+        results = service.users().messages().list(userId='me', q=query, maxResults=12).execute()
         messages = results.get('messages', [])
         
-        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
+        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><p class='subtext'>Aucun email correspondant dans la boîte de réception.</p><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
 
-        html = STYLE + "<div class='container'><h1>📂 Résultats</h1>"
+        html = STYLE + "<div class='container'><h1>📂 Résultats</h1><p class='subtext'>Analyse de vos commandes récentes.</p>"
         for msg in messages:
             full = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
             headers = full['payload']['headers']
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
             sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+            
+            # Nettoyage du nom de l'expéditeur pour l'affichage
+            if "<" in sender: sender_name = sender.split("<")[0].strip().replace('"', '')
+            else: sender_name = sender
+
             snippet = full.get('snippet', '')
             analysis = analyze_with_ai(snippet, subject, sender)
             
+            # LOGIQUE D'AFFICHAGE
             action_html = ""
-            # ROUTE 1 : Bouton uniquement si DANGER (Rouge)
             if analysis['color'] == "red":
-                action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ ACTIVER PROTECTION JURIDIQUE</button></a>"
+                # BOUTON D'ATTAQUE
+                action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ RÉCLAMER {analysis['amount']}</button></a>"
+                status_text = ""
             else:
-                action_html = "<div style='text-align:center; color:#10b981; margin-top:10px;'>✅ Commande conforme</div>"
+                # MESSAGE VERT
+                action_html = "<div style='text-align:center; color:#059669; margin-top:15px; font-weight:600;'>✅ Commande conforme</div>"
             
             card_class = "card-danger" if analysis['color'] == "red" else "card-safe"
+            
             html += f"""
             <div class='card {card_class}'>
                 <h3>{subject}</h3>
-                <div style='font-size:0.9rem; color:#64748b; margin-bottom:10px;'>{sender}</div>
-                <div><span class='badge'>💰 {analysis['amount']}</span><span class='badge'>📝 {analysis['status']}</span></div>
+                <div class='meta'>🛒 {sender_name}</div>
+                <div>
+                    <span class='badge badge-money'>💰 {analysis['amount']}</span>
+                    <span class='badge badge-status'>📝 {analysis['status']}</span>
+                </div>
                 {action_html}
             </div>
             """
-        html += "<a href='/'><button class='btn' style='background:#e2e8f0; color:#475569;'>Retour</button></a></div>"
+        html += "<a href='/'><button class='btn' style='background:#cbd5e1; color:#475569; margin-top:20px;'>Retour</button></a></div>"
         return html
     except Exception as e: return f"Erreur: {e} <a href='/logout'>Reset</a>"
 
@@ -163,12 +299,13 @@ def auto_send(msg_id):
         send_email_directly(service, "me", sender, subject, legal_body)
         return STYLE + f"""
         <div class='container' style='text-align:center; margin-top:50px;'>
-            <h1 style='color:#4f46e5;'>Dossier Transmis</h1>
+            <div style='font-size: 5rem; margin-bottom: 20px;'>⚖️</div>
+            <h1 style='color:#4f46e5;'>Action Effectuée</h1>
             <div class='card'>
-                <p><strong>Justicio a pris le relais.</strong></p>
-                <p>Mise en demeure envoyée à :<br><strong>{sender}</strong></p>
+                <p><strong>Le Service Contentieux a pris le relais.</strong></p>
+                <p>La mise en demeure a été envoyée à :<br><strong>{sender}</strong></p>
             </div>
-            <a href='/scan'><button class='btn btn-primary'>Retour</button></a>
+            <a href='/scan'><button class='btn btn-primary'>Retour aux dossiers</button></a>
         </div>
         """
     except Exception as e: return f"Erreur: {e}"
@@ -179,7 +316,6 @@ def login():
     flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
     session["state"] = state
-    # C'est cette ligne qui a été corrigée :
     return redirect(auth_url)
 
 @app.route("/callback")
