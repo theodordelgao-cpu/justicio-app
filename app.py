@@ -37,7 +37,7 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN "GLASSMORPHISM" (MODERNE) ---
+# --- DESIGN MODERNE (V3) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;800&display=swap');
@@ -51,7 +51,7 @@ STYLE = """
 
 body {
     font-family: 'Outfit', sans-serif;
-    background: #f3f4f6; /* Fond gris clair propre */
+    background: #f3f4f6;
     background-image: radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
     background-size: cover;
     background-attachment: fixed;
@@ -150,26 +150,29 @@ h3 { margin: 0 0 5px 0; font-size: 1.3rem; font-weight: 700; color: #1e293b; }
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- IA : MODE "PITBULL" (TRÈS AGRESSIF SUR LES PROBLÈMES) ---
+# --- ANALYSE IA + OVERRIDE MANUEL ---
 def analyze_with_ai(text, subject, sender):
+    # 1. RÈGLE ABSOLUE : SI "PROBLÈME" EST DANS LE TITRE, ON FORCE LE ROUGE DIRECTEMENT
+    # Ça permet de contourner l'IA si elle hésite à cause de l'expéditeur
+    if "problème" in subject.lower() or "probleme" in subject.lower():
+        return {"amount": "À définir", "status": "LITIGE DÉTECTÉ", "color": "red"}
+
     if not OPENAI_API_KEY: return {"amount": "?", "status": "Pas de clé", "color": "gray"}
+    
     client = OpenAI(api_key=OPENAI_API_KEY)
     
-    # PROMPT CORRIGÉ POUR FORCER LE ROUGE SUR AMAZON
+    # Prompt normal pour les autres cas
     prompt = f"""
     Analyse ce mail.
     Sujet : "{subject}"
     Expéditeur : "{sender}"
     Début du texte : "{text[:300]}..."
     
-    RÈGLES IMPÉRATIVES :
-    1. Regarde le SUJET en premier. Si le sujet contient les mots : "Problème", "Réclamation", "Erreur", "Action requise" -> C'est DANGER (Rouge).
-    2. Si le texte parle de "non reçu", "volé", "remboursement", "retard" -> C'est DANGER (Rouge).
-    3. Si c'est juste "Livré", "Expédié", "Confirmé" -> C'est SAFE (Vert).
+    Règles :
+    1. Si "Retard", "Vol", "Perdu", "Remboursement", "Endommagé" -> DANGER (Rouge).
+    2. Si "Livré", "Expédié" -> SAFE (Vert).
     
-    Réponds UNIQUEMENT sous la forme : MONTANT | STATUT | RISQUE
-    Exemple : 25€ | Colis perdu | DANGER
-    Exemple : 0€ | Livré | SAFE
+    Réponds : MONTANT | STATUT | RISQUE
     """
     try:
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=50)
@@ -221,14 +224,13 @@ def scan_emails():
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
         
-        # --- CORRECTIF MAJEUR ICI : "label:INBOX" ---
-        # On ne cherche que dans la boîte de réception (pas les envoyés)
+        # On scanne la boite de réception
         query = "label:INBOX subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande OR Problème)"
         
         results = service.users().messages().list(userId='me', q=query, maxResults=12).execute()
         messages = results.get('messages', [])
         
-        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><p class='subtext'>Aucun email correspondant dans la boîte de réception.</p><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
+        if not messages: return STYLE + "<div class='container'><h1>Rien trouvé</h1><p class='subtext'>Aucun email correspondant.</p><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
 
         html = STYLE + "<div class='container'><h1>📂 Dossiers Détectés</h1><p class='subtext'>Analyse IA terminée.</p>"
         for msg in messages:
@@ -237,7 +239,6 @@ def scan_emails():
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
             sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
             
-            # Nettoyage affichage expéditeur
             if "<" in sender: sender_clean = sender.split("<")[0].replace('"', '')
             else: sender_clean = sender
 
@@ -245,7 +246,6 @@ def scan_emails():
             analysis = analyze_with_ai(snippet, subject, sender)
             
             action_html = ""
-            # Si Rouge -> Bouton d'attaque
             if analysis['color'] == "red":
                 action_html = f"<a href='/auto_send/{msg['id']}'><button class='btn btn-danger'>⚡ ACTIVER LA PROTECTION</button></a>"
             else:
