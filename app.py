@@ -120,48 +120,51 @@ def index():
 @app.route("/scan")
 def scan_emails():
     if "credentials" not in session: return redirect("/login")
-    credentials = Credentials(**session["credentials"])
-    service = build('gmail', 'v1', credentials=credentials)
     
-    results = service.users().messages().list(userId='me', q="subject:(Uber OR Amazon OR SNCF OR Temu OR Facture)", maxResults=8).execute()
-    messages = results.get('messages', [])
-    
-    if not messages: return "<h1>Rien trouvé !</h1><a href='/'>Retour</a>"
+    # C'est ici que ça plantait avant si le refresh_token manquait
+    try:
+        credentials = Credentials(**session["credentials"])
+        service = build('gmail', 'v1', credentials=credentials)
+        
+        results = service.users().messages().list(userId='me', q="subject:(Uber OR Amazon OR SNCF OR Temu OR Facture)", maxResults=8).execute()
+        messages = results.get('messages', [])
+        
+        if not messages: return "<h1>Rien trouvé !</h1><a href='/'>Retour</a>"
 
-    html = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f6f8;'>"
-    html += "<h1 style='text-align:center'>📋 Dossiers Détectés</h1>"
-    
-    for msg in messages:
-        full = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
-        headers = full['payload']['headers']
-        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
-        sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+        html = "<div style='font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f6f8;'>"
+        html += "<h1 style='text-align:center'>📋 Dossiers Détectés</h1>"
         
-        # Récupération texte simple
-        snippet = full.get('snippet', '')
-        
-        # Appel IA Analyse
-        analysis = analyze_with_ai(snippet, subject, sender)
-        
-        html += f"""
-        <div style='background: white; margin-bottom: 20px; padding: 20px; border-radius: 10px; border-left: 5px solid {analysis['color']}; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
-            <h3>{subject}</h3>
-            <p style='color: #666;'>De : {sender}</p>
-            <div style='margin: 10px 0;'>
-                <span style='background: #eee; padding: 5px 10px; border-radius: 5px;'>💰 {analysis['amount']}</span>
-                <span style='background: #eee; padding: 5px 10px; border-radius: 5px;'>📝 {analysis['status']}</span>
+        for msg in messages:
+            full = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+            headers = full['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+            snippet = full.get('snippet', '')
+            
+            analysis = analyze_with_ai(snippet, subject, sender)
+            
+            html += f"""
+            <div style='background: white; margin-bottom: 20px; padding: 20px; border-radius: 10px; border-left: 5px solid {analysis['color']}; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+                <h3>{subject}</h3>
+                <p style='color: #666;'>De : {sender}</p>
+                <div style='margin: 10px 0;'>
+                    <span style='background: #eee; padding: 5px 10px; border-radius: 5px;'>💰 {analysis['amount']}</span>
+                    <span style='background: #eee; padding: 5px 10px; border-radius: 5px;'>📝 {analysis['status']}</span>
+                </div>
+                <div style='margin-top: 15px;'>
+                    <a href='/complain/{msg['id']}' style='text-decoration: none;'>
+                        <button style='background: #d32f2f; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;'>
+                            ⚖️ GÉNÉRER PLAINTE
+                        </button>
+                    </a>
+                </div>
             </div>
-            <div style='margin-top: 15px;'>
-                <a href='/complain/{msg['id']}' style='text-decoration: none;'>
-                    <button style='background: #d32f2f; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;'>
-                        ⚖️ GÉNÉRER PLAINTE
-                    </button>
-                </a>
-            </div>
-        </div>
-        """
-    html += "<center><a href='/'>Retour</a></center></div>"
-    return html
+            """
+        html += "<center><a href='/'>Retour</a></center></div>"
+        return html
+    except Exception as e:
+        # En cas d'erreur de token, on force la déconnexion
+        return f"<h1>Erreur de connexion</h1><p>Google demande de se reconnecter pour valider la sécurité.</p><a href='/logout'><button>Se reconnecter</button></a><br><br><small>Erreur technique : {e}</small>"
 
 @app.route("/complain/<msg_id>")
 def complain(msg_id):
@@ -169,14 +172,12 @@ def complain(msg_id):
     credentials = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=credentials)
     
-    # On récupère le mail précis
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = msg['payload']['headers']
     subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
     sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
     snippet = msg.get('snippet', '')
     
-    # L'IA rédige la lettre
     letter = generate_legal_letter(snippet, subject, sender, session.get('name', 'Client'))
     
     return f"""
@@ -200,9 +201,18 @@ def complain(msg_id):
 def login():
     redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
     flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
-    auth_url, state = flow.authorization_url()
+    
+    # C'EST ICI LA CORRECTION MAGIQUE :
+    # On force 'offline' pour avoir le refresh_token
+    # On force 'consent' pour que Google nous le donne à coup sûr
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
+    
     session["state"] = state
-    return redirect(auth_url)
+    return redirect(authorization_url)
 
 @app.route("/callback")
 def callback():
