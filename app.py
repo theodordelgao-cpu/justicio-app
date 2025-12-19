@@ -37,7 +37,7 @@ SCOPES = [
     "openid"
 ]
 
-# --- LE DESIGN "LOURD" (CSS) ---
+# --- LE DESIGN PREMIUM (CSS) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap');
@@ -83,7 +83,7 @@ h1 {
     -webkit-text-fill-color: transparent;
 }
 
-h3 { font-weight: 500; margin-top: 0; }
+h3 { font-weight: 500; margin-top: 0; font-size: 1.1rem; }
 
 .status-badge {
     display: inline-block;
@@ -101,18 +101,15 @@ h3 { font-weight: 500; margin-top: 0; }
     border-radius: 16px;
     padding: 24px;
     margin-bottom: 20px;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
-    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    transition: transform 0.2s;
     border: 1px solid #e2e8f0;
 }
 
-.card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-}
+.card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
 
-.card-danger { border-left: 6px solid var(--danger); }
-.card-safe { border-left: 6px solid var(--success); }
+.card-danger { border-left: 5px solid var(--danger); }
+.card-safe { border-left: 5px solid var(--success); }
 
 .btn {
     display: inline-block;
@@ -126,39 +123,40 @@ h3 { font-weight: 500; margin-top: 0; }
     font-size: 1rem;
     width: 100%;
     text-align: center;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
-.btn-primary {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-    color: white;
-}
-.btn-primary:hover { transform: scale(1.02); box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.3); }
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: var(--primary-dark); }
 
-.btn-danger {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-    color: white;
-}
-.btn-danger:hover { transform: scale(1.02); box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.3); }
+.btn-danger { background: var(--danger); color: white; box-shadow: 0 4px 10px rgba(239, 68, 68, 0.3); }
+.btn-danger:hover { transform: scale(1.02); }
 
-.subtext { text-align: center; color: var(--text-light); margin-bottom: 30px; }
 .meta { color: var(--text-light); font-size: 0.9rem; margin-bottom: 15px; }
+.subtext { text-align: center; color: var(--text-light); margin-bottom: 30px; }
 
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
-}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 """
 
 def credentials_to_dict(credentials):
     return {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
 
-# --- IA & LOGIQUE (Rien ne change ici) ---
+# --- IA & LOGIQUE (Cerveau) ---
 def analyze_with_ai(text, subject, sender):
     if not OPENAI_API_KEY: return {"amount": "?", "status": "Pas de clé", "color": "gray"}
     client = OpenAI(api_key=OPENAI_API_KEY)
-    prompt = f"Tu es expert litiges. Analyse ce mail de {sender}: '{subject}'. Contenu: '{text[:300]}'. Si tout va bien (Livré, Expédié) -> SAFE. Si Problème (Retard, Annulé, Perte) -> DANGER. Réponds: MONTANT | STATUT | RISQUE"
+    
+    # PROMPT INTELLIGENT : Il ne s'énerve que si c'est grave
+    prompt = f"""
+    Analyse ce mail de {sender} : "{subject}".
+    Contenu : "{text[:300]}..."
+    
+    Règles :
+    1. Si livré (Delivered), Expédié, En route -> SAFE (Vert).
+    2. Si Retard, Perdu, Annulé, Remboursement, Problème -> DANGER (Rouge).
+    
+    Réponds UNIQUEMENT : MONTANT | STATUT | RISQUE
+    """
     try:
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=50)
         parts = response.choices[0].message.content.strip().split("|")
@@ -182,21 +180,21 @@ def send_email_directly(service, user_email, to_email, subject, body):
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     return service.users().messages().send(userId="me", body={'raw': raw}).execute()
 
-# --- ROUTES AVEC DESIGN ---
+# --- ROUTES ---
 @app.route("/")
 def index():
     if "credentials" in session:
         return STYLE + f"""
         <div class='container'>
             <h1>⚖️ JUSTICIO</h1>
-            <p class='subtext'>Bienvenue, Agent <strong>{session.get('name', 'Spy One')}</strong></p>
+            <p class='subtext'>Bienvenue, <strong>{session.get('name', 'Utilisateur')}</strong></p>
             
-            <div class='card' style='text-align: center;'>
-                <h3>Agence de Recouvrement IA</h3>
+            <div class='card' style='text-align: center; border: 2px solid var(--primary);'>
+                <h3>Analyse de Recouvrement</h3>
                 <p style='color: #64748b; margin-bottom: 25px;'>
-                    Notre algorithme scanne vos emails, détecte les litiges et envoie automatiquement les mises en demeure.
+                    Scannez vos emails pour détecter les litiges éligibles à une indemnisation.
                 </p>
-                <a href='/scan'><button class='btn btn-primary'>🚀 LANCER LE SCAN INTELLIGENT</button></a>
+                <a href='/scan'><button class='btn btn-primary'>🚀 LANCER LE SCAN</button></a>
             </div>
             
             <div style='text-align: center; margin-top: 20px;'>
@@ -212,12 +210,12 @@ def scan_emails():
     try:
         credentials = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=credentials)
-        results = service.users().messages().list(userId='me', q="subject:(Uber OR Amazon OR SNCF OR Temu OR Facture)", maxResults=8).execute()
+        results = service.users().messages().list(userId='me', q="subject:(Uber OR Amazon OR SNCF OR Temu OR Facture OR Commande)", maxResults=10).execute()
         messages = results.get('messages', [])
         
-        if not messages: return STYLE + "<div class='container'><h1>Aucun dossier trouvé</h1><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
+        if not messages: return STYLE + "<div class='container'><h1>Aucun email trouvé</h1><a href='/'><button class='btn btn-primary'>Retour</button></a></div>"
 
-        html = STYLE + "<div class='container'><h1>📂 Dossiers en cours</h1><p class='subtext'>Analyse IA terminée. Actions requises ci-dessous.</p>"
+        html = STYLE + "<div class='container'><h1>📂 Résultats du Scan</h1><p class='subtext'>Seuls les dossiers à risque permettent une action.</p>"
         
         for msg in messages:
             full = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
@@ -227,9 +225,10 @@ def scan_emails():
             snippet = full.get('snippet', '')
             analysis = analyze_with_ai(snippet, subject, sender)
             
-            # --- CHEAT CODE ACTIF (Bouton toujours visible) ---
+            # --- LOGIQUE PROPRE (Pas de triche) ---
             action_html = ""
-            if True: # analysis['color'] == "red":
+            if analysis['color'] == "red":
+                # Le bouton n'apparaît QUE si l'IA détecte un danger
                 action_html = f"""
                 <div style='margin-top: 20px;'>
                     <a href='/auto_send/{msg['id']}'>
@@ -237,21 +236,23 @@ def scan_emails():
                     </a>
                 </div>
                 """
+            else:
+                action_html = "<div style='margin-top: 15px; color: var(--success); font-size: 0.9rem; font-weight: 500;'>✅ Commande conforme</div>"
             
             card_class = "card-danger" if analysis['color'] == "red" else "card-safe"
             
             html += f"""
             <div class='card {card_class}'>
                 <h3>{subject}</h3>
-                <div class='meta'>Contre : {sender}</div>
-                <div>
+                <div class='meta'>Vendeur : {sender}</div>
+                <div style='margin-bottom: 10px;'>
                     <span class='status-badge badge-money'>💰 {analysis['amount']}</span>
                     <span class='status-badge badge-info'>📝 {analysis['status']}</span>
                 </div>
                 {action_html}
             </div>
             """
-        html += "<div style='height: 50px;'></div><a href='/' style='text-decoration:none;'><button class='btn' style='background:#e2e8f0; color:#475569;'>Retour au menu</button></a></div>"
+        html += "<div style='height: 50px;'></div><a href='/'><button class='btn' style='background:#e2e8f0; color:#475569;'>Retour</button></a></div>"
         return html
     except Exception as e: return f"Erreur: {e} <a href='/logout'>Reset</a>"
 
@@ -275,11 +276,11 @@ def auto_send(msg_id):
         return STYLE + f"""
         <div class='container' style='text-align: center; margin-top: 80px;'>
             <div style='font-size: 4rem; margin-bottom: 20px;'>⚖️</div>
-            <h1 style='color: var(--primary);'>Procédure Lancée</h1>
+            <h1 style='color: var(--primary);'>Dossier Transmis</h1>
             <div class='card'>
-                <p><strong>Justicio a pris le relais.</strong></p>
-                <p>Une mise en demeure officielle a été envoyée à <br><strong>{sender_email}</strong>.</p>
-                <p class='meta'>Copie disponible dans vos "Messages Envoyés".</p>
+                <p><strong>Le Service Contentieux Justicio a pris le relais.</strong></p>
+                <p>La mise en demeure officielle a été envoyée à <br><strong>{sender_email}</strong>.</p>
+                <p class='meta'>Vous recevrez leur réponse directement par email.</p>
             </div>
             <br>
             <a href='/scan'><button class='btn btn-primary'>📂 Retour aux dossiers</button></a>
@@ -293,7 +294,7 @@ def login():
     flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
     session["state"] = state
-    return redirect(auth_url)
+    return redirect(authorization_url)
 
 @app.route("/callback")
 def callback():
