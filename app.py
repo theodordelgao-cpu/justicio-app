@@ -2,6 +2,7 @@ import os
 import base64
 import random
 from flask import Flask, session, redirect, request, url_for
+from flask_sqlalchemy import SQLAlchemy # AJOUT : Pour la base de données
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -15,6 +16,22 @@ app.secret_key = os.environ.get("SECRET_KEY", "azerty_super_secret_key")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# AJOUT : Configuration de la base de données PostgreSQL
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL")
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
+# --- MODÈLE DE LA BASE (La mémoire de Justicio) ---
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    refresh_token = db.Column(db.String(500), nullable=True)
+    name = db.Column(db.String(100))
+
+# Création de la table au démarrage si elle n'existe pas
+with app.app_context():
+    db.create_all()
 
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
@@ -37,7 +54,7 @@ SCOPES = [
     "openid"
 ]
 
-# --- DESIGN ÉPURÉ (ON CACHE L'INUTILE) ---
+# --- DESIGN ÉPURÉ (STYLE INCHANGÉ) ---
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap');
@@ -65,7 +82,6 @@ def credentials_to_dict(credentials):
 
 # --- CERVEAU ---
 def analyze_with_ai(text, subject, sender):
-    # FORÇAGE TEST : Si "Problème" dans le titre -> ROUGE
     sujet_low = subject.lower()
     if "problème" in sujet_low or "probleme" in sujet_low:
         return {"amount": "ACTION REQUISE", "status": "LITIGE DÉTECTÉ", "color": "red"}
@@ -144,7 +160,6 @@ def scan_emails():
             snippet = full.get('snippet', '')
             analysis = analyze_with_ai(snippet, subject, sender)
             
-            # 🚨 LE GRAND FILTRE : ON GARDE UNIQUEMENT LES ROUGES 🚨
             if analysis['color'] == "red":
                 count += 1
                 litiges_html += f"""
@@ -156,7 +171,6 @@ def scan_emails():
                 </div>
                 """
         
-        # SI AUCUN LITIGE TROUVÉ
         if count == 0:
             result_content = f"""
             <div class='empty-state'>
@@ -211,11 +225,35 @@ def callback():
     redirect_uri = url_for('callback', _external=True).replace("http://", "https://")
     flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=redirect_uri)
     flow.fetch_token(authorization_response=request.url)
-    session["credentials"] = credentials_to_dict(flow.credentials)
-    session["name"] = "Spy One" 
+    
+    creds = flow.credentials
+    session["credentials"] = credentials_to_dict(creds)
+
+    # --- NOUVEAU : Sauvegarde dans la base de données ---
+    # Récupère l'email via Google
+    service = build('oauth2', 'v2', credentials=creds)
+    user_info = service.userinfo().get().execute()
+    email = user_info['email']
+    name = user_info.get('name', 'Utilisateur')
+
+    # Vérifie si l'utilisateur existe déjà
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        user = User(email=email, name=name)
+        db.session.add(user)
+    
+    # Enregistre le précieux Refresh Token
+    if creds.refresh_token:
+        user.refresh_token = creds.refresh_token
+    
+    user.name = name
+    db.session.commit()
+
+    session["name"] = name
     return redirect("/")
 
 @app.route("/logout")
 def logout(): session.clear(); return redirect("/")
 
-if __name__ == "__main__": app.run(debug=True)
+if __name__ == "__main__":
+    app.run(debug=True)
