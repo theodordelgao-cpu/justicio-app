@@ -9,3 +9,4 @@ beautifulsoup4
 openai
 flask-sqlalchemy
 psycopg2-binary
+
