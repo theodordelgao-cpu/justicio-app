@@ -7,3 +7,5 @@ google-auth-httplib2
 google-api-python-client
 beautifulsoup4
 openai
+flask-sqlalchemy
+psycopg2-binary
