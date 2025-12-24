@@ -11,11 +11,9 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
-# --- CONFIGURATION (Render Environment Variables) ---
+# --- CONFIGURATION (Render) ---
 app.secret_key = os.environ.get("SECRET_KEY", "justicio_ultra_secret")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-AERODATABOX_KEY = os.environ.get("AERODATABOX_API_KEY") 
-SNCF_TOKEN = os.environ.get("NAVITIA_API_TOKEN") 
 STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") # Ta clé sk_live
 STRIPE_PK = os.environ.get("STRIPE_PUBLISHABLE_KEY") # Ta clé pk_live
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -51,50 +49,35 @@ client_secrets_config = {
 }
 SCOPES = ["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly", "openid"]
 
-# --- RADARS TECHNIQUES ---
-def get_flight_status(flight_no, date_str):
-    if not AERODATABOX_KEY: return "Radar Vol désactivé"
-    url = f"https://aerodatabox.p.rapidapi.com/flights/number/{flight_no.replace(' ', '')}/{date_str}"
-    headers = {"X-RapidAPI-Key": AERODATABOX_KEY, "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com"}
-    try:
-        r = requests.get(url, headers=headers)
-        if r.status_code == 204: return "Aucun vol trouvé"
-        data = r.json()
-        delay = data[0].get('arrival', {}).get('delayMinutes', 0)
-        return f"RETARD : {delay} min"
-    except: return "Radar Vol indisponible"
-
-def get_train_status(train_no):
-    if not SNCF_TOKEN: return "Radar SNCF désactivé"
-    url = f"https://api.sncf.com/v1/coverage/sncf/disruptions/?q={train_no}"
-    try:
-        r = requests.get(url, auth=(SNCF_TOKEN, '')).json()
-        return "Perturbation détectée" if r.get('disruptions') else "Circulation normale"
-    except: return "Radar SNCF indisponible"
-
-# --- CERVEAU IA SÉCURISÉ ---
+# --- IA : ANALYSE STRICTE (0 BAVARDAGE) ---
 def analyze_litigation(text, subject):
-    if not OPENAI_API_KEY: return ["À vérifier", "Loi inconnue", "Entreprise"]
+    if not OPENAI_API_KEY: return ["35€", "Loi consommation"]
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
+        # Prompt ultra-direct pour éviter les phrases inutiles
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"user", "content": f"Analyse ce mail: {subject}. Snippet: {text[:400]}. Réponds uniquement: MONTANT | LOI | ENTREPRISE"}]
+            messages=[{"role":"system", "content": "Tu es un expert juridique. Réponds uniquement au format: MONTANT | LOI. Exemple: 250€ | Reg 261/2004. Si inconnu, écris: À calculer | Code Civil."},
+                      {"role":"user", "content": f"Mail: {subject}. Texte: {text[:400]}"}]
         )
         data = res.choices[0].message.content.split("|")
-        while len(data) < 3: data.append("Détail manquant")
-        return data
-    except: return ["Litige détecté", "Code Transports", "Entreprise"]
+        return [d.strip() for d in data]
+    except:
+        return ["À calculer", "Code Civil"]
 
 # --- ROUTES ---
-STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:20px;display:flex;flex-direction:column;align-items:center}.card{background:white;border-radius:15px;padding:20px;margin:10px;width:100%;max-width:500px;box-shadow:0 4px 6px rgba(0,0,0,0.1);border-left:5px solid #ef4444}.btn{display:block;background:#4f46e5;color:white;padding:12px;text-align:center;border-radius:8px;text-decoration:none;font-weight:bold;margin-top:10px}.badge{background:#fee2e2;color:#b91c1c;padding:5px 10px;border-radius:5px;font-size:0.8rem;font-weight:bold}</style>"""
+STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
+body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:20px;display:flex;flex-direction:column;align-items:center;color:#1e293b}
+.card{background:white;border-radius:15px;padding:20px;margin:15px;width:100%;max-width:500px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:6px solid #ef4444}
+.btn{display:block;background:#4f46e5;color:white;padding:15px;text-align:center;border-radius:10px;text-decoration:none;font-weight:bold;margin-top:15px}
+.badge{background:#fee2e2;color:#b91c1c;padding:5px 10px;border-radius:6px;font-size:0.85rem;font-weight:bold;margin-bottom:10px;display:inline-block}</style>"""
 
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    msg = request.args.get("payment")
-    banner = "<p style='color:green;'>✅ Protection activée !</p>" if msg == "success" else ""
-    return STYLE + f"{banner}<h1>⚖️ JUSTICIO</h1><p>Bonjour {session.get('name')}</p><a href='/scan' class='btn'>🔍 SCANNER MES EMAILS</a>"
+    payment_status = request.args.get("payment")
+    banner = "<div style='background:#dcfce7;color:#166534;padding:15px;border-radius:10px;margin-bottom:20px;'>✅ Protection activée : Votre carte est enregistrée !</div>" if payment_status == "success" else ""
+    return STYLE + f"{banner}<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn'>🔍 ANALYSER MES LITIGES</a>"
 
 @app.route("/scan")
 def scan():
@@ -102,27 +85,30 @@ def scan():
     try:
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
-        results = service.users().messages().list(userId='me', q="retard OR remboursement OR SNCF OR Amazon OR Flight", maxResults=5).execute()
+        results = service.users().messages().list(userId='me', q="SNCF OR Amazon OR Temu OR remboursement OR retard", maxResults=5).execute()
         msgs = results.get('messages', [])
         
-        html = "<h1>Résultats du Scan</h1>"
-        if not msgs:
-            html += "<p>Aucun mail de litige trouvé dans vos derniers messages.</p>"
+        html = "<h1>Litiges Identifiés</h1>"
+        if not msgs: html += "<p>Aucun litige détecté.</p>"
         
         for m in msgs:
             f = service.users().messages().get(userId='me', id=m['id']).execute()
             headers = f['payload'].get('headers', [])
-            
-            # --- FIX STOPITERATION : On donne une valeur par défaut ---
             subj = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet")
             sender = next((h['value'] for h in headers if h['name'] == 'From'), "Inconnu")
             
             ana = analyze_litigation(f.get('snippet', ''), subj)
-            html += f"<div class='card'><h3>{subj}</h3><p>Expéditeur : {sender}</p><span class='badge'>💰 Indemnité : {ana[0]}</span><a href='/setup-payment' class='btn'>🚀 RÉCUPÉRER MES {ana[0]}</a></div>"
+            html += f"""<div class='card'>
+                <span class='badge'>💰 Gain estimé : {ana[0]}</span>
+                <h3>{subj}</h3>
+                <p style='color:#64748b;font-size:0.9rem;'>Expéditeur : {sender}</p>
+                <p style='font-size:0.85rem;'><b>Base légale :</b> {ana[1]}</p>
+                <a href='/setup-payment' class='btn'>🚀 RÉCUPÉRER MES {ana[0]} (0€)</a>
+            </div>"""
         
-        return STYLE + html + "<br><a href='/'>Retour</a>"
+        return STYLE + html + "<br><a href='/' style='text-decoration:none;color:#64748b;'>⬅️ Retour</a>"
     except Exception as e:
-        return f"Erreur critique : {str(e)}. Vérifiez vos clés API sur Render."
+        return f"Erreur de scan : {str(e)}"
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -135,13 +121,7 @@ def setup_payment():
         )
         return redirect(checkout_session.url, code=303)
     except Exception as e:
-        return f"Erreur Stripe : {str(e)}. Votre clé Secrète est-elle bien sur Render ?"
-
-@app.route("/test-api")
-def test_api():
-    f = get_flight_status("AF123", "2025-12-22")
-    t = get_train_status("8001")
-    return f"Radars : Vol ({f}) | SNCF ({t})"
+        return f"Erreur Stripe : {str(e)}. Vérifiez votre clé sk_live sur Render."
 
 @app.route("/login")
 def login():
@@ -158,6 +138,11 @@ def callback():
     session["credentials"] = {'token': creds.token, 'refresh_token': creds.refresh_token, 'token_uri': creds.token_uri, 'client_id': creds.client_id, 'client_secret': creds.client_secret, 'scopes': creds.scopes}
     info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
     session["name"] = info.get('name')
+    return redirect("/")
+
+@app.route("/logout")
+def logout():
+    session.clear()
     return redirect("/")
 
 if __name__ == "__main__":
