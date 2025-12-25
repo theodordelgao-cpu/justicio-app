@@ -72,7 +72,9 @@ def analyze_litigation(text, subject):
             messages=[{"role":"system", "content": "Réponds uniquement: MONTANT | LOI. Exemple: 45€ | Article L.216-1"},
                       {"role":"user", "content": f"Mail: {subject}. Snippet: {text[:400]}"}]
         )
-        return [d.strip() for d in res.choices[0].message.content.split("|")]
+        data = res.choices[0].message.content.split("|")
+        while len(data) < 2: data.append("Non précisé")
+        return [d.strip() for d in data]
     except: return ["À calculer", "Code de la consommation"]
 
 def send_legal_email(creds, target_email, company, amount, law):
@@ -112,18 +114,23 @@ def index():
 @app.route("/scan")
 def scan():
     if "credentials" not in session: return redirect("/login")
-    creds = Credentials(**session["credentials"])
-    service = build('gmail', 'v1', credentials=creds)
-    results = service.users().messages().list(userId='me', q="remboursement OR retard OR Amazon OR SNCF", maxResults=5).execute()
-    msgs = results.get('messages', [])
-    html = "<h1>Litiges Identifiés</h1>"
-    for m in msgs:
-        f = service.users().messages().get(userId='me', id=m['id']).execute()
-        subj = next((h['value'] for h in f['payload']['headers'] if h['name'] == 'Subject'), "Sans objet")
-        ana = analyze_litigation(f.get('snippet', ''), subj)
-        if "€" in ana[0]:
-            html += f"<div class='card'><h3>{subj}</h3><p>Gain : {ana[0]}</p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>Récupérer</a></div>"
-    return STYLE + html + FOOTER
+    try:
+        creds = Credentials(**session["credentials"])
+        service = build('gmail', 'v1', credentials=creds)
+        results = service.users().messages().list(userId='me', q="remboursement OR retard OR Amazon OR SNCF", maxResults=5).execute()
+        msgs = results.get('messages', [])
+        html = "<h1>Litiges Identifiés</h1>"
+        if not msgs: html += "<p>Aucun mail détecté.</p>"
+        for m in msgs:
+            f = service.users().messages().get(userId='me', id=m['id']).execute()
+            headers = f['payload'].get('headers', [])
+            subj = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet")
+            ana = analyze_litigation(f.get('snippet', ''), subj)
+            if "€" in ana[0]:
+                html += f"<div class='card'><h3>{subj}</h3><p>Gain : {ana[0]}</p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>Récupérer</a></div>"
+        return STYLE + html + FOOTER
+    except Exception as e:
+        return f"Erreur lors du scan : {str(e)}"
 
 @app.route("/pre-payment")
 def pre_payment():
@@ -132,19 +139,27 @@ def pre_payment():
 
 @app.route("/setup-payment")
 def setup_payment():
-    session_stripe = stripe.checkout.Session.create(payment_method_types=['card'], mode='setup', success_url=url_for('index', _external=True) + "?payment=success", cancel_url=url_for('index', _external=True))
-    return redirect(session_stripe.url, code=303)
+    try:
+        session_stripe = stripe.checkout.Session.create(payment_method_types=['card'], mode='setup', success_url=url_for('index', _external=True) + "?payment=success", cancel_url=url_for('index', _external=True))
+        return redirect(session_stripe.url, code=303)
+    except Exception as e:
+        return f"Erreur Stripe : {str(e)}"
 
-# --- LE SCAN DES 12H (CRON) ---
+# --- LE SCAN DES 12H (CRON) SÉCURISÉ ---
 @app.route("/cron-scan/<token>")
 def cron_scan(token):
-    if token != SCAN_TOKEN: return "Interdit", 403
-    users = User.query.all()
-    for u in users:
-        # Ici le robot utilise u.refresh_token pour scanner
-        # Si remboursement trouvé : prélèvement de 30% via u.stripe_customer_id
-        pass
-    return "Scan automatique terminé."
+    if token != os.environ.get("SCAN_TOKEN"):
+        return "Interdit", 403
+    try:
+        users = User.query.filter(User.refresh_token != None).all()
+        if not users:
+            return "Scan terminé : Aucun utilisateur avec accès Gmail trouvé.", 200
+        for u in users:
+            # Ici ton robot pourra utiliser u.refresh_token pour scanner en arrière-plan
+            print(f"Robot en cours pour : {u.email}")
+        return f"Scan automatique terminé pour {len(users)} utilisateur(s).", 200
+    except Exception as e:
+        return f"Erreur interne du robot : {str(e)}", 500
 
 @app.route("/login")
 def login():
@@ -169,4 +184,3 @@ def callback():
 
 if __name__ == "__main__":
     app.run(debug=True)
-
