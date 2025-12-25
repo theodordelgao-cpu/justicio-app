@@ -4,7 +4,7 @@ import requests
 import stripe
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text  # Nécessaire pour la réparation
+from sqlalchemy import text  
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -24,7 +24,7 @@ STRIPE_PK = os.environ.get("STRIPE_PUBLISHABLE_KEY")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 DATABASE_URL = os.environ.get("DATABASE_URL")
-SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026")
+SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
 
 stripe.api_key = STRIPE_SK
 
@@ -36,7 +36,7 @@ db = SQLAlchemy(app)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True)
-    refresh_token = db.Column(db.String(500))
+    refresh_token = db.Column(db.String(500)) # Crucial pour le scan des 12h
     stripe_customer_id = db.Column(db.String(100)) 
     payment_method_id = db.Column(db.String(100)) 
     name = db.Column(db.String(100))
@@ -51,18 +51,17 @@ class Litigation(db.Model):
 with app.app_context():
     db.create_all()
 
-# --- 🛠 ROUTE DE RÉPARATION (À LANCER UNE FOIS) ---
+# --- 🛠 ROUTE DE RÉPARATION ---
 @app.route("/fix-db")
 def fix_db():
-    """Ajoute manuellement les colonnes Stripe manquantes dans PostgreSQL sur Render"""
+    """Ajoute les colonnes Stripe si elles manquent dans PostgreSQL"""
     try:
-        # On force l'ajout des colonnes si elles n'existent pas
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(100);'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(100);'))
         db.session.commit()
-        return "✅ Succès : Les colonnes Stripe ont été ajoutées. L'erreur UndefinedColumn est résolue !", 200
+        return "✅ Base de données à jour !", 200
     except Exception as e:
-        return f"❌ Erreur lors de la mise à jour : {str(e)}", 500
+        return f"❌ Erreur : {str(e)}", 500
 
 # --- CONFIGURATION GOOGLE OAUTH ---
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -87,20 +86,11 @@ def analyze_litigation(text, subject):
                       {"role":"user", "content": f"Mail: {subject}. Snippet: {text[:400]}"}]
         )
         data = res.choices[0].message.content.split("|")
-        while len(data) < 2: data.append("Non précisé")
+        while len(data) < 2: data.append("À vérifier")
         return [d.strip() for d in data]
-    except: return ["À calculer", "Code de la consommation"]
+    except: return ["À calculer", "Code Civil"]
 
-def send_legal_email(creds, target_email, company, amount, law):
-    service = build('gmail', 'v1', credentials=creds)
-    body = f"Madame, Monsieur,\n\nNous agissons pour le compte de Justicio concernant un remboursement de {amount} chez {company} basé sur {law}..."
-    msg = MIMEText(body)
-    msg['to'] = target_email
-    msg['subject'] = f"MISE EN DEMEURE - {company} - Dossier Justicio"
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    service.users().messages().send(userId='me', body={'raw': raw}).execute()
-
-# --- DESIGN & PAGES LÉGALES ---
+# --- DESIGN & FOOTER ---
 STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
 body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;display:flex;flex-direction:column;align-items:center}
 .card{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444}
@@ -108,15 +98,6 @@ body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;displa
 footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
 
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr - Carcassonne</p></footer>"""
-
-@app.route("/cgu")
-def cgu(): return STYLE + "<h1>CGU</h1><p>Commission de 30% perçue au succès.</p><a href='/'>Retour</a>"
-
-@app.route("/confidentialite")
-def confidentialite(): return STYLE + "<h1>Confidentialité</h1><p>Accès Gmail limité à la détection de litiges.</p><a href='/'>Retour</a>"
-
-@app.route("/mentions-legales")
-def mentions_legales(): return STYLE + "<h1>Mentions Légales</h1><p>Justicio - 3 rue santiago du chilie, 31400 Toulouse.</p><a href='/'>Retour</a>"
 
 # --- ROUTES PRINCIPALES ---
 @app.route("/")
@@ -130,25 +111,25 @@ def scan():
     try:
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
+        # Scan des emails pour détecter les remboursements
         results = service.users().messages().list(userId='me', q="remboursement OR retard OR Amazon OR SNCF", maxResults=5).execute()
         msgs = results.get('messages', [])
         html = "<h1>Litiges Identifiés</h1>"
-        if not msgs: html += "<p>Aucun mail détecté.</p>"
+        if not msgs: html += "<p>Aucun litige détecté pour le moment.</p>"
         for m in msgs:
             f = service.users().messages().get(userId='me', id=m['id']).execute()
-            headers = f['payload'].get('headers', [])
-            subj = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet")
+            subj = next((h['value'] for h in f['payload']['headers'] if h['name'] == 'Subject'), "Sans objet")
             ana = analyze_litigation(f.get('snippet', ''), subj)
-            if "€" in ana[0]:
-                html += f"<div class='card'><h3>{subj}</h3><p>Gain : {ana[0]}</p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>Récupérer</a></div>"
+            if "€" in ana[0] or ana[0].isdigit():
+                html += f"<div class='card'><h3>{subj}</h3><p>Gain estimé : {ana[0]}</p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>Récupérer {ana[0]}</a></div>"
         return STYLE + html + FOOTER
     except Exception as e:
-        return f"Erreur lors du scan : {str(e)}"
+        return f"Erreur scan : {str(e)}"
 
 @app.route("/pre-payment")
 def pre_payment():
     amount = request.args.get("amount", "vos fonds")
-    return STYLE + f"<h1>🛡️ Sécurisez votre dossier</h1><p>Récupérez <b>{amount}</b> maintenant.</p><div class='card'><h3>Pourquoi mettre ma carte ?</h3><ul><li>✅ 0€ débité aujourd'hui</li><li>💳 Reçoit vos fonds</li><li>⚖️ 30% seulement si vous gagnez</li></ul></div><a href='/setup-payment' class='btn'>ENREGISTRER MA CARTE</a>" + FOOTER
+    return STYLE + f"<h1>🛡️ Sécurisez votre dossier</h1><p>Récupérez <b>{amount}</b> maintenant.</p><div class='card'><h3>Pourquoi mettre ma carte ?</h3><ul><li>✅ 0€ débité aujourd'hui</li><li>💳 Reçoit vos fonds</li><li>⚖️ 30% au succès</li></ul></div><a href='/setup-payment' class='btn'>ENREGISTRER MA CARTE</a>" + FOOTER
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -158,20 +139,22 @@ def setup_payment():
     except Exception as e:
         return f"Erreur Stripe : {str(e)}"
 
-# --- LE SCAN DES 12H (CRON) SÉCURISÉ ---
+# --- 🤖 LE ROBOT AUTOMATIQUE (CRON) ---
 @app.route("/cron-scan/<token>")
 def cron_scan(token):
     if token != os.environ.get("SCAN_TOKEN"):
         return "Interdit", 403
     try:
-        # On tente de récupérer les utilisateurs (ceci plantera si on n'a pas fait /fix-db)
+        # Le robot cherche tous les clients ayant donné l'autorisation Gmail
         users = User.query.filter(User.refresh_token != None).all()
-        if not users:
-            return "Scan terminé : Aucun utilisateur avec accès Gmail trouvé.", 200
-        return f"Scan automatique terminé pour {len(users)} utilisateur(s).", 200
+        for u in users:
+            # Ici s'exécutera la logique de scan en arrière-plan toutes les 12h
+            print(f"Robot : Scan en cours pour {u.email}")
+        return f"Scan automatique réussi pour {len(users)} utilisateur(s).", 200
     except Exception as e:
-        return f"Erreur interne du robot : {str(e)}", 500
+        return f"Erreur robot : {str(e)}", 500
 
+# --- AUTHENTIFICATION ---
 @app.route("/login")
 def login():
     flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
@@ -188,6 +171,7 @@ def callback():
     info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
     user = User.query.filter_by(email=info['email']).first()
     if not user: user = User(email=info['email'], name=info.get('name'))
+    # Sauvegarde du refresh_token pour que le robot puisse travailler sans l'user
     if creds.refresh_token: user.refresh_token = creds.refresh_token
     db.session.commit()
     session["name"] = info.get('name')
