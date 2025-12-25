@@ -1,7 +1,8 @@
 import os
-import stripe
 import base64
-from flask import Flask, session, redirect, request, url_for
+import requests
+import stripe
+from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -15,15 +16,15 @@ app = Flask(__name__)
 # --- CONFIGURATION (Render Environment Variables) ---
 app.secret_key = os.environ.get("SECRET_KEY", "justicio_billion_dollar_secret")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") # Ta clé sk_live
-DATABASE_URL = os.environ.get("DATABASE_URL") #
+STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") 
+DATABASE_URL = os.environ.get("DATABASE_URL") 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
 
 stripe.api_key = STRIPE_SK
 
-# --- BASE DE DONNÉES ---
+# --- BASE DE DONNÉES (Tokens + Dossiers) ---
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -31,7 +32,7 @@ db = SQLAlchemy(app)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True)
-    refresh_token = db.Column(db.String(500))
+    refresh_token = db.Column(db.String(500)) 
     stripe_customer_id = db.Column(db.String(100))
     name = db.Column(db.String(100))
 
@@ -49,35 +50,68 @@ with app.app_context():
 STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
 body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;display:flex;flex-direction:column;align-items:center}
 .card{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444}
-.btn{display:inline-block;background:#4f46e5;color:white;padding:16px 32px;border-radius:12px;text-decoration:none;font-weight:bold;margin-top:20px;border:none;cursor:pointer}
+.btn{display:inline-block;background:#4f46e5;color:white;padding:16px 32px;border-radius:12px;text-decoration:none;font-weight:bold;margin-top:20px;border:none;cursor:pointer;transition:0.3s}
+.btn:hover{background:#3730a3;transform:translateY(-2px)}
 footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
 
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr - Carcassonne</p></footer>"""
+
+# --- IA ---
+def analyze_litigation(text, subject):
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4o-mini", 
+            messages=[{"role":"system", "content": "Réponds uniquement format: MONTANT | LOI. Exemple: 250€ | Reg 261/2004."},
+                      {"role":"user", "content": f"Mail: {subject}. Snippet: {text[:400]}"}]
+        )
+        return [d.strip() for d in res.choices[0].message.content.split("|")]
+    except: return ["À calculer", "Code Civil"]
 
 # --- ROUTES ---
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte de versement : <b>{session.get('name')}</b></p><a href='/scan' class='btn'>🔍 SCANNER MES LITIGES</a>" + FOOTER
+    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte protégé : <b>{session.get('name')}</b></p><a href='/scan' class='btn'>🔍 ANALYSER MES LITIGES</a>" + FOOTER
+
+@app.route("/scan")
+def scan():
+    if "credentials" not in session: return redirect("/login")
+    try:
+        creds = Credentials(**session["credentials"])
+        service = build('gmail', 'v1', credentials=creds)
+        results = service.users().messages().list(userId='me', q="remboursement OR retard OR Amazon OR SNCF OR KL2273", maxResults=5).execute()
+        msgs = results.get('messages', [])
+        html = "<h1>Litiges Identifiés</h1>"
+        if not msgs: html += "<p>Aucun litige trouvé. Envoyez-vous un mail de test !</p>"
+        for m in msgs:
+            f = service.users().messages().get(userId='me', id=m['id']).execute()
+            headers = f['payload'].get('headers', [])
+            subj = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet")
+            ana = analyze_litigation(f.get('snippet', ''), subj)
+            if "€" in ana[0] or ana[0] != "À calculer":
+                html += f"<div class='card'><h3>{subj}</h3><p>Gain estimé : <b>{ana[0]}</b></p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>🚀 RÉCUPÉRER</a></div>"
+        return STYLE + html + "<br><a href='/'>Retour</a>" + FOOTER
+    except Exception as e:
+        return f"Erreur de scan : {str(e)}"
 
 @app.route("/pre-payment")
 def pre_payment():
-    """Page de réassurance ultra-professionnelle"""
     amount = request.args.get("amount", "vos fonds")
     return STYLE + f"""
     <div style='max-width:600px; text-align:center;'>
         <div style='font-size: 3.5rem;'>🏦</div>
         <h1>Validation de versement</h1>
-        <p>Nous avons identifié une créance de <b>{amount}</b> en votre faveur.</p>
+        <p>Gain identifié : <b>{amount}</b>.</p>
         <div class='card' style='text-align:left; border-left-color:#10b981; background:#f0fdf4;'>
-            <h3 style='color:#166534; margin-top:0;'>🔒 Pourquoi sécuriser votre compte ?</h3>
-            <ul style='color:#166534; padding-left:20px; line-height:1.6;'>
-                <li><b>Vérification d'identité :</b> Pour valider que vous êtes bien le titulaire du compte de remboursement.</li>
-                <li><b>Empreinte de 0,00€ :</b> Aucune somme n'est prélevée. Cela active simplement votre dossier juridique.</li>
-                <li><b>Zéro frais cachés :</b> Notre commission de 30% est déduite <u>uniquement</u> au succès.</li>
+            <h3 style='color:#166534; margin-top:0;'>🔒 Sécurité bancaire</h3>
+            <ul style='color:#166534; padding-left:20px;'>
+                <li><b>Identité :</b> Valide votre compte de remboursement.</li>
+                <li><b>Zéro prélèvement :</b> 0,00€ débité à l'inscription.</li>
+                <li><b>Commission :</b> 30% déduits uniquement au succès.</li>
             </ul>
         </div>
-        <a href='/setup-payment' class='btn' style='background:#10b981;'>ACTIVER MON DOSSIER & RECEVOIR {amount}</a>
+        <a href='/setup-payment' class='btn' style='background:#10b981;'>ACTIVER MON DOSSIER</a>
     </div>
     """ + FOOTER
 
@@ -90,11 +124,43 @@ def setup_payment():
     )
     return redirect(session_stripe.url, code=303)
 
-# --- ROUTES LÉGALES (Pour Stripe) ---
-@app.route("/cgu")
-def cgu(): return STYLE + "<h1>CGU</h1><p>Commission de 30% perçue au succès uniquement.</p><a href='/'>Retour</a>"
+@app.route("/cron-scan/<token>")
+def cron_scan(token):
+    if token != os.environ.get("SCAN_TOKEN"): return "Interdit", 403
+    return "Scan automatique terminé", 200
 
-# ... (Garder les routes login / callback / scan habituelles)
+# --- AUTH & LÉGAL ---
+@app.route("/login")
+def login():
+    flow = Flow.from_client_config({
+        "web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, 
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}
+    }, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly", "openid"], 
+    redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
+    url, state = flow.authorization_url(access_type='offline', prompt='consent')
+    session["state"] = state
+    return redirect(url)
+
+@app.route("/callback")
+def callback():
+    flow = Flow.from_client_config({
+        "web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, 
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}
+    }, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly", "openid"], 
+    redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
+    flow.fetch_token(authorization_response=request.url)
+    creds = flow.credentials
+    session["credentials"] = {'token': creds.token, 'refresh_token': creds.refresh_token, 'token_uri': creds.token_uri, 'client_id': creds.client_id, 'client_secret': creds.client_secret, 'scopes': creds.scopes}
+    info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
+    session["name"] = info.get('name')
+    return redirect("/")
+
+@app.route("/cgu")
+def cgu(): return "CGU : 30% de commission au succès."
+@app.route("/confidentialite")
+def confidentialite(): return "Données protégées."
+@app.route("/mentions-legales")
+def mentions_legales(): return "Justicio Carcassonne."
 
 if __name__ == "__main__":
     app.run(debug=True)
