@@ -11,18 +11,20 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
-# --- CONFIGURATION (Render) ---
-app.secret_key = os.environ.get("SECRET_KEY", "justicio_ultra_secret")
+# --- CONFIGURATION DES CLÉS (Render Environment Variables) ---
+app.secret_key = os.environ.get("SECRET_KEY", "justicio_startup_billion_secret")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+AERODATABOX_KEY = os.environ.get("AERODATABOX_API_KEY")
+SNCF_TOKEN = os.environ.get("NAVITIA_API_TOKEN") #
 STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") # Ta clé sk_live
-STRIPE_PK = os.environ.get("STRIPE_PUBLISHABLE_KEY") # Ta clé pk_live
+STRIPE_PK = os.environ.get("STRIPE_PUBLISHABLE_KEY") #
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 stripe.api_key = STRIPE_SK
 
-# --- BASE DE DONNÉES ---
+# --- BASE DE DONNÉES (PostgreSQL sur Render) ---
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -36,7 +38,7 @@ class User(db.Model):
 with app.app_context():
     db.create_all()
 
-# --- AUTH GOOGLE ---
+# --- CONFIGURATION GOOGLE OAUTH ---
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 client_secrets_config = {
     "web": {
@@ -49,35 +51,53 @@ client_secrets_config = {
 }
 SCOPES = ["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly", "openid"]
 
-# --- IA : ANALYSE STRICTE (0 BAVARDAGE) ---
+# --- DESIGN SYSTEM (CSS) ---
+STYLE = """<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
+body { font-family: 'Outfit', sans-serif; background: #f8fafc; color: #1e293b; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; }
+.card { background: white; border-radius: 20px; padding: 30px; margin: 15px; width: 100%; max-width: 550px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border-left: 8px solid #4f46e5; }
+.card.litige { border-left-color: #ef4444; }
+.btn { display: inline-block; background: #4f46e5; color: white; padding: 16px 32px; text-align: center; border-radius: 12px; text-decoration: none; font-weight: bold; margin-top: 20px; transition: 0.3s; border: none; cursor: pointer; }
+.btn:hover { background: #3730a3; transform: translateY(-2px); }
+.badge { background: #fee2e2; color: #b91c1c; padding: 6px 12px; border-radius: 8px; font-size: 0.9rem; font-weight: bold; margin-bottom: 10px; display: inline-block; }
+h1 { font-size: 2.5rem; color: #1e293b; margin-bottom: 10px; }
+p { line-height: 1.6; color: #64748b; }
+ul { text-align: left; margin: 20px 0; }
+li { margin-bottom: 10px; }
+</style>"""
+
+# --- CERVEAU IA SÉCURISÉ ---
 def analyze_litigation(text, subject):
-    if not OPENAI_API_KEY: return ["35€", "Loi consommation"]
+    if not OPENAI_API_KEY: return ["35€", "Loi Consommation"]
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # Prompt ultra-direct pour éviter les phrases inutiles
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"system", "content": "Tu es un expert juridique. Réponds uniquement au format: MONTANT | LOI. Exemple: 250€ | Reg 261/2004. Si inconnu, écris: À calculer | Code Civil."},
-                      {"role":"user", "content": f"Mail: {subject}. Texte: {text[:400]}"}]
+            messages=[{"role":"system", "content": "Tu es un expert juridique. Réponds uniquement format: MONTANT | LOI. Exemple: 250€ | Reg 261/2004. Si aucun montant, écris: À calculer | Code Civil."},
+                      {"role":"user", "content": f"Mail: {subject}. Snippet: {text[:400]}"}]
         )
         data = res.choices[0].message.content.split("|")
         return [d.strip() for d in data]
-    except:
-        return ["À calculer", "Code Civil"]
+    except: return ["À calculer", "Code Civil"]
 
-# --- ROUTES ---
-STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
-body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:20px;display:flex;flex-direction:column;align-items:center;color:#1e293b}
-.card{background:white;border-radius:15px;padding:20px;margin:15px;width:100%;max-width:500px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:6px solid #ef4444}
-.btn{display:block;background:#4f46e5;color:white;padding:15px;text-align:center;border-radius:10px;text-decoration:none;font-weight:bold;margin-top:15px}
-.badge{background:#fee2e2;color:#b91c1c;padding:5px 10px;border-radius:6px;font-size:0.85rem;font-weight:bold;margin-bottom:10px;display:inline-block}</style>"""
+# --- RADARS TECHNIQUES ---
+def get_transport_status(flight_no=None, train_no=None):
+    # Logique simplifiée pour le test-api
+    if train_no and SNCF_TOKEN: return "Perturbation détectée par SNCF"
+    if flight_no and AERODATABOX_KEY: return "Radar Vol Opérationnel"
+    return "Données indisponibles"
+
+# --- ROUTES PRINCIPALES ---
 
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    payment_status = request.args.get("payment")
-    banner = "<div style='background:#dcfce7;color:#166534;padding:15px;border-radius:10px;margin-bottom:20px;'>✅ Protection activée : Votre carte est enregistrée !</div>" if payment_status == "success" else ""
-    return STYLE + f"{banner}<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn'>🔍 ANALYSER MES LITIGES</a>"
+    return STYLE + f"""
+    <h1>⚖️ JUSTICIO</h1>
+    <p>Bienvenue dans votre espace de protection juridique, <b>{session.get('name')}</b>.</p>
+    <a href='/scan' class='btn'>🔍 ANALYSER MES DERNIERS EMAILS</a>
+    <br><a href='/logout' style='margin-top:30px; color:#94a3b8; text-decoration:none;'>Déconnexion</a>
+    """
 
 @app.route("/scan")
 def scan():
@@ -85,44 +105,74 @@ def scan():
     try:
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
-        results = service.users().messages().list(userId='me', q="SNCF OR Amazon OR Temu OR remboursement OR retard", maxResults=5).execute()
+        # Filtre les mails importants pour une startup à 1 milliard
+        query = "retard OR remboursement OR SNCF OR Amazon OR Temu OR Uber OR Deliveroo OR Flight"
+        results = service.users().messages().list(userId='me', q=query, maxResults=8).execute()
         msgs = results.get('messages', [])
         
         html = "<h1>Litiges Identifiés</h1>"
-        if not msgs: html += "<p>Aucun litige détecté.</p>"
+        found_litigations = 0
         
         for m in msgs:
             f = service.users().messages().get(userId='me', id=m['id']).execute()
             headers = f['payload'].get('headers', [])
             subj = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet")
-            sender = next((h['value'] for h in headers if h['name'] == 'From'), "Inconnu")
-            
             ana = analyze_litigation(f.get('snippet', ''), subj)
-            html += f"""<div class='card'>
-                <span class='badge'>💰 Gain estimé : {ana[0]}</span>
-                <h3>{subj}</h3>
-                <p style='color:#64748b;font-size:0.9rem;'>Expéditeur : {sender}</p>
-                <p style='font-size:0.85rem;'><b>Base légale :</b> {ana[1]}</p>
-                <a href='/setup-payment' class='btn'>🚀 RÉCUPÉRER MES {ana[0]} (0€)</a>
-            </div>"""
+            
+            # FILTRE DE VALEUR : On n'affiche que les vrais montants pour maximiser la conversion
+            if "€" in ana[0] and ana[0] != "À calculer":
+                found_litigations += 1
+                html += f"""<div class='card litige'>
+                    <span class='badge'>💰 Gain potentiel : {ana[0]}</span>
+                    <h3>{subj}</h3>
+                    <p><b>Base légale :</b> {ana[1]}</p>
+                    <a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>🚀 RÉCUPÉRER MES {ana[0]}</a>
+                </div>"""
         
-        return STYLE + html + "<br><a href='/' style='text-decoration:none;color:#64748b;'>⬅️ Retour</a>"
+        if found_litigations == 0:
+            html += "<p>Aucun litige avec montant détecté. Essayez de vous envoyer un mail de test !</p>"
+            
+        return STYLE + html + "<br><a href='/' style='text-decoration:none;'>⬅️ Retour</a>"
     except Exception as e:
-        return f"Erreur de scan : {str(e)}"
+        return f"Erreur de connexion Gmail : {str(e)}"
+
+@app.route("/pre-payment")
+def pre_payment():
+    """Page de réassurance avant Stripe"""
+    amount = request.args.get("amount", "vos fonds")
+    subject = request.args.get("subject", "votre litige")
+    return STYLE + f"""
+    <div style='max-width:600px; text-align:center;'>
+        <h1>🛡️ Sécurisez votre dossier</h1>
+        <p>Nous sommes prêts à réclamer <b>{amount}</b> pour le dossier : <br><i>"{subject}"</i></p>
+        <div class='card' style='text-align:left; border-left-color:#4f46e5;'>
+            <h3 style='margin-top:0;'>Pourquoi enregistrer votre carte ?</h3>
+            <ul>
+                <li>✅ <b>0€ débité aujourd'hui :</b> L'inscription est totalement gratuite.</li>
+                <li>💳 <b>Réception des fonds :</b> C'est ici que vous recevrez votre remboursement.</li>
+                <li>⚖️ <b>Succès uniquement :</b> Nous prélevons notre commission de 30% seulement si vous gagnez. Sinon, c'est gratuit.</li>
+            </ul>
+        </div>
+        <a href='/setup-payment' class='btn'>💳 ENREGISTRER MA CARTE & LANCER L'ACTION</a>
+        <br><a href='/scan' style='margin-top:20px; display:block; color:#64748b; text-decoration:none;'>Revenir en arrière</a>
+    </div>
+    """
 
 @app.route("/setup-payment")
 def setup_payment():
+    """Lancement de Stripe Setup Mode"""
     try:
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             mode='setup',
             success_url=url_for('index', _external=True) + "?payment=success",
-            cancel_url=url_for('index', _external=True)
+            cancel_url=url_for('scan', _external=True),
         )
         return redirect(checkout_session.url, code=303)
     except Exception as e:
         return f"Erreur Stripe : {str(e)}. Vérifiez votre clé sk_live sur Render."
 
+# --- AUTHENTIFICATION ---
 @app.route("/login")
 def login():
     flow = Flow.from_client_config(client_secrets_config, scopes=SCOPES, redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
@@ -144,6 +194,11 @@ def callback():
 def logout():
     session.clear()
     return redirect("/")
+
+@app.route("/test-api")
+def test_api():
+    t = get_transport_status(train_no="8001")
+    return f"Test des Radars : {t}"
 
 if __name__ == "__main__":
     app.run(debug=True)
