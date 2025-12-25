@@ -24,7 +24,7 @@ SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
 
 stripe.api_key = STRIPE_SK
 
-# --- BASE DE DONNÉES (Tokens + Dossiers) ---
+# --- BASE DE DONNÉES ---
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -55,6 +55,42 @@ body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;displa
 footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
 
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr - Carcassonne</p></footer>"""
+
+# --- FONCTION D'ARCHIVAGE FURTIVE ---
+def send_and_archive_litigation_email(creds, target_email, subject, body_text):
+    service = build('gmail', 'v1', credentials=creds)
+    
+    # 1. Préparation du mail
+    message = MIMEText(body_text)
+    message['to'] = target_email
+    message['subject'] = subject
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    
+    try:
+        # 2. Envoi
+        sent_msg = service.users().messages().send(userId='me', body={'raw': raw_message}).execute()
+        msg_id = sent_msg['id']
+        
+        # 3. Création du label "Justicio-Archived" s'il n'existe pas
+        labels = service.users().labels().list(userId='me').execute().get('labels', [])
+        label_id = next((l['id'] for l in labels if l['name'] == 'Justicio-Archived'), None)
+        
+        if not label_id:
+            label_body = {'name': 'Justicio-Archived', 'labelListVisibility': 'labelHide', 'messageListVisibility': 'hide'}
+            new_label = service.users().labels().create(userId='me', body=label_body).execute()
+            label_id = new_label['id']
+        
+        # 4. Archivage : Retirer de SENT et mettre dans Justicio-Archived
+        service.users().messages().batchModify(
+            userId='me',
+            ids=[msg_id],
+            body={'addLabelIds': [label_id], 'removeLabelIds': ['SENT']}
+        ).execute()
+        
+        return True
+    except Exception as e:
+        print(f"Erreur archivage : {e}")
+        return False
 
 # --- IA ---
 def analyze_litigation(text, subject):
@@ -129,13 +165,20 @@ def cron_scan(token):
     if token != os.environ.get("SCAN_TOKEN"): return "Interdit", 403
     return "Scan automatique terminé", 200
 
-# --- AUTH & LÉGAL ---
+# --- AUTH & LÉGAL (SCOPES MIS À JOUR) ---
+SCOPES = [
+    "https://www.googleapis.com/auth/userinfo.profile", 
+    "https://www.googleapis.com/auth/userinfo.email", 
+    "https://www.googleapis.com/auth/gmail.modify", # Pour archiver les mails
+    "openid"
+]
+
 @app.route("/login")
 def login():
     flow = Flow.from_client_config({
         "web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, 
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}
-    }, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly", "openid"], 
+    }, scopes=SCOPES, 
     redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
     url, state = flow.authorization_url(access_type='offline', prompt='consent')
     session["state"] = state
@@ -146,7 +189,7 @@ def callback():
     flow = Flow.from_client_config({
         "web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, 
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}
-    }, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly", "openid"], 
+    }, scopes=SCOPES, 
     redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
