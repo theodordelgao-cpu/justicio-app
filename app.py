@@ -4,6 +4,7 @@ import requests
 import stripe
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text  # Import nécessaire pour la réparation
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -35,9 +36,9 @@ db = SQLAlchemy(app)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True)
-    refresh_token = db.Column(db.String(500)) # Pour le scan automatique des 12h
-    stripe_customer_id = db.Column(db.String(100)) # Pour prélever les 30%
-    payment_method_id = db.Column(db.String(100)) # La carte enregistrée
+    refresh_token = db.Column(db.String(500))
+    stripe_customer_id = db.Column(db.String(100)) 
+    payment_method_id = db.Column(db.String(100)) 
     name = db.Column(db.String(100))
 
 class Litigation(db.Model):
@@ -45,10 +46,22 @@ class Litigation(db.Model):
     user_email = db.Column(db.String(120))
     company = db.Column(db.String(100))
     amount = db.Column(db.String(50))
-    status = db.Column(db.String(50), default="Détecté") # Détecté / Mis en demeure / Payé
+    status = db.Column(db.String(50), default="Détecté")
 
 with app.app_context():
     db.create_all()
+
+# --- 🛠 ROUTE DE RÉPARATION (À LANCER UNE FOIS) ---
+@app.route("/fix-db")
+def fix_db():
+    """Ajoute les colonnes manquantes dans la DB Render sans tout effacer"""
+    try:
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(100);'))
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(100);'))
+        db.session.commit()
+        return "✅ Base de données synchronisée ! Les colonnes Stripe ont été ajoutées.", 200
+    except Exception as e:
+        return f"❌ Erreur lors de la mise à jour : {str(e)}", 500
 
 # --- CONFIGURATION GOOGLE OAUTH ---
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -78,7 +91,6 @@ def analyze_litigation(text, subject):
     except: return ["À calculer", "Code de la consommation"]
 
 def send_legal_email(creds, target_email, company, amount, law):
-    """Envoie la mise en demeure depuis le mail du client"""
     service = build('gmail', 'v1', credentials=creds)
     body = f"Madame, Monsieur,\n\nNous agissons pour le compte de Justicio concernant un remboursement de {amount} chez {company} basé sur {law}..."
     msg = MIMEText(body)
@@ -154,9 +166,6 @@ def cron_scan(token):
         users = User.query.filter(User.refresh_token != None).all()
         if not users:
             return "Scan terminé : Aucun utilisateur avec accès Gmail trouvé.", 200
-        for u in users:
-            # Ici ton robot pourra utiliser u.refresh_token pour scanner en arrière-plan
-            print(f"Robot en cours pour : {u.email}")
         return f"Scan automatique terminé pour {len(users)} utilisateur(s).", 200
     except Exception as e:
         return f"Erreur interne du robot : {str(e)}", 500
