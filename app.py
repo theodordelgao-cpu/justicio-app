@@ -4,7 +4,7 @@ import requests
 import stripe
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text  # Import nécessaire pour la réparation
+from sqlalchemy import text  # Nécessaire pour la réparation
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -54,12 +54,13 @@ with app.app_context():
 # --- 🛠 ROUTE DE RÉPARATION (À LANCER UNE FOIS) ---
 @app.route("/fix-db")
 def fix_db():
-    """Ajoute les colonnes manquantes dans la DB Render sans tout effacer"""
+    """Ajoute manuellement les colonnes Stripe manquantes dans PostgreSQL sur Render"""
     try:
+        # On force l'ajout des colonnes si elles n'existent pas
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(100);'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(100);'))
         db.session.commit()
-        return "✅ Base de données synchronisée ! Les colonnes Stripe ont été ajoutées.", 200
+        return "✅ Succès : Les colonnes Stripe ont été ajoutées. L'erreur UndefinedColumn est résolue !", 200
     except Exception as e:
         return f"❌ Erreur lors de la mise à jour : {str(e)}", 500
 
@@ -163,6 +164,7 @@ def cron_scan(token):
     if token != os.environ.get("SCAN_TOKEN"):
         return "Interdit", 403
     try:
+        # On tente de récupérer les utilisateurs (ceci plantera si on n'a pas fait /fix-db)
         users = User.query.filter(User.refresh_token != None).all()
         if not users:
             return "Scan terminé : Aucun utilisateur avec accès Gmail trouvé.", 200
