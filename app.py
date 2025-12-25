@@ -101,7 +101,7 @@ def cgu(): return STYLE + "<h1>CGU</h1><p>Commission de 30% perçue au succès.<
 def confidentialite(): return STYLE + "<h1>Confidentialité</h1><p>Accès Gmail limité à la détection de litiges.</p><a href='/'>Retour</a>"
 
 @app.route("/mentions-legales")
-def mentions_legales(): return STYLE + "<h1>Mentions Légales</h1><p>Justicio - 5 rue peire cardenal, 11000 Carcassonne.</p><a href='/'>Retour</a>"
+def mentions_legales(): return STYLE + "<h1>Mentions Légales</h1><p>Justicio - 3 rue santiago du chilie, 31400 Toulouse.</p><a href='/'>Retour</a>"
 
 # --- ROUTES PRINCIPALES ---
 @app.route("/")
@@ -169,3 +169,4 @@ def callback():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
