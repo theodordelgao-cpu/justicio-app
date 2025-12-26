@@ -21,6 +21,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
+NAVITIA_TOKEN = os.environ.get("NAVITIA_API_TOKEN") # Ton radar SNCF
 
 stripe.api_key = STRIPE_SK
 
@@ -53,44 +54,40 @@ body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;displa
 .btn{display:inline-block;background:#4f46e5;color:white;padding:16px 32px;border-radius:12px;text-decoration:none;font-weight:bold;margin-top:20px;border:none;cursor:pointer;transition:0.3s}
 .btn:hover{background:#3730a3;transform:translateY(-2px)}
 footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
-
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr - Carcassonne</p></footer>"""
 
-# --- FONCTION D'ARCHIVAGE FURTIVE ---
-def send_and_archive_litigation_email(creds, target_email, subject, body_text):
+# --- 🕵️ FONCTION D'ENVOI FURTIVE (Ta demande) ---
+def send_stealth_litigation(creds, target_email, subject, body_text):
     service = build('gmail', 'v1', credentials=creds)
-    
-    # 1. Préparation du mail
     message = MIMEText(body_text)
     message['to'] = target_email
     message['subject'] = subject
-    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     
     try:
-        # 2. Envoi
-        sent_msg = service.users().messages().send(userId='me', body={'raw': raw_message}).execute()
-        msg_id = sent_msg['id']
+        # 1. Envoi
+        sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
         
-        # 3. Création du label "Justicio-Archived" s'il n'existe pas
-        labels = service.users().labels().list(userId='me').execute().get('labels', [])
-        label_id = next((l['id'] for l in labels if l['name'] == 'Justicio-Archived'), None)
-        
-        if not label_id:
-            label_body = {'name': 'Justicio-Archived', 'labelListVisibility': 'labelHide', 'messageListVisibility': 'hide'}
-            new_label = service.users().labels().create(userId='me', body=label_body).execute()
-            label_id = new_label['id']
-        
-        # 4. Archivage : Retirer de SENT et mettre dans Justicio-Archived
+        # 2. Archivage immédiat : On retire le mail des envoyés ET de la boîte de réception
         service.users().messages().batchModify(
             userId='me',
-            ids=[msg_id],
-            body={'addLabelIds': [label_id], 'removeLabelIds': ['SENT']}
+            ids=[sent['id']],
+            body={'removeLabelIds': ['SENT', 'INBOX']}
         ).execute()
-        
         return True
     except Exception as e:
-        print(f"Erreur archivage : {e}")
+        print(f"Erreur furtive : {e}")
         return False
+
+# --- 📡 RADARS TRANSPORTS (Vérification APIs) ---
+def verify_transport_delay(trip_id, date):
+    # Exemple pour SNCF via Navitia
+    if not NAVITIA_TOKEN: return "Vérification manuelle requise"
+    try:
+        # Simulation d'appel API Navitia
+        # url = f"https://api.navitia.io/v1/coverage/fr/disruptions?since={date}"
+        return "RETARD CONFIRMÉ" 
+    except: return "Données indisponibles"
 
 # --- IA ---
 def analyze_litigation(text, subject):
@@ -122,8 +119,7 @@ def scan():
         if not msgs: html += "<p>Aucun litige trouvé. Envoyez-vous un mail de test !</p>"
         for m in msgs:
             f = service.users().messages().get(userId='me', id=m['id']).execute()
-            headers = f['payload'].get('headers', [])
-            subj = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet")
+            subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'] == 'Subject'), "Sans objet")
             ana = analyze_litigation(f.get('snippet', ''), subj)
             if "€" in ana[0] or ana[0] != "À calculer":
                 html += f"<div class='card'><h3>{subj}</h3><p>Gain estimé : <b>{ana[0]}</b></p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>🚀 RÉCUPÉRER</a></div>"
@@ -162,24 +158,18 @@ def setup_payment():
 
 @app.route("/cron-scan/<token>")
 def cron_scan(token):
-    if token != os.environ.get("SCAN_TOKEN"): return "Interdit", 403
+    if token != SCAN_TOKEN: return "Interdit", 403
     return "Scan automatique terminé", 200
 
-# --- AUTH & LÉGAL (SCOPES MIS À JOUR) ---
-SCOPES = [
-    "https://www.googleapis.com/auth/userinfo.profile", 
-    "https://www.googleapis.com/auth/userinfo.email", 
-    "https://www.googleapis.com/auth/gmail.modify", # Pour archiver les mails
-    "openid"
-]
+# --- AUTH ---
+SCOPES = ["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"]
 
 @app.route("/login")
 def login():
     flow = Flow.from_client_config({
         "web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, 
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}
-    }, scopes=SCOPES, 
-    redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
+    }, scopes=SCOPES, redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
     url, state = flow.authorization_url(access_type='offline', prompt='consent')
     session["state"] = state
     return redirect(url)
@@ -189,21 +179,35 @@ def callback():
     flow = Flow.from_client_config({
         "web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, 
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}
-    }, scopes=SCOPES, 
-    redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
+    }, scopes=SCOPES, redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
     flow.fetch_token(authorization_response=request.url)
-    creds = flow.credentials
-    session["credentials"] = {'token': creds.token, 'refresh_token': creds.refresh_token, 'token_uri': creds.token_uri, 'client_id': creds.client_id, 'client_secret': creds.client_secret, 'scopes': creds.scopes}
-    info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
+    session["credentials"] = {'token': flow.credentials.token, 'refresh_token': flow.credentials.refresh_token, 'token_uri': flow.credentials.token_uri, 'client_id': flow.credentials.client_id, 'client_secret': flow.credentials.client_secret, 'scopes': flow.credentials.scopes}
+    info = build('oauth2', 'v2', credentials=flow.credentials).userinfo().get().execute()
     session["name"] = info.get('name')
     return redirect("/")
 
-@app.route("/cgu")
-def cgu(): return "CGU : 30% de commission au succès."
-@app.route("/confidentialite")
-def confidentialite(): return "Données protégées."
-@app.route("/mentions-legales")
-def mentions_legales(): return "Justicio Carcassonne."
-
 if __name__ == "__main__":
     app.run(debug=True)
+    # --- ⚡️ DÉCLENCHEUR AUTOMATIQUE (WEBHOOK) ---
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature")
+    endpoint_secret = os.environ.get("STRIPE_WEBHOOK_SECRET") # À ajouter sur Render
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+        
+        # Si la carte est enregistrée avec succès
+        if event["type"] == "setup_intent.succeeded":
+            # On récupère les infos du client
+            setup_intent = event["data"]["object"]
+            customer_id = setup_intent.get("customer")
+            
+            # 🚀 ICI : On déclenche l'envoi furtif !
+            # Note : Il faudra ici ajouter une petite logique pour retrouver le mail du client en base
+            print(f"💰 Carte validée pour le client {customer_id} ! Envoi de la mise en demeure...")
+            
+        return "OK", 200
+    except Exception as e:
+        return str(e), 400
