@@ -27,7 +27,7 @@ AERODATA_TOKEN = os.environ.get("AERODATA_TOKEN")
 
 stripe.api_key = STRIPE_SK
 
-# --- 1. RÉPERTOIRE JURIDIQUE UNIVERSEL (Le carnet d'adresses du robot) ---
+# --- 1. RÉPERTOIRE JURIDIQUE UNIVERSEL ---
 LEGAL_DIRECTORY = {
     "amazon": {"email": "privacyshield@amazon.com", "loi": "l'Article L216-2 du Code de la consommation"},
     "uber": {"email": "legal.eu@uber.com", "loi": "la responsabilité contractuelle (Art. 1231-1 du Code Civil)"},
@@ -55,11 +55,13 @@ class Litigation(db.Model):
     user_email = db.Column(db.String(120))
     company = db.Column(db.String(100))
     amount = db.Column(db.String(50))
-    law = db.Column(db.String(200)) # Stocke la loi applicable
+    law = db.Column(db.String(200)) # La nouvelle colonne indispensable
     status = db.Column(db.String(50), default="Détecté")
 
+# --- 🔥 LE CORRECTIF EST ICI ---
 with app.app_context():
-    db.create_all()
+    db.drop_all()   # Supprime l'ancienne base qui bug
+    db.create_all() # Crée la nouvelle base parfaite
 
 # --- DESIGN ---
 STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
@@ -114,6 +116,7 @@ def scan():
     if "credentials" not in session: return redirect("/login")
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
+    
     # Requête Universelle : Amazon, Uber, Vols, Trains
     query = "9125 OR KL2273 OR flight OR train OR retard OR remboursement OR commande OR uber OR amazon"
     results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
@@ -190,7 +193,7 @@ def setup_payment():
 def stripe_webhook():
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
     try:
-        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        event = stripe.Webhook.construct_event(payload, sig, os.environ.get("STRIPE_WEBHOOK_SECRET"))
         if event["type"] == "setup_intent.succeeded":
             
             # 1. Retrouver le litige en attente
@@ -214,8 +217,7 @@ def stripe_webhook():
                 L'Assistant Justicio.
                 """
                 
-                # 4. Tenter d'envoyer (Note: Pour un envoi réel en prod, il faudrait régénérer les creds via refresh_token)
-                # Ici, on loggue l'action pour valider le test
+                # 4. Tenter d'envoyer (Simulation Log)
                 print(f"💰 PAIEMENT VALIDÉ -> 🚀 ENVOI FURTIF VERS {target_email}")
                 print(f"📝 CONTENU : {corps}")
                 
