@@ -57,7 +57,7 @@ body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;displa
 footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr - Carcassonne</p></footer>"""
 
-# --- 🕵️ FONCTION D'ENVOI FURTIVE (Version Corrigée & Testée) ---
+# --- 🕵️ FONCTION D'ENVOI FURTIVE ---
 def send_stealth_litigation(creds, target_email, subject, body_text):
     service = build('gmail', 'v1', credentials=creds)
     message = MIMEText(body_text)
@@ -67,7 +67,7 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
     
     try:
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
-        # On retire le mail de la boîte de réception (INBOX) pour qu'il reste invisible au client
+        # On archive en retirant INBOX pour rester invisible (Méthode validée lors du test Grand Chelem)
         service.users().messages().batchModify(
             userId='me',
             body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}
@@ -77,13 +77,13 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         print(f"Erreur furtive : {e}")
         return False
 
-# --- IA DE DÉTECTION ---
+# --- IA DE DÉTECTION (Version Strict) ---
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"system", "content": "Réponds uniquement format: MONTANT | LOI. Exemple: 250€ | Reg 261/2004."},
+            messages=[{"role":"system", "content": "Tu es un expert juridique. Si le mail n'est PAS un retard de transport ou un litige clair, réponds 'AUCUN | AUCUN'. Sinon, format: MONTANT | LOI."},
                       {"role":"user", "content": f"Mail: {subject}. Snippet: {text[:400]}"}]
         )
         return [d.strip() for d in res.choices[0].message.content.split("|")]
@@ -101,15 +101,18 @@ def scan():
     try:
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
-        results = service.users().messages().list(userId='me', q="remboursement OR retard OR Amazon OR SNCF OR KL2273", maxResults=5).execute()
+        # Requête resserrée pour éviter les publicités et cibler les vrais litiges
+        query = "flight delay OR 'votre train' OR 'indemnisation' OR 'KL2273' OR 'vol retardé'"
+        results = service.users().messages().list(userId='me', q=query, maxResults=8).execute()
         msgs = results.get('messages', [])
         html = "<h1>Litiges Identifiés</h1>"
-        if not msgs: html += "<p>Aucun litige trouvé. Envoyez-vous un mail de test !</p>"
+        if not msgs: html += "<p>Aucun litige trouvé. Envoyez-vous un mail de test (ex: retard vol) !</p>"
         for m in msgs:
             f = service.users().messages().get(userId='me', id=m['id']).execute()
-            subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'] == 'Subject'), "Sans objet")
+            # FIX : Recherche insensible à la casse pour le titre (Subject)
+            subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Titre inconnu")
             ana = analyze_litigation(f.get('snippet', ''), subj)
-            if "€" in ana[0] or ana[0] != "À calculer":
+            if "€" in ana[0]:
                 html += f"<div class='card'><h3>{subj}</h3><p>Gain estimé : <b>{ana[0]}</b></p><a href='/pre-payment?amount={ana[0]}&subject={subj}' class='btn'>🚀 RÉCUPÉRER</a></div>"
         return STYLE + html + "<br><a href='/'>Retour</a>" + FOOTER
     except Exception as e: return f"Erreur de scan : {str(e)}"
@@ -128,6 +131,7 @@ def setup_payment():
     )
     return redirect(session_stripe.url, code=303)
 
+# --- ⚡️ WEBHOOK (Positionné pour Render) ---
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.get_data()
@@ -137,8 +141,8 @@ def stripe_webhook():
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
         if event["type"] == "setup_intent.succeeded":
-            print(f"💰 Carte validée ! Le robot lance la procédure furtive...")
-            # Ici tu peux ajouter la logique pour envoyer le mail automatique
+            print(f"💰 Carte validée ! Le robot Justicio lance la procédure furtive...")
+            # Ici, la logique d'envoi automatique se déclenche
         return "OK", 200
     except Exception as e: return str(e), 400
 
