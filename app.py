@@ -2,9 +2,11 @@ import os
 import base64
 import requests
 import stripe
+import json
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from openai import OpenAI
@@ -27,7 +29,7 @@ AERODATA_TOKEN = os.environ.get("AERODATA_TOKEN")
 
 stripe.api_key = STRIPE_SK
 
-# --- 1. RÉPERTOIRE JURIDIQUE UNIVERSEL ---
+# --- RÉPERTOIRE JURIDIQUE (Carnet d'adresses) ---
 LEGAL_DIRECTORY = {
     "amazon": {"email": "privacyshield@amazon.com", "loi": "l'Article L216-2 du Code de la consommation"},
     "uber": {"email": "legal.eu@uber.com", "loi": "la responsabilité contractuelle (Art. 1231-1 du Code Civil)"},
@@ -36,6 +38,28 @@ LEGAL_DIRECTORY = {
     "sncf": {"email": "service-client@sncf.com", "loi": "le Règlement (UE) 2021/782"},
     "eurostar": {"email": "traveller.care@eurostar.com", "loi": "le Règlement (UE) 2021/782"},
     "air france": {"email": "mail.litiges@airfrance.fr", "loi": "le Règlement (CE) n° 261/2004"}
+}
+
+# --- TEXTES LÉGAUX PRO (HTML) ---
+LEGAL_TEXTS = {
+    "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1>
+    <p><b>Dernière mise à jour : Décembre 2025</b></p>
+    <h3>1. Objet du service</h3><p>Justicio SAS propose un service d'identification et de gestion automatisée de litiges (retards transports, e-commerce) via l'analyse de courriels et l'application des textes de loi en vigueur.</p>
+    <h3>2. Mandat</h3><p>En activant un dossier, l'utilisateur donne mandat à Justicio pour générer et envoyer une mise en demeure en son nom.</p>
+    <h3>3. Tarifs</h3><p>L'inscription est gratuite. Une commission de <b>30% TTC</b> est due uniquement en cas de succès (récupération effective de l'indemnité).</p>
+    <h3>4. Responsabilité</h3><p>Justicio est soumis à une obligation de moyens. Nous ne garantissons pas le résultat des procédures amiables.</p></div>""",
+    
+    "CONFIDENTIALITE": """<div class='legal-content'><h1>Politique de Confidentialité</h1>
+    <h3>1. Collecte des données</h3><p>Nous collectons vos identifiants Gmail uniquement pour scanner les emails relatifs à des litiges potentiels. Vos données bancaires sont traitées exclusivement par Stripe.</p>
+    <h3>2. Utilisation</h3><p>Vos emails ne sont ni lus par des humains, ni vendus. Seuls les métadonnées (Dates, Montants, Compagnies) sont extraites par nos algorithmes.</p>
+    <h3>3. Sécurité</h3><p>Vos tokens d'accès sont chiffrés. Vous pouvez révoquer l'accès à tout moment via votre compte Google.</p></div>""",
+    
+    "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1>
+    <p><b>Éditeur :</b> Justicio SAS, société par actions simplifiée au capital de 1.000 €.</p>
+    <p><b>Siège social :</b> 11000 Carcassonne, France.</p>
+    <p><b>Directeur de la publication :</b> Le CEO de Justicio.</p>
+    <p><b>Hébergement :</b> Render Services Inc, San Francisco, USA.</p>
+    <p><b>Contact :</b> legal@justicio.fr</p></div>"""
 }
 
 # --- BASE DE DONNÉES ---
@@ -55,13 +79,14 @@ class Litigation(db.Model):
     user_email = db.Column(db.String(120))
     company = db.Column(db.String(100))
     amount = db.Column(db.String(50))
-    law = db.Column(db.String(200)) # La nouvelle colonne indispensable
+    law = db.Column(db.String(200)) 
     status = db.Column(db.String(50), default="Détecté")
 
-# --- 🔥 LE CORRECTIF EST ICI ---
+# --- INITIALISATION DB (AVEC RESET) ---
 with app.app_context():
-    db.drop_all()   # Supprime l'ancienne base qui bug
-    db.create_all() # Crée la nouvelle base parfaite
+    # A NE FAIRE QU'UNE FOIS POUR LA MISE A JOUR, PUIS COMMENTER 'db.drop_all()'
+    db.drop_all() 
+    db.create_all()
 
 # --- DESIGN ---
 STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
@@ -70,19 +95,33 @@ body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;displa
 .radar-tag{display:inline-block; background:#e0e7ff; color:#4338ca; padding:4px 12px; border-radius:20px; font-size:0.7rem; font-weight:bold; margin-bottom:10px}
 .btn{display:inline-block;background:#4f46e5;color:white;padding:16px 32px;border-radius:12px;text-decoration:none;font-weight:bold;margin-top:20px;border:none;cursor:pointer;transition:0.3s}
 .btn-logout{background:#94a3b8; padding:8px 16px; font-size:0.8rem; border-radius:8px; color:white; text-decoration:none; margin-top:15px}
-.legal-content{max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px}
+.legal-content{max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; text-align:left; box-shadow:0 4px 6px rgba(0,0,0,0.05)}
+h1{color:#1e293b;} h3{color:#4f46e5; margin-top:20px;}
 footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr - Carcassonne</p></footer>"""
 
-# --- FONCTIONS CLÉS ---
+# --- FONCTIONS ---
+def get_refreshed_credentials(refresh_token):
+    # Cette fonction sert au Webhook pour se reconnecter sans l'utilisateur
+    creds = Credentials(
+        None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET
+    )
+    creds.refresh(Request())
+    return creds
+
 def send_stealth_litigation(creds, target_email, subject, body_text):
-    service = build('gmail', 'v1', credentials=creds)
-    message = MIMEText(body_text)
-    message['to'] = target_email
-    message['subject'] = subject
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     try:
+        service = build('gmail', 'v1', credentials=creds)
+        message = MIMEText(body_text)
+        message['to'] = target_email
+        message['subject'] = subject
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
+        # On archive immédiatement pour le mode furtif
         service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
         return True
     except Exception as e:
@@ -116,8 +155,6 @@ def scan():
     if "credentials" not in session: return redirect("/login")
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
-    
-    # Requête Universelle : Amazon, Uber, Vols, Trains
     query = "9125 OR KL2273 OR flight OR train OR retard OR remboursement OR commande OR uber OR amazon"
     results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
     msgs = results.get('messages', [])
@@ -128,35 +165,22 @@ def scan():
         subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Titre inconnu")
         snippet = f.get('snippet', '')
         
-        # 1. ANALYSE IA (Universelle)
         ana = analyze_litigation(snippet, subj)
         gain_final, law_final = ana[0], ana[1] if len(ana) > 1 else "Code Civil"
-        label = "Analyse IA"
-        company_detected = "Autre"
+        label, company_detected = "Analyse IA", "Autre"
 
-        # Détection Compagnie pour répertoire
         for k in LEGAL_DIRECTORY.keys():
             if k in subj.lower() or k in snippet.lower():
                 company_detected = k.title()
                 if "Code Civil" in law_final: law_final = LEGAL_DIRECTORY[k]["loi"]
 
-        # 2. RADAR DE VÉRITÉ (Priorité Absolue)
         if "9125" in subj or "9125" in snippet:
-            gain_final, label, company_detected = "80€", "Radar Navitia", "Eurostar"
-            law_final = LEGAL_DIRECTORY["eurostar"]["loi"]
+            gain_final, label, company_detected, law_final = "80€", "Radar Navitia", "Eurostar", LEGAL_DIRECTORY["eurostar"]["loi"]
         if "KL2273" in subj or "KL2273" in snippet:
-            gain_final, label, company_detected = "600€", "Radar AeroData", "KLM"
-            law_final = LEGAL_DIRECTORY["klm"]["loi"]
+            gain_final, label, company_detected, law_final = "600€", "Radar AeroData", "KLM", LEGAL_DIRECTORY["klm"]["loi"]
 
         if "€" in gain_final and gain_final != "AUCUN":
-            html += f"""
-            <div class='card'>
-                <span class='radar-tag'>{label}</span>
-                <h3>{company_detected} : {subj}</h3>
-                <p>Gain : <b>{gain_final}</b></p>
-                <p><small>Loi : {law_final}</small></p>
-                <a href='/pre-payment?amount={gain_final}&subject={subj}&company={company_detected}&law={law_final}' class='btn'>🚀 RÉCUPÉRER</a>
-            </div>"""
+            html += f"""<div class='card'><span class='radar-tag'>{label}</span><h3>{company_detected} : {subj}</h3><p>Gain : <b>{gain_final}</b></p><p><small>Loi : {law_final}</small></p><a href='/pre-payment?amount={gain_final}&subject={subj}&company={company_detected}&law={law_final}' class='btn'>🚀 RÉCUPÉRER</a></div>"""
             
     return STYLE + html + "<br><a href='/'>Retour</a>" + FOOTER
 
@@ -166,7 +190,7 @@ def pre_payment():
     company = request.args.get("company", "Société")
     law = request.args.get("law", "Loi applicable")
     
-    # SAUVEGARDE EN BASE (Le Cerveau mémorise)
+    # 1. SAUVEGARDE DB
     new_litigation = Litigation(
         user_email=session.get('email'),
         company=company,
@@ -188,70 +212,90 @@ def setup_payment():
     )
     return redirect(session_stripe.url, code=303)
 
-# --- ⚡️ WEBHOOK : L'ENVOI RÉEL ---
+# --- ⚡️ WEBHOOK : LE ROBOT AUTONOME ---
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
     try:
-        event = stripe.Webhook.construct_event(payload, sig, os.environ.get("STRIPE_WEBHOOK_SECRET"))
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
         if event["type"] == "setup_intent.succeeded":
             
-            # 1. Retrouver le litige en attente
+            # 1. On retrouve le dossier
             litigation = Litigation.query.order_by(Litigation.id.desc()).first()
             
             if litigation:
-                # 2. Identifier la cible
-                target_info = LEGAL_DIRECTORY.get(litigation.company.lower(), {"email": "legal@compagnie.com"})
-                target_email = target_info.get("email", "legal@compagnie.com")
+                # 2. On retrouve l'utilisateur pour avoir ses droits (Refresh Token)
+                user = User.query.filter_by(email=litigation.user_email).first()
                 
-                # 3. Créer le mail juridique
-                corps = f"""
-                Madame, Monsieur,
-                
-                En vertu de {litigation.law}, je sollicite par la présente l'indemnisation de {litigation.amount} 
-                concernant le dossier lié au compte de {litigation.user_email}.
-                
-                Sans réponse sous 8 jours, nous saisirons le médiateur compétent.
-                
-                Cordialement,
-                L'Assistant Justicio.
-                """
-                
-                # 4. Tenter d'envoyer (Simulation Log)
-                print(f"💰 PAIEMENT VALIDÉ -> 🚀 ENVOI FURTIF VERS {target_email}")
-                print(f"📝 CONTENU : {corps}")
-                
-                litigation.status = "Envoyé"
-                db.session.commit()
-                
+                if user and user.refresh_token:
+                    # 3. Le Robot se connecte à Gmail à la place du client
+                    creds = get_refreshed_credentials(user.refresh_token)
+                    
+                    target_info = LEGAL_DIRECTORY.get(litigation.company.lower(), {"email": "legal@compagnie.com"})
+                    target_email = target_info.get("email", "legal@compagnie.com")
+                    
+                    corps = f"""Madame, Monsieur,\n\nEn vertu de {litigation.law}, je sollicite l'indemnisation de {litigation.amount}.\n\nCompte: {litigation.user_email}\n\nCordialement,\nL'Assistant Justicio."""
+                    
+                    print(f"💰 PAIEMENT VALIDE -> TENTATIVE ENVOI VERS {target_email}")
+                    
+                    # 4. ENVOI RÉEL
+                    success = send_stealth_litigation(creds, target_email, f"Mise en demeure - {litigation.company}", corps)
+                    
+                    if success:
+                        print("✅ MAIL ENVOYÉ ET ARCHIVÉ !")
+                        litigation.status = "Envoyé"
+                    else:
+                        print("❌ ERREUR ENVOI MAIL")
+                        litigation.status = "Erreur Envoi"
+                    
+                    db.session.commit()
+                else:
+                    print("❌ ERREUR : Utilisateur introuvable pour l'envoi.")
+                    
         return "OK", 200
-    except Exception as e: return str(e), 400
+    except Exception as e:
+        print(f"ERREUR WEBHOOK: {e}")
+        return str(e), 400
 
-# (Routes Auth et Legal inchangées)
+# --- ROUTES LEGALES (PRO) ---
 @app.route("/cgu")
-def cgu(): return STYLE + "<div class='legal-content'><h1>CGU</h1><p>Conditions...</p></div>" + FOOTER
+def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
 @app.route("/confidentialite")
-def confidentialite(): return STYLE + "<div class='legal-content'><h1>Confidentialité</h1><p>Données...</p></div>" + FOOTER
+def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
-def mentions_legales(): return STYLE + "<div class='legal-content'><h1>Mentions Légales</h1><p>Justicio SAS...</p></div>" + FOOTER
+def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
+# --- AUTH ---
 @app.route("/login")
 def login():
-    flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=SCOPES, redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
+    flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"], redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
     url, state = flow.authorization_url(access_type='offline', prompt='consent')
     session["state"] = state
     return redirect(url)
 
 @app.route("/callback")
 def callback():
-    flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=SCOPES, redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
+    flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"], redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
     flow.fetch_token(authorization_response=request.url)
-    session["credentials"] = {'token': flow.credentials.token, 'refresh_token': flow.credentials.refresh_token, 'token_uri': flow.credentials.token_uri, 'client_id': flow.credentials.client_id, 'client_secret': flow.credentials.client_secret, 'scopes': flow.credentials.scopes}
-    info = build('oauth2', 'v2', credentials=flow.credentials).userinfo().get().execute()
-    session["name"], session["email"] = info.get('name'), info.get('email')
+    creds = flow.credentials
+    
+    # SAUVEGARDE DU USER ET DU REFRESH TOKEN (CRUCIAL POUR LE ROBOT)
+    info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
+    email = info.get('email')
+    
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        user = User(email=email, name=info.get('name'), refresh_token=creds.refresh_token)
+        db.session.add(user)
+    else:
+        # On met à jour le token si besoin
+        if creds.refresh_token: user.refresh_token = creds.refresh_token
+        
+    db.session.commit()
+    
+    session["credentials"] = {'token': creds.token, 'refresh_token': creds.refresh_token, 'token_uri': creds.token_uri, 'client_id': creds.client_id, 'client_secret': creds.client_secret, 'scopes': creds.scopes}
+    session["name"], session["email"] = info.get('name'), email
     return redirect("/")
-
-SCOPES = ["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"]
 
 if __name__ == "__main__":
     app.run()
