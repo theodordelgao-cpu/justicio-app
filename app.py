@@ -55,12 +55,13 @@ class Litigation(db.Model):
     company = db.Column(db.String(100))
     amount = db.Column(db.String(50))
     law = db.Column(db.String(200)) 
-    subject = db.Column(db.String(300)) # Ajouté pour citer la réf dans le mail
+    subject = db.Column(db.String(300)) # C'EST ICI LA NOUVEAUTÉ QUI BLOQUAIT
     status = db.Column(db.String(50), default="Détecté")
 
+# --- 🔥 LE CORRECTIF : RESET DB ---
 with app.app_context():
-    # db.drop_all() # <-- Décommente cette ligne UNE SEULE FOIS si tu as une erreur 500, puis recommente-la
-    db.create_all()
+    db.drop_all()   # ON EFFACE L'ANCIENNE BASE QUI BUG
+    db.create_all() # ON CRÉE LA NOUVELLE BASE PROPRE
 
 # --- DESIGN PRO ---
 STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
@@ -139,7 +140,6 @@ def scan():
                 company_detected = k.title()
                 if "Code Civil" in law_final: law_final = LEGAL_DIRECTORY[k]["loi"]
 
-        # RADAR DE VÉRITÉ
         if "9125" in subj or "9125" in snippet:
             gain_final, label, company_detected, law_final = "80€", "Radar Navitia", "Eurostar", LEGAL_DIRECTORY["eurostar"]["loi"]
         if "KL2273" in subj or "KL2273" in snippet:
@@ -166,13 +166,11 @@ def pre_payment():
 def setup_payment():
     session_stripe = stripe.checkout.Session.create(
         payment_method_types=['card'], mode='setup',
-        # C'EST ICI QU'ON REDIRIGE VERS LA NOUVELLE PAGE DE SUCCÈS
         success_url=url_for('success_page', _external=True),
         cancel_url=url_for('index', _external=True)
     )
     return redirect(session_stripe.url, code=303)
 
-# --- ✨ NOUVELLE PAGE DE SUCCÈS (RASSURANTE) ---
 @app.route("/success")
 def success_page():
     return STYLE + """
@@ -192,7 +190,6 @@ def success_page():
     </div>
     """ + FOOTER
 
-# --- ⚡️ WEBHOOK : LE MAIL "D'AVOCAT" ---
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
@@ -207,7 +204,6 @@ def stripe_webhook():
                     target_info = LEGAL_DIRECTORY.get(litigation.company.lower(), {"email": "legal@compagnie.com"})
                     target_email = target_info.get("email", "legal@compagnie.com")
                     
-                    # --- LE MAIL PRO (STYLE AVOCAT) ---
                     corps = f"""
 Objet : MISE EN DEMEURE - Dossier N°{datetime.now().strftime('%Y%m%d')}-{litigation.id}
 Référence : {litigation.subject}
@@ -244,12 +240,17 @@ Généré et certifié par Justicio.fr
     except Exception as e: return str(e), 400
 
 # --- AUTH & LEGAL ---
+LEGAL_TEXTS = {
+    "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1><p><b>Dernière mise à jour : Décembre 2025</b></p><h3>1. Objet du service</h3><p>Justicio SAS propose un service d'identification et de gestion automatisée de litiges...</p></div>""",
+    "CONFIDENTIALITE": """<div class='legal-content'><h1>Politique de Confidentialité</h1><p>Nous collectons vos identifiants Gmail uniquement pour scanner...</p></div>""",
+    "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1><p><b>Éditeur :</b> Justicio SAS, Carcassonne.</p></div>"""
+}
 @app.route("/cgu")
-def cgu(): return STYLE + "<div class='legal-content'><h1>CGU</h1><p>Conditions...</p></div>" + FOOTER
+def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
 @app.route("/confidentialite")
-def confidentialite(): return STYLE + "<div class='legal-content'><h1>Confidentialité</h1><p>Données...</p></div>" + FOOTER
+def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
-def mentions_legales(): return STYLE + "<div class='legal-content'><h1>Mentions Légales</h1><p>Justicio SAS...</p></div>" + FOOTER
+def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 @app.route("/login")
 def login():
     flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"], redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
