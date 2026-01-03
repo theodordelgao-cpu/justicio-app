@@ -69,7 +69,7 @@ class Litigation(db.Model):
 
 # --- 🛑 CORRECTIF STABILITÉ : ON ARRÊTE D'EFFACER LA BASE ---
 with app.app_context():
-    # db.drop_all() # <--- CETTE LIGNE EST DÉSACTIVÉE POUR PROTÉGER TES DONNÉES
+     db.drop_all()
     db.create_all()
 
 # --- DESIGN PRO ---
@@ -296,3 +296,4 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
