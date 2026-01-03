@@ -66,7 +66,7 @@ class Litigation(db.Model):
 
 # --- RESET DB (Pour appliquer la nouvelle logique) ---
 with app.app_context():
-    db.drop_all()
+   # db.drop_all() #
     db.create_all()
 
 # --- DESIGN (Machine à Cash) ---
@@ -328,3 +328,4 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
