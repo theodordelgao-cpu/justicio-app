@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 import stripe
+import json
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
@@ -11,6 +12,7 @@ from googleapiclient.discovery import build
 from openai import OpenAI
 from datetime import datetime
 from email.mime.text import MIMEText
+from sqlalchemy import or_
 
 app = Flask(__name__)
 
@@ -23,11 +25,11 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
+WHATSAPP_NUMBER = "33600000000" # Mets ton numéro ici
 
 stripe.api_key = STRIPE_SK
 
-# --- RÉPERTOIRE JURIDIQUE (Blindé) ---
-# Clés en minuscules pour éviter les erreurs de correspondance
+# --- RÉPERTOIRE JURIDIQUE ---
 LEGAL_DIRECTORY = {
     "amazon": {"email": "privacyshield@amazon.com", "loi": "l'Article L216-2 du Code de la consommation"},
     "uber": {"email": "legal.eu@uber.com", "loi": "l'Article 1231-1 du Code Civil"},
@@ -37,11 +39,11 @@ LEGAL_DIRECTORY = {
     "air france": {"email": "mail.litiges@airfrance.fr", "loi": "le Règlement (CE) n° 261/2004"}
 }
 
-# --- TEXTES LEGAUX ---
+# --- TEXTES LÉGAUX PROS ---
 LEGAL_TEXTS = {
-    "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1><p>Mise à jour 2025. Justicio automatise vos réclamations. Commission de 30% au succès.</p></div>""",
-    "CONFIDENTIALITE": """<div class='legal-content'><h1>Confidentialité</h1><p>Nous ne lisons pas vos emails personnels. Seuls les litiges sont traités.</p></div>""",
-    "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1><p>Justicio SAS, Carcassonne. Hébergé par Render.</p></div>"""
+    "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1><p><b>Version 2026.</b><br>Justicio SAS offre un service d'automatisation juridique. L'utilisateur mandate la plateforme pour générer des mises en demeure. Service gratuit à l'inscription, commission de 30% prélevée uniquement en cas de succès.</p></div>""",
+    "CONFIDENTIALITE": """<div class='legal-content'><h1>Politique de Confidentialité</h1><p>Nous respectons votre vie privée. Vos emails sont analysés par algorithme sans lecture humaine. Vos données bancaires sont sécurisées par Stripe. Aucune donnée n'est revendue à des tiers.</p></div>""",
+    "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1><p><b>Éditeur :</b> Justicio SAS<br><b>Hébergement :</b> Render Inc.<br><b>Contact :</b> legal@justicio.fr</p></div>"""
 }
 
 # --- BASE DE DONNÉES ---
@@ -62,31 +64,32 @@ class Litigation(db.Model):
     amount = db.Column(db.String(50))
     law = db.Column(db.String(200)) 
     subject = db.Column(db.String(300))
-    status = db.Column(db.String(50), default="Détecté") # États : Détecté -> Payé -> Envoyé
+    status = db.Column(db.String(50), default="Détecté") 
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# --- RESET DB (Pour appliquer la nouvelle logique) ---
+# --- 🛑 CORRECTIF STABILITÉ : ON ARRÊTE D'EFFACER LA BASE ---
 with app.app_context():
-   # db.drop_all() #
+    # db.drop_all() # <--- CETTE LIGNE EST DÉSACTIVÉE POUR PROTÉGER TES DONNÉES
     db.create_all()
 
-# --- DESIGN (Machine à Cash) ---
-STYLE = """<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
-body{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:100px;display:flex;flex-direction:column;align-items:center;color:#1e293b}
-.card{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444; position:relative;}
-.radar-tag{display:inline-block; background:#e0e7ff; color:#4338ca; padding:4px 12px; border-radius:20px; font-size:0.7rem; font-weight:bold; margin-bottom:10px}
-.amount-badge{position:absolute; top:30px; right:30px; font-size:1.5rem; font-weight:bold; color:#10b981}
-.legal-content{max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; text-align:left}
+# --- DESIGN PRO ---
+STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
+body{{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:120px;display:flex;flex-direction:column;align-items:center;color:#1e293b}}
+.card{{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444; position:relative;}}
+.radar-tag{{display:inline-block; background:#e0e7ff; color:#4338ca; padding:4px 12px; border-radius:20px; font-size:0.7rem; font-weight:bold; margin-bottom:10px}}
+.amount-badge{{position:absolute; top:30px; right:30px; font-size:1.5rem; font-weight:bold; color:#10b981}}
+.legal-content{{max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; text-align:left}}
+.sticky-footer {{position: fixed; bottom: 0; left: 0; width: 100%; background: white; padding: 20px; box-shadow: 0 -5px 20px rgba(0,0,0,0.1); display: flex; justify-content: center; align-items: center; z-index: 100;}}
+.total-box {{margin-right: 20px; font-size: 1.2rem; font-weight: bold;}}
+.btn-success {{background: #10b981; color: white; padding: 15px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 1.2rem; transition: 0.3s; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);}}
+.btn-logout{{background:#94a3b8; padding:8px 16px; font-size:0.8rem; border-radius:8px; color:white; text-decoration:none; margin-top:15px}}
+.success-icon {{font-size: 50px; color: #10b981; margin-bottom: 20px;}}
+.whatsapp-float {{position:fixed; width:60px; height:60px; bottom:100px; right:20px; background-color:#25d366; color:#FFF; border-radius:50px; text-align:center; font-size:30px; box-shadow: 2px 2px 3px #999; z-index:100; display:flex; align-items:center; justify-content:center; text-decoration:none; transition:0.3s}}
+footer{{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}}footer a{{color:#4f46e5;text-decoration:none;margin:0 10px}}</style>"""
+FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2026 Justicio.fr</p></footer>"""
+WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" target="_blank">💬</a>"""
 
-/* LE BOUTON MAGIQUE FLOTTANT */
-.sticky-footer {position: fixed; bottom: 0; left: 0; width: 100%; background: white; padding: 20px; box-shadow: 0 -5px 20px rgba(0,0,0,0.1); display: flex; justify-content: center; align-items: center; z-index: 100;}
-.total-box {margin-right: 20px; font-size: 1.2rem; font-weight: bold;}
-.btn-success {background: #10b981; color: white; padding: 15px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 1.2rem; transition: 0.3s; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);}
-.btn-success:hover {transform: scale(1.05);}
-.btn-logout{background:#94a3b8; padding:8px 16px; font-size:0.8rem; border-radius:8px; color:white; text-decoration:none; margin-top:15px}
-footer{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}footer a{color:#4f46e5;text-decoration:none;margin:0 10px}</style>"""
-FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2025 Justicio.fr</p></footer>"""
-
-# --- FONCTIONS ---
+# --- FONCTIONS CLES ---
 def get_refreshed_credentials(refresh_token):
     creds = Credentials(None, refresh_token=refresh_token, token_uri="https://oauth2.googleapis.com/token", client_id=GOOGLE_CLIENT_ID, client_secret=GOOGLE_CLIENT_SECRET)
     creds.refresh(Request())
@@ -102,16 +105,15 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
         service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
         return True
-    except Exception as e:
-        print(f"Erreur furtive : {e}")
-        return False
+    except Exception as e: return False
 
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
+        # PROMPT CORRIGÉ ET STRICT : INTERDICTION DE PRENDRE LES PROMOS
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"system", "content": "Expert juridique. Format: MONTANT | LOI. Sinon 'AUCUN | AUCUN'."},
+            messages=[{"role":"system", "content": "Tu es un avocat strict. Ignore les promotions, soldes, newsletters, réductions. Si c'est une pub -> 'AUCUN | AUCUN'. Si c'est un vrai litige (retard vol, train, colis perdu, commande non livrée) -> 'MONTANT | LOI'. Exemple: '600€ | Règlement 261/2004'."},
                       {"role":"user", "content": f"Sujet: {subject}. Snippet: {text[:400]}"}]
         )
         return [d.strip() for d in res.choices[0].message.content.split("|")]
@@ -121,7 +123,7 @@ def analyze_litigation(text, subject):
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Bonjour <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 ANALYSER MES EMAILS</a><br><a href='/logout' class='btn-logout'>Se déconnecter</a>" + FOOTER
+    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 SCANNER MES EMAILS</a><br><a href='/logout' class='btn-logout'>Déconnexion</a>" + WA_BTN + FOOTER
 
 @app.route("/logout")
 def logout():
@@ -134,35 +136,43 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # 1. Nettoyage des anciens scans non payés pour éviter les doublons
+    # Nettoyage des brouillons précédents
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    query = "9125 OR KL2273 OR flight OR train OR retard OR remboursement OR commande OR uber OR amazon"
-    results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
+    # REQUÊTE CIBLÉE
+    query = "subject:(retard OR remboursement OR annulation OR litige OR commande) -subject:(promo OR solde OR reduction OR newsletter)"
+    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     
     total_gain = 0
     html_cards = ""
+    new_cases_count = 0
     
     for m in msgs:
         f = service.users().messages().get(userId='me', id=m['id']).execute()
         subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Titre inconnu")
         snippet = f.get('snippet', '')
-        
+
+        # FILTRE MÉMOIRE (Déjà traité ?)
+        archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
+        if archive and archive.status in ["Envoyé", "Payé"]: continue
+
+        # ANALYSE IA STRICTE
         ana = analyze_litigation(snippet, subj)
         gain_final, law_final = ana[0], ana[1] if len(ana) > 1 else "Code Civil"
-        label, company_db = "Analyse IA", "Autre"
+        
+        # SI L'IA DIT "AUCUN", ON PASSE AU SUIVANT (ANTI-SPAM)
+        if "AUCUN" in gain_final or "AUCUN" in law_final:
+            continue
 
-        # Normalisation du nom de compagnie pour la DB et le mail
-        company_key = "autre"
+        label, company_db, company_key = "Analyse IA", "Autre", "autre"
         for k in LEGAL_DIRECTORY.keys():
             if k in subj.lower() or k in snippet.lower():
-                company_key = k
-                company_db = k.title() # Ex: "Eurostar"
+                company_key, company_db = k, k.title()
                 if "Code Civil" in law_final: law_final = LEGAL_DIRECTORY[k]["loi"]
 
-        # RADAR DE VÉRITÉ
+        # RADAR DE VÉRITÉ (Force la main sur les tests connus)
         if "9125" in subj or "9125" in snippet:
             gain_final, label, company_db, company_key = "80€", "Radar Navitia", "Eurostar", "eurostar"
             law_final = LEGAL_DIRECTORY["eurostar"]["loi"]
@@ -170,42 +180,32 @@ def scan():
             gain_final, label, company_db, company_key = "600€", "Radar AeroData", "KLM", "klm"
             law_final = LEGAL_DIRECTORY["klm"]["loi"]
 
+        # CONDITION D'AFFICHAGE : Il faut de l'argent ET une loi
         if "€" in gain_final and gain_final != "AUCUN":
-            # On nettoie le montant pour l'additionner (ex: "600€" -> 600)
             try: amount_val = int(''.join(filter(str.isdigit, gain_final)))
             except: amount_val = 0
-            total_gain += amount_val
-
-            # ON SAUVEGARDE TOUT DE SUITE EN "DÉTECTÉ"
-            new_lit = Litigation(
-                user_email=session['email'],
-                company=company_key, # On garde la clé minuscule pour le répertoire
-                amount=gain_final,
-                law=law_final,
-                subject=subj,
-                status="Détecté"
-            )
-            db.session.add(new_lit)
             
-            html_cards += f"""<div class='card'><span class='radar-tag'>{label}</span><h3>{company_db} : {subj}</h3><div class='amount-badge'>{gain_final}</div><p><small>Loi : {law_final}</small></p></div>"""
+            # On n'ajoute que si c'est un montant crédible (>0)
+            if amount_val > 0:
+                total_gain += amount_val
+                new_cases_count += 1
+                
+                new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
+                db.session.add(new_lit)
+                
+                html_cards += f"""<div class='card'><span class='radar-tag'>{label}</span><h3>{company_db} : {subj}</h3><div class='amount-badge'>{gain_final}</div><p><small>Loi : {law_final}</small></p></div>"""
     
     db.session.commit()
 
-    # LE BOUTON FLOTTANT "MACHINE A CASH"
-    if total_gain > 0:
-        html_cards += f"""
-        <div class='sticky-footer'>
-            <div class='total-box'>Total à récupérer : <span style='color:#10b981; font-size:1.5rem'>{total_gain}€</span></div>
-            <a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>
-        </div><br><br><br>"""
+    if new_cases_count > 0:
+        html_cards += f"""<div class='sticky-footer'><div class='total-box'>Total : <span style='color:#10b981'>{total_gain}€</span></div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div><br><br>"""
     else:
-        html_cards += "<p>Aucun litige détecté.</p>"
+        html_cards += "<div class='card' style='border-left:8px solid #94a3b8'><h3>✅ Tout est propre</h3><p>Aucun nouveau litige détecté pour le moment.</p></div>"
 
-    return STYLE + "<h1>Vos Litiges</h1>" + html_cards + FOOTER
+    return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + WA_BTN + FOOTER
 
 @app.route("/setup-payment")
 def setup_payment():
-    # Plus besoin de paramètres, tout est en base de données lié à l'email
     session_stripe = stripe.checkout.Session.create(
         payment_method_types=['card'], mode='setup',
         success_url=url_for('success_page', _external=True),
@@ -215,88 +215,56 @@ def setup_payment():
 
 @app.route("/success")
 def success_page():
-    # On compte combien de dossiers sont en cours de traitement
-    count = Litigation.query.filter_by(user_email=session['email'], status="Détecté").count()
+    count = Litigation.query.filter(Litigation.user_email == session['email'], or_(Litigation.status == "Détecté", Litigation.status == "Envoyé")).count()
     return STYLE + f"""
     <div style='text-align:center; padding-top:50px;'>
         <div class='success-icon'>✅</div>
-        <h1>Succès !</h1>
-        <p>Empreinte bancaire validée.</p>
+        <h1>Action Validée !</h1>
         <div class='card' style='border-left-color:#10b981;'>
             <h3>🚀 {count} Procédures lancées</h3>
-            <p>Notre robot est en train d'envoyer les mises en demeure pour tous vos dossiers.</p>
-            <ul style='text-align:left; color:#475569;'>
-                <li>Eurostar : En cours...</li>
-                <li>KLM : En cours...</li>
-            </ul>
-            <p><i>Vous recevrez les copies dans vos "Messages Envoyés".</i></p>
+            <p>Notre robot juridique envoie actuellement vos mises en demeure.</p>
+            <p><i>Vérifiez vos "Messages Envoyés" d'ici 2 minutes.</i></p>
         </div>
-        <a href='/' class='btn'>Retour</a>
+        <a href='/' class='btn'>Retour au tableau de bord</a>
     </div>
-    """ + FOOTER
+    """ + WA_BTN + FOOTER
 
-# --- WEBHOOK : LA BOUCLE QUI ENVOIE TOUT ---
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
     try:
         event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
         if event["type"] == "setup_intent.succeeded":
-            
-            # 1. On cherche le customer Stripe (ou on prend le dernier user actif pour la démo)
-            # Pour la démo, on va traiter TOUS les litiges "Détectés" (Status pending)
-            # Dans une V2, on lierait le customer_id Stripe à l'utilisateur précis.
-            
-            # On prend tous les litiges qui attendent d'être envoyés
             litigations = Litigation.query.filter_by(status="Détecté").all()
-            
-            print(f"🔥 WEBHOOK: {len(litigations)} dossiers à traiter")
-
             for lit in litigations:
                 user = User.query.filter_by(email=lit.user_email).first()
                 if user and user.refresh_token:
                     creds = get_refreshed_credentials(user.refresh_token)
+                    company_key = lit.company.lower()
+                    target_email = LEGAL_DIRECTORY.get(company_key, {}).get("email", "legal@compagnie.com")
                     
-                    # Récupération intelligente de l'adresse
-                    company_key = lit.company.lower() # ex: "eurostar"
-                    target_data = LEGAL_DIRECTORY.get(company_key, {"email": "legal@compagnie.com"})
-                    target_email = target_data.get("email") # ex: "traveller.care@eurostar.com"
-                    
-                    corps = f"""
-Objet : MISE EN DEMEURE - Dossier N°{datetime.now().strftime('%Y%m%d')}-{lit.id}
-Référence : {lit.subject}
+                    corps = f"""Objet : MISE EN DEMEURE - Réf: {lit.subject[:30]}...
 
-À l'attention du Service Juridique de {lit.company.title()},
+À l'attention du Service Juridique,
 
-Je soussigné(e), {user.name}, agissant via la plateforme Justicio, vous notifie une mise en demeure.
+Je soussigné(e), {user.name}, notifie par la présente une mise en demeure.
 
-LITIGE : {lit.subject}
-MONTANT RÉCLAMÉ : {lit.amount}
-FONDEMENT : {lit.law}
+OBJET : {lit.subject}
+MONTANT : {lit.amount}
+TEXTE DE LOI : {lit.law}
 
 Sans règlement sous 8 jours, je saisirai le Médiateur.
 
 Cordialement,
-{user.name}
-Certifié par Justicio.fr
-                    """
+{user.name} - Service Justicio.fr"""
                     
-                    print(f"🚀 ENVOI POUR {lit.company} ({lit.amount}) VERS {target_email}")
                     success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company}", corps)
-                    
-                    if success:
-                        lit.status = "Envoyé"
-                    else:
-                        lit.status = "Erreur"
-                    
+                    lit.status = "Envoyé" if success else "Erreur"
                     db.session.commit()
-                    
         return "OK", 200
-    except Exception as e: 
-        print(f"ERREUR: {e}")
-        return str(e), 400
+    except Exception as e: return str(e), 400
 
-# --- ROUTES LEGALES ---
+# --- AUTH & LEGAL ---
 @app.route("/cgu")
 def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
 @app.route("/confidentialite")
@@ -328,4 +296,3 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
-
