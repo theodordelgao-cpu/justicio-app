@@ -157,6 +157,7 @@ def scan():
 
 # Syntaxe simplifiée et plus puissante (recherche dans tout le mail)
     query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet -promo -solde -newsletter"
+    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
     html_cards = ""
@@ -171,7 +172,7 @@ def scan():
         archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
         if archive and archive.status in ["Envoyé", "Payé"]: continue
         
-        ana = analyze_litigation(snippet, subj)
+        ana = analyze_litigation(body_content, subj)
         gain_final, law_final = ana[0], ana[1] if len(ana) > 1 else "Code Civil"
         if "AUCUN" in gain_final: continue
 
@@ -264,5 +265,6 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
