@@ -1,4 +1,4 @@
-²import os
+import os
 import base64
 import requests
 import stripe
@@ -283,6 +283,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
