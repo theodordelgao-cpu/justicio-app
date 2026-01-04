@@ -166,7 +166,8 @@ def scan():
     db.session.commit()
 
 # ON ÉLARGIT LA RECHERCHE : On prend aussi "train", "vol", "billet"
-query = "subject:(retard OR remboursement OR annulation OR litige OR commande OR train OR vol OR billet) -subject:(promo OR solde OR reduction OR newsletter)"    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
+query = "subject:(retard OR remboursement OR annulation OR litige OR commande OR train OR vol OR billet) -subject:(promo OR solde OR reduction OR newsletter)"
+results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
     html_cards = ""
@@ -308,4 +309,5 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
