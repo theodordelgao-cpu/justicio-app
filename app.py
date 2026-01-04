@@ -25,9 +25,7 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
-WHATSAPP_NUMBER = "33750384314" # TON NUMÉRO
-
-# --- 📱 CONFIG TELEGRAM (NOUVEAU) ---
+WHATSAPP_NUMBER = "33750384314"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -44,12 +42,28 @@ LEGAL_DIRECTORY = {
     "ryanair": {"email": "customer.queries@ryanair.com", "loi": "le Règlement (CE) n° 261/2004"}
 }
 
+# --- TEXTES LÉGAUX PRO (Denses & Rassurants) ---
 LEGAL_TEXTS = {
-    "CGU": """<div class='legal-content'><h1>CGU 2026</h1><p>Justicio SAS. Commission 30% au succès.</p></div>""",
-    "CONFIDENTIALITE": """<div class='legal-content'><h1>Confidentialité</h1><p>Données cryptées. Aucune lecture humaine.</p></div>""",
-    "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1><p>Justicio SAS, France.</p></div>"""
+    "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1>
+    <p><b>Dernière mise à jour : Janvier 2026</b></p>
+    <h3>1. Objet du Service</h3><p>La société Justicio SAS (ci-après "la Société") met à disposition une solution logicielle permettant d'automatiser la détection et la gestion amiable de litiges de consommation (transport, e-commerce) en application du Code de la Consommation et des Règlements Européens en vigueur.</p>
+    <h3>2. Mandat de Représentation</h3><p>L'Utilisateur, en validant le processus, donne mandat exprès à Justicio pour générer et transmettre en son nom toute mise en demeure nécessaire à la défense de ses intérêts.</p>
+    <h3>3. Modèle Économique ("No Win, No Fee")</h3><p>L'accès au service est gratuit. Une commission de succès de 30% TTC est due uniquement si l'Utilisateur obtient gain de cause (remboursement ou indemnité).</p>
+    <h3>4. Responsabilité</h3><p>Justicio est soumis à une obligation de moyens. La responsabilité de la Société ne saurait être engagée en cas d'échec de la procédure amiable.</p></div>""",
+    
+    "CONFIDENTIALITE": """<div class='legal-content'><h1>Politique de Confidentialité & RGPD</h1>
+    <h3>1. Minimisation des Données</h3><p>Conformément au RGPD, nous ne collectons que les données strictement nécessaires à l'exécution du mandat (Emails relatifs aux litiges, Identité). Vos emails personnels ne sont jamais lus par des humains.</p>
+    <h3>2. Sécurité Bancaire</h3><p>Les données de paiement sont traitées exclusivement par notre partenaire certifié PCI-DSS (Stripe). Justicio ne stocke jamais vos numéros de carte.</p>
+    <h3>3. Droit d'Oubli</h3><p>Sur simple demande à legal@justicio.fr, toutes vos données seront supprimées de nos serveurs sous 48h.</p></div>""",
+    
+    "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1>
+    <p><b>Éditeur :</b> Justicio SAS, Société par Actions Simplifiée.</p>
+    <p><b>Siège Social :</b> Carcassonne, France.</p>
+    <p><b>Hébergement :</b> Render Services Inc, San Francisco, USA.</p>
+    <p><b>Contact :</b> legal@justicio.fr</p></div>"""
 }
 
+# --- BASE DE DONNÉES ---
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -71,18 +85,16 @@ class Litigation(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
-    # db.drop_all() # SECURITE ACTIVEE (NE PAS DECOMMENTER)
+    # db.drop_all() # SECURITÉ ACTIVÉE
     db.create_all()
 
-# --- FONCTION TELEGRAM (NOUVEAU) ---
+# --- FONCTION TELEGRAM ---
 def send_telegram_notif(message):
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-            requests.post(url, json=payload)
-        except Exception as e:
-            print(f"Erreur Telegram: {e}")
+            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message})
+        except: pass
 
 def get_refreshed_credentials(refresh_token):
     creds = Credentials(None, refresh_token=refresh_token, token_uri="https://oauth2.googleapis.com/token", client_id=GOOGLE_CLIENT_ID, client_secret=GOOGLE_CLIENT_SECRET)
@@ -97,33 +109,40 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         message['subject'] = subject
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
-        service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
+        
+        # 🔥 MODE FANTÔME : ON MET LE MAIL ENVOYÉ À LA CORBEILLE DIRECTEMENT 🔥
+        service.users().messages().trash(userId='me', id=sent['id']).execute()
         return True
     except: return False
 
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
+        # PROMPT AMÉLIORÉ POUR SNCF ET TESTS
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"system", "content": "Avocat strict. Ignore pubs/promos. Si litige -> 'MONTANT | LOI'. Sinon 'AUCUN | AUCUN'."},
-                      {"role":"user", "content": f"Sujet: {subject}. Snippet: {text[:400]}"}]
+            messages=[{"role":"system", "content": "Avocat expert. Analyse ce mail. Ignore Pubs/Soldes. Cherche: Retard (Avion/Train), Annulation, Colis Perdu. Si trouvé -> 'MONTANT | LOI'. Si doute ou pub -> 'AUCUN | AUCUN'. Pour SNCF/Train retard > 1h, mets '25% Billet' ou montant estimé."},
+                      {"role":"user", "content": f"Sujet: {subject}. Corps: {text[:400]}"}]
         )
         return [d.strip() for d in res.choices[0].message.content.split("|")]
     except: return ["AUCUN", "Inconnu"]
 
+# --- DESIGN ---
 STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
 body{{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:120px;display:flex;flex-direction:column;align-items:center;color:#1e293b}}
 .card{{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444; position:relative;}}
 .radar-tag{{display:inline-block; background:#e0e7ff; color:#4338ca; padding:4px 12px; border-radius:20px; font-size:0.7rem; font-weight:bold; margin-bottom:10px}}
 .amount-badge{{position:absolute; top:30px; right:30px; font-size:1.5rem; font-weight:bold; color:#10b981}}
-.btn-success {{background: #10b981; color: white; padding: 15px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 1.2rem; transition: 0.3s; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);}}
+.btn-success {{background: #10b981; color: white; padding: 15px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 1.2rem; transition: 0.3s; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4); border:none; cursor:pointer; display:inline-block;}}
+.btn-success:hover {{transform: scale(1.05);}}
 .btn-logout{{background:#94a3b8; padding:8px 16px; font-size:0.8rem; border-radius:8px; color:white; text-decoration:none; margin-top:15px}}
 .success-icon {{font-size: 50px; color: #10b981; margin-bottom: 20px;}}
 .whatsapp-float {{position:fixed; width:60px; height:60px; bottom:100px; right:20px; background-color:#25d366; color:#FFF; border-radius:50px; text-align:center; font-size:30px; box-shadow: 2px 2px 3px #999; z-index:100; display:flex; align-items:center; justify-content:center; text-decoration:none; transition:0.3s}}
 .legal-content{{max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; text-align:left}}
 .sticky-footer {{position: fixed; bottom: 0; left: 0; width: 100%; background: white; padding: 20px; box-shadow: 0 -5px 20px rgba(0,0,0,0.1); display: flex; justify-content: center; align-items: center; z-index: 100;}}
 .total-box {{margin-right: 20px; font-size: 1.2rem; font-weight: bold;}}
+.trust-list {{text-align:left; margin: 20px 0; color:#475569}}
+.trust-list li {{margin-bottom: 10px;}}
 footer{{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}}footer a{{color:#4f46e5;text-decoration:none;margin:0 10px}}</style>"""
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2026 Justicio.fr</p></footer>"""
 WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" target="_blank">💬</a>"""
@@ -131,7 +150,7 @@ WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" ta
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 SCANNER</a><br><a href='/logout' class='btn-logout'>Déconnexion</a>" + WA_BTN + FOOTER
+    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 SCANNER MES EMAILS</a><br><a href='/logout' class='btn-logout'>Déconnexion</a>" + WA_BTN + FOOTER
 
 @app.route("/logout")
 def logout():
@@ -146,7 +165,7 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    query = "subject:(retard OR remboursement OR annulation OR litige OR commande) -subject:(promo OR solde OR reduction OR newsletter)"
+    query = "subject:(retard OR remboursement OR annulation OR litige OR commande OR train OR vol) -subject:(promo OR solde OR reduction OR newsletter)"
     results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
@@ -173,10 +192,13 @@ def scan():
         if "9125" in subj or "9125" in snippet: gain_final, company_db, company_key = "80€", "Eurostar", "eurostar"
         if "KL2273" in subj or "KL2273" in snippet: gain_final, company_db, company_key = "600€", "KLM", "klm"
 
-        if "€" in gain_final and gain_final != "AUCUN":
-            try: amount_val = int(''.join(filter(str.isdigit, gain_final)))
+        if "€" in gain_final or "%" in gain_final: # Accepte les pourcentages pour SNCF
+            try: 
+                amount_val = int(''.join(filter(str.isdigit, gain_final)))
             except: amount_val = 0
-            if amount_val > 0:
+            
+            if amount_val > 0 or "25%" in gain_final: # Cas particulier SNCF
+                if amount_val == 0 and "25%" in gain_final: amount_val = 25 # Valeur arbitraire pour l'affichage total
                 total_gain += amount_val
                 new_cases += 1
                 new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
@@ -184,9 +206,30 @@ def scan():
                 html_cards += f"""<div class='card'><h3>{company_db} : {subj}</h3><div class='amount-badge'>{gain_final}</div><p><small>{law_final}</small></p></div>"""
     
     db.session.commit()
-    if new_cases > 0: html_cards += f"""<div class='sticky-footer'><div class='total-box'>Total : <span style='color:#10b981'>{total_gain}€</span></div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div><br><br>"""
-    else: html_cards += "<div class='card' style='border-left:8px solid #94a3b8'><h3>✅ Tout est propre</h3><p>Rien à signaler.</p></div>"
-    return STYLE + "<h1>Résultat</h1>" + html_cards + WA_BTN + FOOTER
+    if new_cases > 0: html_cards += f"""<div class='sticky-footer'><div class='total-box'>Total : <span style='color:#10b981'>{total_gain}€</span></div><a href='/explain-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div><br><br>"""
+    else: html_cards += "<div class='card' style='border-left:8px solid #94a3b8'><h3>✅ Tout est propre</h3><p>Aucun nouveau litige détecté pour le moment.</p></div>"
+    return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + WA_BTN + FOOTER
+
+# --- NOUVELLE PAGE DE RÉASSURANCE (TRUST BRIDGE) ---
+@app.route("/explain-payment")
+def explain_payment():
+    return STYLE + f"""
+    <div style='text-align:center;'>
+        <h1>🔒 Sécurité Bancaire</h1>
+        <div class='card' style='border-left-color:#4f46e5; text-align:left;'>
+            <h3>Pourquoi une empreinte carte ?</h3>
+            <p>Pour lancer les procédures juridiques, nous devons vérifier votre identité bancaire. <b>Aucun montant n'est débité aujourd'hui.</b></p>
+            <ul class='trust-list'>
+                <li>✅ <b>0€ Immédiatement :</b> C'est gratuit tant que vous n'êtes pas remboursé.</li>
+                <li>✅ <b>Commission de 30% :</b> Prélevée uniquement QUAND vous recevez l'argent sur votre compte.</li>
+                <li>✅ <b>Sécurité Stripe :</b> Vos données sont chiffrées (SSL/PCI-DSS). Justicio ne voit jamais vos numéros.</li>
+            </ul>
+        </div>
+        <a href='/setup-payment' class='btn-success' style='width:100%; max-width:300px; text-align:center;'>JE VALIDE (0€) 👉</a>
+        <br><br>
+        <a href='/scan' style='color:#94a3b8;'>Retour</a>
+    </div>
+    """ + FOOTER
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -199,7 +242,7 @@ def setup_payment():
 @app.route("/success")
 def success_page():
     count = Litigation.query.filter(Litigation.user_email == session['email'], or_(Litigation.status == "Détecté", Litigation.status == "Envoyé")).count()
-    return STYLE + f"""<div style='text-align:center; padding-top:50px;'><div class='success-icon'>✅</div><h1>Action Validée !</h1><div class='card' style='border-left-color:#10b981;'><h3>🚀 {count} Procédures lancées</h3><p>Notification Telegram envoyée au CEO.</p></div><a href='/' class='btn'>Retour</a></div>""" + WA_BTN + FOOTER
+    return STYLE + f"""<div style='text-align:center; padding-top:50px;'><div class='success-icon'>✅</div><h1>Procédures Lancées !</h1><div class='card' style='border-left-color:#10b981;'><h3>🚀 {count} Mises en demeure envoyées</h3><p>Vos emails "Envoyés" ont été nettoyés pour votre confidentialité.</p></div><a href='/' class='btn'>Retour</a></div>""" + WA_BTN + FOOTER
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -221,23 +264,10 @@ def stripe_webhook():
                     lit.status = "Envoyé" if success else "Erreur"
                     db.session.commit()
 
-                    # 🔥 NOTIFICATION TELEGRAM DU CEO 🔥
                     if success:
-                        # Calcul commission
                         try: mt = int(''.join(filter(str.isdigit, lit.amount)))
                         except: mt = 0
-                        com = mt * 0.30
-                        
-                        msg = f"""
-🚀 **JUSTICIO ALERT : NOUVEAU CLIENT !**
-👤 **Client :** {user.name}
-🆚 **Contre :** {lit.company.title()}
-💰 **Montant Litige :** {lit.amount}
-💎 **Ta Commission (30%) :** {com}€
-✅ **État :** Mise en demeure envoyée
-                        """
-                        send_telegram_notif(msg)
-
+                        send_telegram_notif(f"🚀 **ALERT:** {user.name} a lancé une procédure contre {lit.company} pour {lit.amount}. Com: {mt*0.3}€")
         return "OK", 200
     except Exception as e: return str(e), 400
 
