@@ -46,24 +46,20 @@ LEGAL_DIRECTORY = {
 # --- TEXTES LÉGAUX PROFESSIONNELS (Lignes 52-78) ---
 LEGAL_TEXTS = {
     "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1>
-    <p><b>1. Objet :</b> Justicio SAS propose un service d'aide à la résolution amiable de litiges de consommation.</p>
-    <p><b>2. Mandat :</b> En utilisant le service, l'utilisateur mandate Justicio pour générer et expédier une mise en demeure en son nom via son propre accès sécurisé.</p>
-    <p><b>3. Tarification :</b> Le service est basé sur le succès. Une commission de 30% TTC est due sur les sommes récupérées grâce à l'intervention du service.</p>
-    <p><b>4. Responsabilité :</b> Justicio est soumis à une obligation de moyens. Le succès de la réclamation dépend de la validité juridique du litige.</p>
-    <a href='/' class='btn-logout'>Retour à l'accueil</a></div>""",
+    <p><b>1. Objet :</b> Justicio SAS automatise vos réclamations juridiques pour retards ou litiges commerciaux.</p>
+    <p><b>2. Mandat :</b> L'utilisateur mandate Justicio pour agir en son nom auprès des compagnies tiers.</p>
+    <p><b>3. Honoraires :</b> Commission de 30% TTC prélevée uniquement sur les sommes récupérées.</p>
+    <a href='/' class='btn-logout'>Retour</a></div>""",
     
     "CONFIDENTIALITE": """<div class='legal-content'><h1>Politique de Confidentialité</h1>
-    <p><b>Protection des données (RGPD) :</b> Vos accès Gmail sont utilisés exclusivement pour la détection automatisée des litiges.</p>
-    <p><b>Sécurité :</b> Vos tokens d'accès sont chiffrés. Aucune donnée n'est vendue à des tiers. Les analyses sont effectuées par une intelligence artificielle sans intervention humaine directe.</p>
-    <p><b>Droit d'accès :</b> Vous pouvez révoquer l'accès de Justicio à tout moment via les paramètres de votre compte Google.</p>
-    <a href='/' class='btn-logout'>Retour à l'accueil</a></div>""",
+    <p><b>Données :</b> Vos emails Gmail sont analysés par notre IA sécurisée sans stockage permanent de vos messages personnels.</p>
+    <p><b>Sécurité :</b> Vos accès sont chiffrés et vous pouvez révoquer l'accès à tout moment via votre compte Google.</p>
+    <a href='/' class='btn-logout'>Retour</a></div>""",
     
     "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1>
-    <p><b>Éditeur :</b> Justicio SAS, société au capital de 1.000€, immatriculée au RCS de Carcassonne.</p>
-    <p><b>Directeur de la publication :</b> Le CEO de Justicio.</p>
-    <p><b>Hébergement :</b> Render Services, San Francisco, USA.</p>
-    <p><b>Contact :</b> legal@justicio.fr</p>
-    <a href='/' class='btn-logout'>Retour à l'accueil</a></div>"""
+    <p><b>Éditeur :</b> Justicio SAS, immatriculée en France.</p>
+    <p><b>Hébergement :</b> Render Inc, USA.</p>
+    <a href='/' class='btn-logout'>Retour</a></div>"""
 }
 
 # --- BASE DE DONNÉES ---
@@ -145,8 +141,7 @@ WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" ta
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Connecté en tant que : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 ANALYSER MES LITIGES</a><br><a href='/logout' class='btn-logout'>Se déconnecter</a>" + WA_BTN + FOOTER
-
+    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 ANALYSER MES LITIGES</a><br><a href='/logout' class='btn-logout'>Se déconnecter</a>" + WA_BTN + FOOTER
 @app.route("/logout")
 def logout():
     session.clear()
@@ -160,8 +155,8 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    query = "subject:(retard OR remboursement OR annulation OR litige OR commande OR train OR vol OR billet) -subject:(promo OR solde OR reduction OR newsletter)"
-    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
+# On cherche les mots-clés partout (Sujet + Corps) et on exclut les pubs connues
+    query = "(retard OR remboursement OR annulation OR litige OR commande OR train OR vol OR billet) -{promo solde reduction newsletter temu advertising}"    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
     html_cards = ""
@@ -268,3 +263,4 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
