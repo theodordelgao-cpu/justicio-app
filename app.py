@@ -155,8 +155,8 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-# On cherche les mots-clés partout (Sujet + Corps) et on exclut les pubs connues
-    query = "(retard OR remboursement OR annulation OR litige OR commande OR train OR vol OR billet) -{promo solde reduction newsletter temu advertising}"    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
+# Syntaxe simplifiée et plus puissante (recherche dans tout le mail)
+    query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet -promo -solde -newsletter"
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
     html_cards = ""
@@ -165,6 +165,7 @@ def scan():
         f = service.users().messages().get(userId='me', id=m['id']).execute()
         subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
         snippet = f.get('snippet', '')
+        body_content = f.get('snippet', '') + " " + subj
         
         # Mémoire intelligente (Archive)
         archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
@@ -263,4 +264,5 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
