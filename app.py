@@ -1,4 +1,4 @@
-import os
+²import os
 import base64
 import requests
 import stripe
@@ -36,11 +36,14 @@ stripe.api_key = STRIPE_SK
 LEGAL_DIRECTORY = {
     "amazon": {"email": "privacyshield@amazon.com", "loi": "l'Article L216-2 du Code de la consommation"},
     "uber": {"email": "legal.eu@uber.com", "loi": "l'Article 1231-1 du Code Civil"},
+    "ubereats": {"email": "restaurants.france@uber.com", "loi": "l'Article 1231-1 du Code Civil"},
     "klm": {"email": "legal.service@klm.com", "loi": "le Règlement (CE) n° 261/2004"},
     "sncf": {"email": "service-client@sncf.com", "loi": "le Règlement (UE) 2021/782"},
     "eurostar": {"email": "traveller.care@eurostar.com", "loi": "le Règlement (UE) 2021/782"},
     "air france": {"email": "mail.litiges@airfrance.fr", "loi": "le Règlement (CE) n° 261/2004"},
-    "ryanair": {"email": "customer.queries@ryanair.com", "loi": "le Règlement (CE) n° 261/2004"}
+    "ryanair": {"email": "customer.queries@ryanair.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "easyjet": {"email": "customer.support@easyjet.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "transavia": {"email": "serviceclient@transavia.com", "loi": "le Règlement (CE) n° 261/2004"}
 }
 
 # --- TEXTES LÉGAUX PROFESSIONNELS (Lignes 52-78) ---
@@ -155,8 +158,8 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-# Syntaxe simplifiée et plus puissante (recherche dans tout le mail)
-    query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet -promo -solde -newsletter"
+# Recherche ultra-large pour ne rien rater (Vols, Trains, Uber, Amazon, Livraisons, Bagages)
+    query = "retard OR remboursement OR annulation OR indemnisation OR litige OR commande OR train OR vol OR billet OR sncf OR ryanair OR easyjet OR incident OR bagage OR perdu OR livraison OR retardé OR manquant OR perturbation OR grève -promo -solde -newsletter -from:me"
     results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
@@ -221,7 +224,22 @@ def stripe_webhook():
                 if user and user.refresh_token:
                     creds = get_refreshed_credentials(user.refresh_token)
                     target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
-                    corps = f"MISE EN DEMEURE FORMELLE\n\nLitige : {lit.subject}\nMontant : {lit.amount}\nLoi : {lit.law}\n\nSigné, {user.name} via Justicio.fr"
+                    corps = f"""MISE EN DEMEURE FORMELLE
+                    
+Objet : Réclamation concernant le dossier : {lit.subject}
+
+À l'attention du Service Juridique de {lit.company.upper()},
+
+Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
+- Nature du litige : {lit.subject}
+- Fondement juridique : {lit.law}
+- Montant réclamé : {lit.amount}
+
+Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement ou au versement de l'indemnité sous un délai de 8 jours ouvrés. À défaut, je saisirai les autorités compétentes et le médiateur.
+
+Dans l'attente de votre retour,
+Cordialement,
+{user.name} - Utilisateur Justicio.fr"""
                     success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
                     lit.status = "Envoyé" if success else "Erreur"
                     db.session.commit()
@@ -265,6 +283,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
