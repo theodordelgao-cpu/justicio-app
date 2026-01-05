@@ -34,16 +34,41 @@ stripe.api_key = STRIPE_SK
 
 # --- RÉPERTOIRE JURIDIQUE ---
 LEGAL_DIRECTORY = {
-    "amazon": {"email": "privacyshield@amazon.com", "loi": "l'Article L216-2 du Code de la consommation"},
-    "uber": {"email": "legal.eu@uber.com", "loi": "l'Article 1231-1 du Code Civil"},
-    "ubereats": {"email": "restaurants.france@uber.com", "loi": "l'Article 1231-1 du Code Civil"},
-    "klm": {"email": "legal.service@klm.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "sncf": {"email": "service-client@sncf.com", "loi": "le Règlement (UE) 2021/782"},
-    "eurostar": {"email": "traveller.care@eurostar.com", "loi": "le Règlement (UE) 2021/782"},
-    "air france": {"email": "mail.litiges@airfrance.fr", "loi": "le Règlement (CE) n° 261/2004"},
-    "ryanair": {"email": "customer.queries@ryanair.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "easyjet": {"email": "customer.support@easyjet.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "transavia": {"email": "serviceclient@transavia.com", "loi": "le Règlement (CE) n° 261/2004"}
+    # --- E-COMMERCE & TECH (Directive UE 2011/83 - Droit de rétractation & Garantie) ---
+    "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
+    "apple": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "zalando": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour 14 jours)"},
+    "shein": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Conformité)"},
+    "zara": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
+    "h&m": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
+    "asos": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour)"},
+    "nike": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Produit défectueux)"},
+    "adidas": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Produit défectueux)"},
+
+    # --- VOYAGE & HÔTELS (Problèmes de réservation) ---
+    "booking": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
+    "airbnb": {"email": "theodordelgao@gmail.com", "loi": "le Règlement Rome I (Protection consommateur)"},
+    "expedia": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
+    "hotels.com": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
+
+    # --- TRANSPORTS EUROPÉENS (Règlements UNIVERSELS) ---
+    "ryanair": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "easyjet": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "lufthansa": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "air france": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "klm": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "british airways": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "sncf": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
+    "eurostar": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
+    "db": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782 (Deutsche Bahn)"},
+    "trenitalia": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
+    "renfe": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
+
+    # --- LIVRAISON & VTC ---
+    "uber": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
+    "ubereats": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
+    "deliveroo": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
+    "bolt": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"}
 }
 
 # --- TEXTES LÉGAUX PROFESSIONNELS (Lignes 52-78) ---
@@ -202,8 +227,10 @@ def scan():
         if "KL2273" in subj: gain_final, company_key = "600€", "klm"
         if "sncf" in subj.lower() or "retard" in body_content.lower():
             gain_final, company_key = "45€", "sncf"
-        try: mt = int(''.join(filter(str.isdigit, gain_final)))
-        except: mt = 0
+       try:
+            service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX']}).execute()
+        except:
+            pass # Si ça échoue, on continue quand même
         
         if mt > 0:
             total_gain += mt
@@ -307,6 +334,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
