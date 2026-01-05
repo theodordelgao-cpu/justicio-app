@@ -185,7 +185,6 @@ def scan():
 
     # REQUÊTE CORRIGÉE (Bien alignée sous le 'd' de db.session)
     query = (
-        "label:INBOX is:unread "
         "(retard OR delay OR "
         "annulation OR cancelled OR "
         "remboursement OR refund OR "
@@ -388,6 +387,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
