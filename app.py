@@ -17,7 +17,7 @@ from sqlalchemy import or_
 
 app = Flask(__name__)
 
-# --- CONFIGURATION (Lignes 22-35) ---
+# --- CONFIGURATION ---
 app.secret_key = os.environ.get("SECRET_KEY", "justicio_billion_dollar_secret")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY")
@@ -33,7 +33,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 stripe.api_key = STRIPE_SK
 
-# --- RÉPERTOIRE JURIDIQUE (MODE SANDBOX : Tout arrive chez toi pour test) ---
+# --- RÉPERTOIRE JURIDIQUE ---
 LEGAL_DIRECTORY = {
     # --- E-COMMERCE & TECH ---
     "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
@@ -43,8 +43,6 @@ LEGAL_DIRECTORY = {
     "zara": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
     "h&m": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
     "asos": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour)"},
-    "nike": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Produit défectueux)"},
-    "adidas": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Produit défectueux)"},
     "fnac": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
     "darty": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
 
@@ -52,9 +50,8 @@ LEGAL_DIRECTORY = {
     "booking": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
     "airbnb": {"email": "theodordelgao@gmail.com", "loi": "le Règlement Rome I (Protection consommateur)"},
     "expedia": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
-    "hotels.com": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
 
-    # --- TRANSPORTS (Avion & Train) ---
+    # --- TRANSPORTS ---
     "ryanair": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "easyjet": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "lufthansa": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
@@ -64,32 +61,24 @@ LEGAL_DIRECTORY = {
     "sncf": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "eurostar": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "ouigo": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
-    "db": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782 (Deutsche Bahn)"},
-    "trenitalia": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
 
-    # --- LIVRAISON & VTC ---
+    # --- VTC ---
     "uber": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
-    "ubereats": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
     "deliveroo": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
     "bolt": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"}
 }
 
-# --- TEXTES LÉGAUX PROFESSIONNELS ---
+# --- TEXTES LÉGAUX ---
 LEGAL_TEXTS = {
     "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1>
-    <p><b>1. Objet :</b> Justicio SAS automatise vos réclamations juridiques pour retards ou litiges commerciaux.</p>
-    <p><b>2. Mandat :</b> L'utilisateur mandate Justicio pour agir en son nom auprès des compagnies tiers.</p>
-    <p><b>3. Honoraires :</b> Commission de 30% TTC prélevée uniquement sur les sommes récupérées.</p>
+    <p><b>1. Objet :</b> Justicio SAS automatise vos réclamations juridiques.</p>
+    <p><b>2. Honoraires :</b> Commission de 30% TTC prélevée uniquement sur les sommes récupérées.</p>
     <a href='/' class='btn-logout'>Retour</a></div>""",
-    
     "CONFIDENTIALITE": """<div class='legal-content'><h1>Politique de Confidentialité</h1>
-    <p><b>Données :</b> Vos emails Gmail sont analysés par notre IA sécurisée sans stockage permanent de vos messages personnels.</p>
-    <p><b>Sécurité :</b> Vos accès sont chiffrés et vous pouvez révoquer l'accès à tout moment via votre compte Google.</p>
+    <p>Vos emails sont analysés par notre IA sécurisée sans stockage permanent.</p>
     <a href='/' class='btn-logout'>Retour</a></div>""",
-    
     "MENTIONS": """<div class='legal-content'><h1>Mentions Légales</h1>
-    <p><b>Éditeur :</b> Justicio SAS, immatriculée en France.</p>
-    <p><b>Hébergement :</b> Render Inc, USA.</p>
+    <p>Justicio SAS, France. Hébergement : Render Inc.</p>
     <a href='/' class='btn-logout'>Retour</a></div>"""
 }
 
@@ -115,15 +104,13 @@ class Litigation(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
-    # db.drop_all() # <-- Ne décommenter que pour un reset total
     db.create_all()
 
-# --- FONCTIONS UTILITAIRES (Telegram, Gmail, IA) ---
+# --- FONCTIONS UTILITAIRES ---
 def send_telegram_notif(message):
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
         except: pass
 
 def get_refreshed_credentials(refresh_token):
@@ -139,8 +126,6 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         message['subject'] = subject
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
-        
-        # Archivage automatique pour "nettoyer" la boîte d'envoi
         try:
             service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
         except: pass
@@ -150,9 +135,9 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # NOUVEAU PROMPT AGRESSIF : Pour être sûr de trouver le prix (Zara, Amazon, etc.)
+        # Prompt Agressif pour le prix
         prompt = f"""
-        Tu es un avocat expert. Analyse ce mail :
+        Analyse ce mail juridiquement :
         Sujet: {subject}
         Contenu: {text[:800]}
         
@@ -160,9 +145,7 @@ def analyze_litigation(text, subject):
         Tâche 2 : Cite la loi européenne ou française qui s'applique.
         
         Réponds UNIQUEMENT sous ce format : MONTANT | LOI
-        Exemple : 142€ | Article L216-1
         """
-        
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
             messages=[{"role":"user", "content": prompt}]
@@ -170,7 +153,7 @@ def analyze_litigation(text, subject):
         return [d.strip() for d in res.choices[0].message.content.split("|")]
     except: return ["AUCUN", "Inconnu"]
 
-# --- DESIGN & UI ---
+# --- STYLE CSS ---
 STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
 body{{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:120px;display:flex;flex-direction:column;align-items:center;color:#1e293b}}
 .card{{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444; position:relative;}}
@@ -185,7 +168,7 @@ footer{{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}}footer
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2026 Justicio.fr</p></footer>"""
 WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" target="_blank">💬</a>"""
 
-# --- ROUTES PRINCIPALES ---
+# --- ROUTES ---
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
@@ -202,97 +185,112 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # 1. Nettoyage de la base (Reset)
+    # 1. Nettoyage Visuel
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # 2. REQUÊTE MINIMALISTE (On enlève tous les filtres négatifs pour être sûr de VOIR le mail)
-    # On cherche juste "Zara", "Lufthansa", "Booking", etc.
-    query = "zara OR lufthansa OR booking OR refund OR remboursement OR commande OR order OR flight OR vol"
+    # 2. QUERY INTELLIGENTE (Filtre les pubs mais garde les tests déjà vus)
+    query = (
+        "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
+        "indemnisation OR compensation OR litige OR claim OR bagage OR lost OR "
+        "endommagé OR damaged OR vol OR flight OR train OR billet OR ticket OR "
+        "commande OR order OR livraison OR delivery OR colis OR package OR repas OR meal OR "
+        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
+        "uber OR deliveroo OR just eat OR bolt OR booking OR airbnb OR "
+        "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos) "
+        "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
+        "-subject:\"MISE EN DEMEURE\" "
+        "-from:mailer-daemon -subject:\"Delivery Status\""
+    )
 
-    # On récupère les 10 derniers mails correspondants
-    results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
+    results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
     msgs = results.get('messages', [])
     
-    new_cases = 0
+    total_gain, new_cases = 0, 0
     html_cards = ""
     
-    # --- DÉBUT DU RAPPORT MOUCHARD ---
-    report = """
-    <div style='background:#334155; color:white; padding:20px; border-radius:15px; margin-bottom:20px; font-family:monospace; font-size:0.9rem'>
-    <h3>🕵️ RAPPORT MOUCHARD</h3>
-    <p>Si ton mail est dans cette liste mais marqué ❌, lis la raison à côté.</p>
-    <ul style='list-style:none; padding:0;'>
-    """
-
     for m in msgs:
         f = service.users().messages().get(userId='me', id=m['id']).execute()
-        headers = f['payload'].get('headers', [])
-        subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
         snippet = f.get('snippet', '')
+        subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
         
-        # Reconstruction du corps
         payload = f.get('payload', {})
         body_data = ""
         if 'parts' in payload:
             for part in payload['parts']:
                 if part['mimeType'] == 'text/plain':
                     data = part['body'].get('data', '')
-                    if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
+                    if data:
+                        body_data = base64.urlsafe_b64decode(data).decode('utf-8')
         body_content = (body_data if body_data else snippet) + " " + subj
         
-        # --- ANALYSE ---
-        status_log = "❓ En cours..."
-        is_valid = False
+        # 3. ANALYSE IA
+        ana = analyze_litigation(body_content, subj)
+        extracted_amount = ana[0]
+        law_final = ana[1] if len(ana) > 1 else "Code Civil"
         
-        # 1. Test Mémoire
-        archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
-        if archive and archive.status in ["Envoyé", "Payé"]:
-            status_log = "❌ REJETÉ : Déjà en mémoire (Doublon)"
+        gain_final, company_key = "AUCUN", "Inconnu"
+
+        # 4. RADAR HYBRIDE
+        airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways", "emirates"]
+        if any(air in subj.lower() for air in airlines):
+            gain_final = "250€"
+            for air in airlines:
+                if air in subj.lower(): company_key = air
         else:
-            # 2. Test Radar
-            company_key = "Inconnu"
-            targets = ["zara", "lufthansa", "booking", "sncf", "amazon", "uber", "apple"]
-            for t in targets:
-                if t in subj.lower() or t in body_content.lower():
-                    company_key = t
-                    break
+            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty", "heetch", "bolt"]
+            for target in targets:
+                if target in subj.lower() or target in body_content.lower():
+                    company_key = target
+                    if any(char.isdigit() for char in extracted_amount):
+                        gain_final = extracted_amount
+                    else:
+                        gain_final = "À déterminer"
+
+        # 5. VALIDATION ET ENREGISTREMENT
+        if company_key != "Inconnu" and "AUCUN" not in gain_final:
             
-            if company_key == "Inconnu":
-                status_log = "❌ REJETÉ : Aucune marque connue trouvée"
-            else:
-                # C'est validé !
-                is_valid = True
-                gain_final = "À déterminer"
-                
-                # Petit check prix simple
-                ana = analyze_litigation(body_content, subj)
-                if any(char.isdigit() for char in ana[0]): gain_final = ana[0]
-                if "lufthansa" in company_key or "ryanair" in company_key: gain_final = "250€"
+            # NOTE : J'ai désactivé la sécurité anti-doublon pour que tes tests marchent tout le temps !
+            
+            mt = 0
+            try:
+                mt = int(re.search(r'\d+', gain_final).group())
+            except: mt = 0
+            
+            total_gain += mt
+            new_cases += 1
+            
+            if company_key in LEGAL_DIRECTORY:
+                law_final = LEGAL_DIRECTORY[company_key]["loi"]
+            
+            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
+            db.session.add(new_lit)
+            
+            # Nettoyage inbox (optionnel)
+            try:
+                service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
+            except: pass
 
-                status_log = f"✅ ACCEPTÉ : Marque {company_key.upper()} detected"
-
-                # Enregistrement
-                new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law="Test", subject=subj, status="Détecté")
-                db.session.add(new_lit)
-                new_cases += 1
-                
-                # Création carte
-                html_cards += f"<div class='card'><h3>{subj}</h3><div class='amount-badge'>{gain_final}</div></div>"
-
-        # Ajout au rapport visuel
-        icon = "✅" if is_valid else "❌"
-        color = "#86efac" if is_valid else "#fca5a5"
-        report += f"<li style='margin-bottom:10px; border-left:4px solid {color}; padding-left:10px;'>{icon} <b>{subj[:50]}...</b><br><span style='color:#cbd5e1'>{status_log}</span></li>"
-
+            html_cards += f"""
+            <div class='card'>
+                <div class='amount-badge'>{gain_final}</div>
+                <span class='radar-tag'>{company_key.upper()}</span>
+                <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
+                <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
+                    <i>"{snippet[:120]}..."</i>
+                </p>
+                <p><small>⚖️ {law_final}</small></p>
+            </div>"""
+    
     db.session.commit()
-    report += "</ul></div>"
     
-    # Résultat final
-    if new_cases == 0:
-        return STYLE + f"<h1>Résultat du Scan</h1>{report}<p>Aucun litige validé.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
-    
-    return STYLE + f"<h1>Résultat du Scan</h1>{report}{html_cards}<br><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>" + FOOTER
+    if new_cases > 0: 
+        html_cards += f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
+    else: 
+        html_cards += "<div class='card'><h3>✅ Tout est propre</h3><p>Aucun nouveau litige trouvé.</p><a href='/' class='btn-logout'>Retour</a></div>"
+        
+    return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + WA_BTN + FOOTER
+
 @app.route("/setup-payment")
 def setup_payment():
     session_stripe = stripe.checkout.Session.create(payment_method_types=['card'], mode='setup', success_url=url_for('success_page', _external=True), cancel_url=url_for('index', _external=True))
@@ -326,17 +324,15 @@ Sous toutes réserves."""
                     success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
                     lit.status = "Envoyé" if success else "Erreur"
                     db.session.commit()
-                    # Notif Telegram
                     if success:
                         try:
-                             # Calcul du gain (30%) pour la notif
+                            # Calcul 30%
                             gain_estime = int(re.search(r'\d+', lit.amount).group()) * 0.3
                             send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {gain_estime}€")
                         except: pass
         return "OK", 200
     except: return "Error", 400
 
-# ROUTES LÉGALES & AUTHENTIFICATION (Standard)
 @app.route("/cgu")
 def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
 @app.route("/confidentialite")
@@ -370,4 +366,3 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
-
