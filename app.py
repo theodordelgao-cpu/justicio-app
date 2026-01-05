@@ -166,13 +166,13 @@ def scan():
     html_cards = ""
     
     for m in msgs:
-       f = service.users().messages().get(userId='me', id=m['id']).execute()
+        f = service.users().messages().get(userId='me', id=m['id']).execute()
+        
+        # 1. On récupère le snippet et le sujet (Indentation : 8 espaces)
+        snippet = f.get('snippet', '')
         subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
         
-        # 1. On garde le snippet par sécurité
-        snippet = f.get('snippet', '')
-        
-        # 2. On tente de récupérer le corps complet (plus que 150 caractères)
+        # 2. On tente de récupérer le corps complet
         payload = f.get('payload', {})
         body_data = ""
         if 'parts' in payload:
@@ -181,14 +181,14 @@ def scan():
                     data = part['body'].get('data', '')
                     body_data = base64.urlsafe_b64decode(data).decode('utf-8')
         
-        # 3. On crée la variable de choc pour l'IA
-        # Si body_data est vide, on retombe sur le snippet
+        # 3. On fusionne pour l'IA
         body_content = (body_data if body_data else snippet) + " " + subj
         
-        # Mémoire intelligente (Archive)
+        # 4. Mémoire intelligente
         archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
         if archive and archive.status in ["Envoyé", "Payé"]: continue
         
+        # 5. Analyse IA sur le contenu GLOBAL
         ana = analyze_litigation(body_content, subj)
         gain_final, law_final = ana[0], ana[1] if len(ana) > 1 else "Code Civil"
         if "AUCUN" in gain_final: continue
@@ -297,6 +297,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
