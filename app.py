@@ -158,18 +158,32 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-# Recherche ultra-large pour ne rien rater (Vols, Trains, Uber, Amazon, Livraisons, Bagages)
-    query = "retard OR remboursement OR annulation OR indemnisation OR litige OR commande OR train OR vol OR billet OR sncf OR ryanair OR easyjet OR incident OR bagage OR perdu OR livraison OR retardé OR manquant OR perturbation OR grève -promo -solde -newsletter -from:me"
+# Requête simplifiée pour le test : on cherche les mots-clés sans bloquer l'expéditeur
+    query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet OR sncf OR ryanair -promo -solde"
     results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
     html_cards = ""
     
     for m in msgs:
-        f = service.users().messages().get(userId='me', id=m['id']).execute()
+       f = service.users().messages().get(userId='me', id=m['id']).execute()
         subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
+        
+        # 1. On garde le snippet par sécurité
         snippet = f.get('snippet', '')
-        body_content = f.get('snippet', '') + " " + subj
+        
+        # 2. On tente de récupérer le corps complet (plus que 150 caractères)
+        payload = f.get('payload', {})
+        body_data = ""
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body'].get('data', '')
+                    body_data = base64.urlsafe_b64decode(data).decode('utf-8')
+        
+        # 3. On crée la variable de choc pour l'IA
+        # Si body_data est vide, on retombe sur le snippet
+        body_content = (body_data if body_data else snippet) + " " + subj
         
         # Mémoire intelligente (Archive)
         archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
@@ -283,6 +297,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
