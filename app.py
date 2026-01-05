@@ -184,8 +184,9 @@ def scan():
     db.session.commit()
 
 # On exclut les pubs ET nos propres courriers officiels pour éviter les doublons
-    query = (
-        "retard OR delay OR "
+   query = (
+        "label:INBOX is:unread "  # <--- C'est ici la modification magique
+        "(retard OR delay OR "
         "annulation OR cancelled OR "
         "remboursement OR refund OR "
         "indemnisation OR compensation OR "
@@ -202,7 +203,7 @@ def scan():
         "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
         "uber OR deliveroo OR just eat OR bolt OR "
         "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos OR "
-        "booking OR airbnb OR expedia "
+        "booking OR airbnb OR expedia) " # Fin de la parenthèse des mots-clés
         "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
         "-subject:\"MISE EN DEMEURE\""
     )
@@ -387,6 +388,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
