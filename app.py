@@ -202,127 +202,97 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # 1. Nettoyage de l'affichage précédent
+    # 1. Nettoyage de la base (Reset)
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # 2. QUERY ULTIME "NUCLÉAIRE" + ANTI-ERREUR
-    # On scanne tout (lu/non lu) mais on ignore les messages d'erreur système
-    query = (
-        "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
-        "indemnisation OR compensation OR litige OR claim OR bagage OR lost OR "
-        "endommagé OR damaged OR vol OR flight OR train OR billet OR ticket OR "
-        "commande OR order OR livraison OR delivery OR colis OR package OR repas OR meal OR "
-        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
-        "uber OR deliveroo OR just eat OR bolt OR booking OR airbnb OR "
-        "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos) "
-        "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
-        "-subject:\"MISE EN DEMEURE\" "
-        "-from:mailer-daemon -subject:\"Delivery Status\""
-    )
+    # 2. REQUÊTE MINIMALISTE (On enlève tous les filtres négatifs pour être sûr de VOIR le mail)
+    # On cherche juste "Zara", "Lufthansa", "Booking", etc.
+    query = "zara OR lufthansa OR booking OR refund OR remboursement OR commande OR order OR flight OR vol"
 
-    results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
+    # On récupère les 10 derniers mails correspondants
+    results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
     msgs = results.get('messages', [])
     
-    total_gain, new_cases = 0, 0
+    new_cases = 0
     html_cards = ""
     
+    # --- DÉBUT DU RAPPORT MOUCHARD ---
+    report = """
+    <div style='background:#334155; color:white; padding:20px; border-radius:15px; margin-bottom:20px; font-family:monospace; font-size:0.9rem'>
+    <h3>🕵️ RAPPORT MOUCHARD</h3>
+    <p>Si ton mail est dans cette liste mais marqué ❌, lis la raison à côté.</p>
+    <ul style='list-style:none; padding:0;'>
+    """
+
     for m in msgs:
-        # Récupération Données Gmail
         f = service.users().messages().get(userId='me', id=m['id']).execute()
-        snippet = f.get('snippet', '')
         headers = f['payload'].get('headers', [])
         subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
+        snippet = f.get('snippet', '')
         
-        # Corps du message
+        # Reconstruction du corps
         payload = f.get('payload', {})
         body_data = ""
         if 'parts' in payload:
             for part in payload['parts']:
                 if part['mimeType'] == 'text/plain':
                     data = part['body'].get('data', '')
-                    if data:
-                        body_data = base64.urlsafe_b64decode(data).decode('utf-8')
+                    if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
         body_content = (body_data if body_data else snippet) + " " + subj
         
-        # 3. ANALYSE IA (Prompt Agressif)
-        ana = analyze_litigation(body_content, subj)
-        extracted_amount = ana[0] # L'IA doit trouver "142€" ici
-        law_final = ana[1] if len(ana) > 1 else "Code Civil"
+        # --- ANALYSE ---
+        status_log = "❓ En cours..."
+        is_valid = False
         
-        gain_final, company_key = "AUCUN", "Inconnu"
-
-        # 4. RADAR HYBRIDE : On décide du prix (Forfait ou Réel)
-        
-        # A. AVIONS (Prix Fixe 250€)
-        airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways", "emirates"]
-        if any(air in subj.lower() for air in airlines):
-            gain_final = "250€"
-            for air in airlines:
-                if air in subj.lower(): company_key = air
-
-        # B. E-COMMERCE / TRAIN / VTC (Prix Réel IA)
+        # 1. Test Mémoire
+        archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
+        if archive and archive.status in ["Envoyé", "Payé"]:
+            status_log = "❌ REJETÉ : Déjà en mémoire (Doublon)"
         else:
-            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty", "heetch", "bolt"]
-            for target in targets:
-                if target in subj.lower() or target in body_content.lower():
-                    company_key = target
-                    # Si l'IA a trouvé un chiffre, on le prend
-                    if any(char.isdigit() for char in extracted_amount):
-                        gain_final = extracted_amount
-                    else:
-                        gain_final = "À déterminer"
+            # 2. Test Radar
+            company_key = "Inconnu"
+            targets = ["zara", "lufthansa", "booking", "sncf", "amazon", "uber", "apple"]
+            for t in targets:
+                if t in subj.lower() or t in body_content.lower():
+                    company_key = t
+                    break
+            
+            if company_key == "Inconnu":
+                status_log = "❌ REJETÉ : Aucune marque connue trouvée"
+            else:
+                # C'est validé !
+                is_valid = True
+                gain_final = "À déterminer"
+                
+                # Petit check prix simple
+                ana = analyze_litigation(body_content, subj)
+                if any(char.isdigit() for char in ana[0]): gain_final = ana[0]
+                if "lufthansa" in company_key or "ryanair" in company_key: gain_final = "250€"
 
-        # 5. FILTRAGE & ENREGISTREMENT
-        if company_key != "Inconnu" and "AUCUN" not in gain_final:
-            
-            # Anti-doublon
-            archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
-            if archive and archive.status in ["Envoyé", "Payé"]: continue
-            
-            # Calcul montant pour le total
-            mt = 0
-            try:
-                mt = int(re.search(r'\d+', gain_final).group())
-            except: mt = 0
-            
-            total_gain += mt
-            new_cases += 1
-            
-            # Loi précise du dictionnaire
-            if company_key in LEGAL_DIRECTORY:
-                law_final = LEGAL_DIRECTORY[company_key]["loi"]
-            
-            # Sauvegarde DB
-            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
-            db.session.add(new_lit)
-            
-            # Archivage (Nettoyage Inbox)
-            try:
-                service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
-            except: pass
+                status_log = f"✅ ACCEPTÉ : Marque {company_key.upper()} detected"
 
-            # Création de la Carte
-            html_cards += f"""
-            <div class='card'>
-                <div class='amount-badge'>{gain_final}</div>
-                <span class='radar-tag'>{company_key.upper()}</span>
-                <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
-                <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
-                    <i>"{snippet[:120]}..."</i>
-                </p>
-                <p><small>⚖️ {law_final}</small></p>
-            </div>"""
-    
+                # Enregistrement
+                new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law="Test", subject=subj, status="Détecté")
+                db.session.add(new_lit)
+                new_cases += 1
+                
+                # Création carte
+                html_cards += f"<div class='card'><h3>{subj}</h3><div class='amount-badge'>{gain_final}</div></div>"
+
+        # Ajout au rapport visuel
+        icon = "✅" if is_valid else "❌"
+        color = "#86efac" if is_valid else "#fca5a5"
+        report += f"<li style='margin-bottom:10px; border-left:4px solid {color}; padding-left:10px;'>{icon} <b>{subj[:50]}...</b><br><span style='color:#cbd5e1'>{status_log}</span></li>"
+
     db.session.commit()
+    report += "</ul></div>"
     
-    if new_cases > 0: 
-        html_cards += f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
-    else: 
-        html_cards += "<div class='card'><h3>✅ Tout est propre</h3><p>Aucun nouveau litige trouvé.</p><a href='/' class='btn-logout'>Retour</a></div>"
-        
-    return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + WA_BTN + FOOTER
-
+    # Résultat final
+    if new_cases == 0:
+        return STYLE + f"<h1>Résultat du Scan</h1>{report}<p>Aucun litige validé.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
+    
+    return STYLE + f"<h1>Résultat du Scan</h1>{report}{html_cards}<br><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>" + FOOTER
 @app.route("/setup-payment")
 def setup_payment():
     session_stripe = stripe.checkout.Session.create(payment_method_types=['card'], mode='setup', success_url=url_for('success_page', _external=True), cancel_url=url_for('index', _external=True))
@@ -400,3 +370,4 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
