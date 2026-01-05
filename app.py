@@ -185,11 +185,11 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # 1. Nettoyage Visuel
+    # 1. On nettoie juste le visuel précédent
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # 2. QUERY INTELLIGENTE (Filtre les pubs mais garde les tests déjà vus)
+    # 2. QUERY NUCLÉAIRE (Aucun filtre, on scanne tout pour être sûr de trouver)
     query = (
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
         "indemnisation OR compensation OR litige OR claim OR bagage OR lost OR "
@@ -247,11 +247,15 @@ def scan():
                     else:
                         gain_final = "À déterminer"
 
-        # 5. VALIDATION ET ENREGISTREMENT
+        # 5. VALIDATION ET MÉMOIRE ACTIVE
         if company_key != "Inconnu" and "AUCUN" not in gain_final:
             
-            # NOTE : J'ai désactivé la sécurité anti-doublon pour que tes tests marchent tout le temps !
-            
+            # --- C'EST ICI QUE LA MÉMOIRE AGIT ---
+            # Si le dossier existe déjà (Sujet identique) et a été traité, on l'ignore.
+            archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
+            if archive and archive.status in ["Envoyé", "Payé", "Détecté"]: continue
+            # -------------------------------------
+
             mt = 0
             try:
                 mt = int(re.search(r'\d+', gain_final).group())
@@ -266,7 +270,7 @@ def scan():
             new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
             
-            # Nettoyage inbox (optionnel)
+            # Archivage mail (Optionnel)
             try:
                 service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
             except: pass
