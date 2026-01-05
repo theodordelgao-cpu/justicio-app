@@ -180,131 +180,92 @@ def scan():
     if "credentials" not in session: return redirect("/login")
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
+    
+    # On nettoie la base pour le test
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # REQUÊTE CORRIGÉE (Bien alignée sous le 'd' de db.session)
-    query = (
-        "(retard OR delay OR "
-        "annulation OR cancelled OR "
-        "remboursement OR refund OR "
-        "indemnisation OR compensation OR "
-        "litige OR claim OR "
-        "bagage OR baggage OR "
-        "perdu OR lost OR "
-        "endommagé OR damaged OR "
-        "vol OR flight OR "
-        "train OR billet OR ticket OR "
-        "commande OR order OR "
-        "livraison OR delivery OR "
-        "colis OR package OR "
-        "repas OR meal OR "
-        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
-        "uber OR deliveroo OR just eat OR bolt OR "
-        "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos OR "
-        "booking OR airbnb OR expedia) "
-        "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
-        "-subject:\"MISE EN DEMEURE\""
-    )
-    results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
+    # REQUÊTE TEST SIMPLIFIÉE : On vise juste tes mots-clés sans filtres complexes
+    # On cherche large : "zara", "lufthansa", "booking" ou "refund"
+    query = "zara OR lufthansa OR booking OR sncf OR ryanair OR remboursement OR refund"
+
+    # On récupère 10 résultats max pour le test
+    results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
     msgs = results.get('messages', [])
+    
     total_gain, new_cases = 0, 0
     html_cards = ""
+    debug_log = "<h3>🕵️ JOURNAL DU SCAN (Diagnostic)</h3><ul style='text-align:left; background:#eee; padding:20px; border-radius:10px; list-style:none;'>"
     
+    if not msgs:
+        debug_log += "<li>❌ <b>ERREUR CRITIQUE :</b> Gmail ne renvoie AUCUN mail. La recherche est vide.</li>"
+
     for m in msgs:
+        # Récupération Données
         f = service.users().messages().get(userId='me', id=m['id']).execute()
-        
-        # 1. On récupère le snippet et le sujet (Indentation : 8 espaces)
+        headers = f['payload'].get('headers', [])
+        subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
         snippet = f.get('snippet', '')
-        subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
         
-        # 2. On tente de récupérer le corps complet
+        # Corps du message
         payload = f.get('payload', {})
         body_data = ""
         if 'parts' in payload:
             for part in payload['parts']:
                 if part['mimeType'] == 'text/plain':
                     data = part['body'].get('data', '')
-                    body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-        
-        # 3. On fusionne pour l'IA
+                    if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
         body_content = (body_data if body_data else snippet) + " " + subj
         
-        # 4. Mémoire intelligente
-        archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
-        if archive and archive.status in ["Envoyé", "Payé"]: continue
-        
-        # 5. Analyse IA sur le contenu GLOBAL
+        # LOGIQUE HYBRIDE SIMPLIFIÉE
         ana = analyze_litigation(body_content, subj)
-        extracted_amount = ana[0] # Ex: "124€" ou "AUCUN"
-        law_final = ana[1] if len(ana) > 1 else "Code Civil"
+        extracted_amount = ana[0]
         
         gain_final, company_key = "AUCUN", "Inconnu"
 
-        # B. LOGIQUE AÉRIENNE (Forfait Légal Fixe = 250€ min)
-        airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways", "emirates"]
-        if any(air in subj.lower() for air in airlines):
-            gain_final = "250€"
-            for air in airlines:
-                if air in subj.lower(): company_key = air
+        # Radar
+        targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "ryanair", "lufthansa", "easyjet"]
+        for target in targets:
+            if target in subj.lower() or target in body_content.lower():
+                company_key = target
+                if any(air in subj.lower() for air in ["ryanair", "lufthansa", "easyjet", "air france"]):
+                    gain_final = "250€" # Avion
+                elif any(char.isdigit() for char in extracted_amount):
+                    gain_final = extracted_amount # Prix réel
+                else:
+                    gain_final = "À déterminer"
+                break
+        
+        # RAPPORT DE DEBUG POUR CHAQUE MAIL
+        status_icon = "❌"
+        if company_key != "Inconnu": status_icon = "✅"
+        
+        debug_log += f"<li style='margin-bottom:10px; border-bottom:1px solid #ccc; padding-bottom:5px;'>" \
+                     f"<b>{status_icon} Sujet :</b> {subj}<br>" \
+                     f"&nbsp;&nbsp;&nbsp;Compagnie : {company_key} | Gain : {gain_final}</li>"
 
-        # C. LOGIQUE E-COMMERCE / TRAIN / VTC (Prix Réel du mail)
-        else:
-            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty", "heetch", "bolt"]
-            for target in targets:
-                if target in subj.lower() or target in body_content.lower():
-                    company_key = target
-                    # Si l'IA a vu un chiffre, on le garde. Sinon "À déterminer"
-                    if any(char.isdigit() for char in extracted_amount):
-                        gain_final = extracted_amount
-                    else:
-                        gain_final = "À déterminer"
-
-        # D. Si on a trouvé une compagnie, on enregistre !
-        if company_key != "Inconnu" and "AUCUN" not in gain_final:
-            
-            # Calcul pour le total en haut de page
-            mt = 0
-            try:
-                import re
-                # On essaie d'extraire le nombre pour l'additionner au total
-                mt = int(re.search(r'\d+', gain_final).group())
-            except:
-                mt = 0 # Si "À déterminer", ça vaut 0 dans le total pour l'instant
-            
-            total_gain += mt
+        # ENREGISTREMENT
+        if company_key != "Inconnu":
+            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law="Loi Test", subject=subj, status="Détecté")
+            db.session.add(new_lit)
             new_cases += 1
             
-            # On cherche la loi précise si elle existe dans notre dictionnaire
-            if company_key in LEGAL_DIRECTORY:
-                law_final = LEGAL_DIRECTORY[company_key]["loi"]
-            
-            # Enregistrement Base de Données
-            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
-            db.session.add(new_lit)
-            
-            # ARCHIVAGE (Nettoyage Inbox)
-            try:
-                service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX']}).execute()
-            except:
-                pass
-
             # Création de la Carte HTML
             html_cards += f"""
             <div class='card'>
                 <div class='amount-badge'>{gain_final}</div>
                 <span class='radar-tag'>{company_key.upper()}</span>
                 <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
-                <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
-                    <i>"{snippet[:120]}..."</i>
-                </p>
-                <p><small>⚖️ {law_final}</small></p>
+                <p><small>Détecté par le mode diagnostic</small></p>
             </div>"""
-    
+
     db.session.commit()
-    if new_cases > 0: html_cards += f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
-    else: html_cards += "<div class='card'><h3>✅ Tout est propre</h3><p>Aucun nouveau litige trouvé.</p></div>"
-    return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + WA_BTN + FOOTER
+    debug_log += "</ul>"
+    
+    if new_cases == 0:
+        return STYLE + f"<h1>Résultat du Diagnostic</h1>{debug_log}<p>Aucun litige validé.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
+        
+    return STYLE + f"<h1>Succès ! ({new_cases} trouvés)</h1>{html_cards}<br>{debug_log}<a href='/' class='btn-success'>🚀 TOUT RÉCUPÉRER</a>" + FOOTER
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -387,6 +348,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
