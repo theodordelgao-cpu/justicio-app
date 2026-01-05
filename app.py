@@ -158,8 +158,8 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-# Requête simplifiée pour le test : on cherche les mots-clés sans bloquer l'expéditeur
-    query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet OR sncf OR ryanair -promo -solde"
+# On exclut les pubs ET nos propres courriers officiels pour éviter les doublons
+    query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet OR sncf OR ryanair -promo -solde -subject:\"MISE EN DEMEURE\""
     results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
@@ -210,7 +210,16 @@ def scan():
             new_cases += 1
             new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
-            html_cards += f"<div class='card'><h3>{company_key.title()} : {subj}</h3><div class='amount-badge'>{gain_final}</div><p><small>{law_final}</small></p></div>"
+            html_cards += f"""
+                <div class='card'>
+                    <div class='amount-badge'>{gain_final}</div>
+                    <span class='radar-tag'>{company_key.upper()}</span>
+                    <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
+                    <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
+                        <i>"{snippet[:120]}..."</i>
+                    </p>
+                    <p><small>⚖️ {law_final}</small></p>
+                </div>"""
     
     db.session.commit()
     if new_cases > 0: html_cards += f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
@@ -298,6 +307,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
