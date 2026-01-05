@@ -200,7 +200,8 @@ def scan():
 
         if "9125" in subj: gain_final, company_key = "80€", "eurostar"
         if "KL2273" in subj: gain_final, company_key = "600€", "klm"
-
+        if "sncf" in subj.lower() or "retard" in body_content.lower():
+            gain_final, company_key = "45€", "sncf"
         try: mt = int(''.join(filter(str.isdigit, gain_final)))
         except: mt = 0
         
@@ -297,6 +298,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
