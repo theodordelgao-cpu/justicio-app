@@ -184,7 +184,28 @@ def scan():
     db.session.commit()
 
 # On exclut les pubs ET nos propres courriers officiels pour éviter les doublons
-    query = "retard OR remboursement OR annulation OR litige OR train OR vol OR billet OR sncf OR ryanair -promo -solde -subject:\"MISE EN DEMEURE\""
+    query = (
+        "retard OR delay OR "
+        "annulation OR cancelled OR "
+        "remboursement OR refund OR "
+        "indemnisation OR compensation OR "
+        "litige OR claim OR "
+        "bagage OR baggage OR "
+        "perdu OR lost OR "
+        "endommagé OR damaged OR "
+        "vol OR flight OR "
+        "train OR billet OR ticket OR "
+        "commande OR order OR "
+        "livraison OR delivery OR "
+        "colis OR package OR "
+        "repas OR meal OR "
+        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
+        "uber OR deliveroo OR just eat OR bolt OR "
+        "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos OR "
+        "booking OR airbnb OR expedia "
+        "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
+        "-subject:\"MISE EN DEMEURE\""
+    )
     results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     msgs = results.get('messages', [])
     total_gain, new_cases = 0, 0
@@ -334,6 +355,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
