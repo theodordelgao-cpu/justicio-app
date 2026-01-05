@@ -143,10 +143,22 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
+        # On force l'IA à chercher un montant monétaire explicite
+        prompt = f"""
+        Tu es un avocat expert. Analyse ce mail :
+        Sujet: {subject}
+        Contenu: {text[:800]}
+        
+        Tâche 1 : Trouve le montant EXACT du préjudice (ex: 142€, 12.50€). Si pas de montant clair, écris 'AUCUN'.
+        Tâche 2 : Cite la loi européenne ou française qui s'applique.
+        
+        Réponds UNIQUEMENT sous ce format : MONTANT | LOI
+        Exemple : 142€ | Article L216-1
+        """
+        
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"system", "content": "Expert Juridique. Si litige détecté -> 'MONTANT | LOI'. Sinon 'AUCUN | AUCUN'."},
-                      {"role":"user", "content": f"Sujet: {subject}. Snippet: {text[:400]}"}]
+            messages=[{"role":"user", "content": prompt}]
         )
         return [d.strip() for d in res.choices[0].message.content.split("|")]
     except: return ["AUCUN", "Inconnu"]
@@ -187,7 +199,16 @@ def scan():
 
     # REQUÊTE TEST SIMPLIFIÉE : On vise juste tes mots-clés sans filtres complexes
     # On cherche large : "zara", "lufthansa", "booking" ou "refund"
-    query = "zara OR lufthansa OR booking OR sncf OR ryanair OR remboursement OR refund"
+    query = (
+        "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
+        "litige OR claim OR bagage OR lost OR endommagé OR damaged OR vol OR flight OR "
+        "train OR commande OR order OR livraison OR delivery OR colis OR package OR "
+        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR uber OR amazon OR "
+        "zalando OR shein OR zara OR booking OR airbnb) "
+        "-promo -solde -newsletter -publicité -no-reply "
+        "-subject:\"MISE EN DEMEURE\" "
+        "-from:mailer-daemon -subject:\"Delivery Status\""  # <--- AJOUT ICI
+    )
 
     # On récupère 10 résultats max pour le test
     results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
@@ -348,6 +369,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
