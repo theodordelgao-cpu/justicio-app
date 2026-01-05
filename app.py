@@ -183,9 +183,9 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-# On exclut les pubs ET nos propres courriers officiels pour éviter les doublons
-   query = (
-        "label:INBOX is:unread "  # <--- C'est ici la modification magique
+    # REQUÊTE CORRIGÉE (Bien alignée sous le 'd' de db.session)
+    query = (
+        "label:INBOX is:unread "
         "(retard OR delay OR "
         "annulation OR cancelled OR "
         "remboursement OR refund OR "
@@ -203,7 +203,7 @@ def scan():
         "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
         "uber OR deliveroo OR just eat OR bolt OR "
         "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos OR "
-        "booking OR airbnb OR expedia) " # Fin de la parenthèse des mots-clés
+        "booking OR airbnb OR expedia) "
         "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
         "-subject:\"MISE EN DEMEURE\""
     )
@@ -388,6 +388,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
