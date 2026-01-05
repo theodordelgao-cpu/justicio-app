@@ -248,16 +248,16 @@ def scan():
         if "KL2273" in subj: gain_final, company_key = "600€", "klm"
         if "sncf" in subj.lower() or "retard" in body_content.lower():
             gain_final, company_key = "45€", "sncf"
-       try:
-            service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX']}).execute()
-        except:
-            pass # Si ça échoue, on continue quand même
-        
+      
         if mt > 0:
             total_gain += mt
             new_cases += 1
             new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
+            try:
+                service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX']}).execute()
+            except:
+                pass
             html_cards += f"""
                 <div class='card'>
                     <div class='amount-badge'>{gain_final}</div>
@@ -355,6 +355,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
