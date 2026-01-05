@@ -236,38 +236,70 @@ def scan():
         
         # 5. Analyse IA sur le contenu GLOBAL
         ana = analyze_litigation(body_content, subj)
-        gain_final, law_final = ana[0], ana[1] if len(ana) > 1 else "Code Civil"
-        if "AUCUN" in gain_final: continue
+        extracted_amount = ana[0] # Ex: "124€" ou "AUCUN"
+        law_final = ana[1] if len(ana) > 1 else "Code Civil"
+        
+        gain_final, company_key = "AUCUN", "Inconnu"
 
-        # Radar de correspondance
-        company_key = "autre"
-        for k in LEGAL_DIRECTORY.keys():
-            if k in subj.lower() or k in snippet.lower(): company_key = k
+        # B. LOGIQUE AÉRIENNE (Forfait Légal Fixe = 250€ min)
+        airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways", "emirates"]
+        if any(air in subj.lower() for air in airlines):
+            gain_final = "250€"
+            for air in airlines:
+                if air in subj.lower(): company_key = air
 
-        if "9125" in subj: gain_final, company_key = "80€", "eurostar"
-        if "KL2273" in subj: gain_final, company_key = "600€", "klm"
-        if "sncf" in subj.lower() or "retard" in body_content.lower():
-            gain_final, company_key = "45€", "sncf"
-      
-        if mt > 0:
+        # C. LOGIQUE E-COMMERCE / TRAIN / VTC (Prix Réel du mail)
+        else:
+            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty", "heetch", "bolt"]
+            for target in targets:
+                if target in subj.lower() or target in body_content.lower():
+                    company_key = target
+                    # Si l'IA a vu un chiffre, on le garde. Sinon "À déterminer"
+                    if any(char.isdigit() for char in extracted_amount):
+                        gain_final = extracted_amount
+                    else:
+                        gain_final = "À déterminer"
+
+        # D. Si on a trouvé une compagnie, on enregistre !
+        if company_key != "Inconnu" and "AUCUN" not in gain_final:
+            
+            # Calcul pour le total en haut de page
+            mt = 0
+            try:
+                import re
+                # On essaie d'extraire le nombre pour l'additionner au total
+                mt = int(re.search(r'\d+', gain_final).group())
+            except:
+                mt = 0 # Si "À déterminer", ça vaut 0 dans le total pour l'instant
+            
             total_gain += mt
             new_cases += 1
+            
+            # On cherche la loi précise si elle existe dans notre dictionnaire
+            if company_key in LEGAL_DIRECTORY:
+                law_final = LEGAL_DIRECTORY[company_key]["loi"]
+            
+            # Enregistrement Base de Données
             new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
+            
+            # ARCHIVAGE (Nettoyage Inbox)
             try:
                 service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX']}).execute()
             except:
                 pass
+
+            # Création de la Carte HTML
             html_cards += f"""
-                <div class='card'>
-                    <div class='amount-badge'>{gain_final}</div>
-                    <span class='radar-tag'>{company_key.upper()}</span>
-                    <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
-                    <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
-                        <i>"{snippet[:120]}..."</i>
-                    </p>
-                    <p><small>⚖️ {law_final}</small></p>
-                </div>"""
+            <div class='card'>
+                <div class='amount-badge'>{gain_final}</div>
+                <span class='radar-tag'>{company_key.upper()}</span>
+                <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
+                <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
+                    <i>"{snippet[:120]}..."</i>
+                </p>
+                <p><small>⚖️ {law_final}</small></p>
+            </div>"""
     
     db.session.commit()
     if new_cases > 0: html_cards += f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
@@ -355,6 +387,7 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
