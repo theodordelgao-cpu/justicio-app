@@ -3,6 +3,7 @@ import base64
 import requests
 import stripe
 import json
+import re
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
@@ -16,25 +17,25 @@ from sqlalchemy import or_
 
 app = Flask(__name__)
 
-# --- CONFIGURATION (Lignes 22-32) ---
+# --- CONFIGURATION (Lignes 22-35) ---
 app.secret_key = os.environ.get("SECRET_KEY", "justicio_billion_dollar_secret")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") 
-DATABASE_URL = os.environ.get("DATABASE_URL") 
+STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
-WHATSAPP_NUMBER = "33750384314" # <-- À MODIFIER ICI
+WHATSAPP_NUMBER = "33750384314" 
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 stripe.api_key = STRIPE_SK
 
-# --- RÉPERTOIRE JURIDIQUE ---
+# --- RÉPERTOIRE JURIDIQUE (MODE SANDBOX : Tout arrive chez toi pour test) ---
 LEGAL_DIRECTORY = {
-    # --- E-COMMERCE & TECH (Directive UE 2011/83 - Droit de rétractation & Garantie) ---
+    # --- E-COMMERCE & TECH ---
     "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
     "apple": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
     "zalando": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour 14 jours)"},
@@ -44,14 +45,16 @@ LEGAL_DIRECTORY = {
     "asos": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour)"},
     "nike": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Produit défectueux)"},
     "adidas": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Produit défectueux)"},
+    "fnac": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
+    "darty": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
 
-    # --- VOYAGE & HÔTELS (Problèmes de réservation) ---
+    # --- VOYAGE & HÔTELS ---
     "booking": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
     "airbnb": {"email": "theodordelgao@gmail.com", "loi": "le Règlement Rome I (Protection consommateur)"},
     "expedia": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
     "hotels.com": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
 
-    # --- TRANSPORTS EUROPÉENS (Règlements UNIVERSELS) ---
+    # --- TRANSPORTS (Avion & Train) ---
     "ryanair": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "easyjet": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "lufthansa": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
@@ -60,9 +63,9 @@ LEGAL_DIRECTORY = {
     "british airways": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "sncf": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "eurostar": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
+    "ouigo": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "db": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782 (Deutsche Bahn)"},
     "trenitalia": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
-    "renfe": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
 
     # --- LIVRAISON & VTC ---
     "uber": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
@@ -71,7 +74,7 @@ LEGAL_DIRECTORY = {
     "bolt": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"}
 }
 
-# --- TEXTES LÉGAUX PROFESSIONNELS (Lignes 52-78) ---
+# --- TEXTES LÉGAUX PROFESSIONNELS ---
 LEGAL_TEXTS = {
     "CGU": """<div class='legal-content'><h1>Conditions Générales d'Utilisation</h1>
     <p><b>1. Objet :</b> Justicio SAS automatise vos réclamations juridiques pour retards ou litiges commerciaux.</p>
@@ -115,7 +118,7 @@ with app.app_context():
     # db.drop_all() # <-- Ne décommenter que pour un reset total
     db.create_all()
 
-# --- LOGIQUE TELEGRAM & GMAIL ---
+# --- FONCTIONS UTILITAIRES (Telegram, Gmail, IA) ---
 def send_telegram_notif(message):
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         try:
@@ -136,14 +139,18 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         message['subject'] = subject
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
-        service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
+        
+        # Archivage automatique pour "nettoyer" la boîte d'envoi
+        try:
+            service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
+        except: pass
         return True
     except: return False
 
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # On force l'IA à chercher un montant monétaire explicite
+        # NOUVEAU PROMPT AGRESSIF : Pour être sûr de trouver le prix (Zara, Amazon, etc.)
         prompt = f"""
         Tu es un avocat expert. Analyse ce mail :
         Sujet: {subject}
@@ -168,6 +175,7 @@ STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:
 body{{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:120px;display:flex;flex-direction:column;align-items:center;color:#1e293b}}
 .card{{background:white;border-radius:20px;padding:30px;margin:15px;width:100%;max-width:550px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-left:8px solid #ef4444; position:relative;}}
 .amount-badge{{position:absolute; top:30px; right:30px; font-size:1.5rem; font-weight:bold; color:#10b981}}
+.radar-tag{{background:#e0f2fe; color:#0284c7; padding:4px 10px; border-radius:8px; font-size:0.8rem; font-weight:bold; text-transform:uppercase; letter-spacing:1px;}}
 .btn-success {{background: #10b981; color: white; padding: 15px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 1.2rem; transition: 0.3s; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4); border:none; cursor:pointer;}}
 .btn-logout{{background:#94a3b8; padding:8px 16px; font-size:0.8rem; border-radius:8px; color:white; text-decoration:none; margin-top:15px; display:inline-block;}}
 .legal-content{{max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; text-align:left; box-shadow:0 4px 6px rgba(0,0,0,0.05)}}
@@ -177,11 +185,12 @@ footer{{margin-top:50px;font-size:0.8rem;text-align:center;color:#94a3b8}}footer
 FOOTER = """<footer><a href='/cgu'>CGU</a> | <a href='/confidentialite'>Confidentialité</a> | <a href='/mentions-legales'>Mentions Légales</a><p>© 2026 Justicio.fr</p></footer>"""
 WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" target="_blank">💬</a>"""
 
-# --- ROUTES (Lignes 164-280) ---
+# --- ROUTES PRINCIPALES ---
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
     return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 ANALYSER MES LITIGES</a><br><a href='/logout' class='btn-logout'>Se déconnecter</a>" + WA_BTN + FOOTER
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -193,40 +202,37 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # On nettoie la base pour le test
+    # 1. Nettoyage de l'affichage précédent
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # REQUÊTE TEST SIMPLIFIÉE : On vise juste tes mots-clés sans filtres complexes
-    # On cherche large : "zara", "lufthansa", "booking" ou "refund"
+    # 2. QUERY ULTIME "NUCLÉAIRE" + ANTI-ERREUR
+    # On scanne tout (lu/non lu) mais on ignore les messages d'erreur système
     query = (
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
-        "litige OR claim OR bagage OR lost OR endommagé OR damaged OR vol OR flight OR "
-        "train OR commande OR order OR livraison OR delivery OR colis OR package OR "
-        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR uber OR amazon OR "
-        "zalando OR shein OR zara OR booking OR airbnb) "
-        "-promo -solde -newsletter -publicité -no-reply "
+        "indemnisation OR compensation OR litige OR claim OR bagage OR lost OR "
+        "endommagé OR damaged OR vol OR flight OR train OR billet OR ticket OR "
+        "commande OR order OR livraison OR delivery OR colis OR package OR repas OR meal OR "
+        "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR british airways OR "
+        "uber OR deliveroo OR just eat OR bolt OR booking OR airbnb OR "
+        "amazon OR apple OR fnac OR darty OR zalando OR shein OR zara OR h&m OR asos) "
+        "-promo -solde -newsletter -publicité -advertising -discount -no-reply "
         "-subject:\"MISE EN DEMEURE\" "
-        "-from:mailer-daemon -subject:\"Delivery Status\""  # <--- AJOUT ICI
+        "-from:mailer-daemon -subject:\"Delivery Status\""
     )
 
-    # On récupère 10 résultats max pour le test
-    results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
+    results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
     msgs = results.get('messages', [])
     
     total_gain, new_cases = 0, 0
     html_cards = ""
-    debug_log = "<h3>🕵️ JOURNAL DU SCAN (Diagnostic)</h3><ul style='text-align:left; background:#eee; padding:20px; border-radius:10px; list-style:none;'>"
     
-    if not msgs:
-        debug_log += "<li>❌ <b>ERREUR CRITIQUE :</b> Gmail ne renvoie AUCUN mail. La recherche est vide.</li>"
-
     for m in msgs:
-        # Récupération Données
+        # Récupération Données Gmail
         f = service.users().messages().get(userId='me', id=m['id']).execute()
+        snippet = f.get('snippet', '')
         headers = f['payload'].get('headers', [])
         subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
-        snippet = f.get('snippet', '')
         
         # Corps du message
         payload = f.get('payload', {})
@@ -235,58 +241,87 @@ def scan():
             for part in payload['parts']:
                 if part['mimeType'] == 'text/plain':
                     data = part['body'].get('data', '')
-                    if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
+                    if data:
+                        body_data = base64.urlsafe_b64decode(data).decode('utf-8')
         body_content = (body_data if body_data else snippet) + " " + subj
         
-        # LOGIQUE HYBRIDE SIMPLIFIÉE
+        # 3. ANALYSE IA (Prompt Agressif)
         ana = analyze_litigation(body_content, subj)
-        extracted_amount = ana[0]
+        extracted_amount = ana[0] # L'IA doit trouver "142€" ici
+        law_final = ana[1] if len(ana) > 1 else "Code Civil"
         
         gain_final, company_key = "AUCUN", "Inconnu"
 
-        # Radar
-        targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "ryanair", "lufthansa", "easyjet"]
-        for target in targets:
-            if target in subj.lower() or target in body_content.lower():
-                company_key = target
-                if any(air in subj.lower() for air in ["ryanair", "lufthansa", "easyjet", "air france"]):
-                    gain_final = "250€" # Avion
-                elif any(char.isdigit() for char in extracted_amount):
-                    gain_final = extracted_amount # Prix réel
-                else:
-                    gain_final = "À déterminer"
-                break
+        # 4. RADAR HYBRIDE : On décide du prix (Forfait ou Réel)
         
-        # RAPPORT DE DEBUG POUR CHAQUE MAIL
-        status_icon = "❌"
-        if company_key != "Inconnu": status_icon = "✅"
-        
-        debug_log += f"<li style='margin-bottom:10px; border-bottom:1px solid #ccc; padding-bottom:5px;'>" \
-                     f"<b>{status_icon} Sujet :</b> {subj}<br>" \
-                     f"&nbsp;&nbsp;&nbsp;Compagnie : {company_key} | Gain : {gain_final}</li>"
+        # A. AVIONS (Prix Fixe 250€)
+        airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways", "emirates"]
+        if any(air in subj.lower() for air in airlines):
+            gain_final = "250€"
+            for air in airlines:
+                if air in subj.lower(): company_key = air
 
-        # ENREGISTREMENT
-        if company_key != "Inconnu":
-            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law="Loi Test", subject=subj, status="Détecté")
-            db.session.add(new_lit)
+        # B. E-COMMERCE / TRAIN / VTC (Prix Réel IA)
+        else:
+            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty", "heetch", "bolt"]
+            for target in targets:
+                if target in subj.lower() or target in body_content.lower():
+                    company_key = target
+                    # Si l'IA a trouvé un chiffre, on le prend
+                    if any(char.isdigit() for char in extracted_amount):
+                        gain_final = extracted_amount
+                    else:
+                        gain_final = "À déterminer"
+
+        # 5. FILTRAGE & ENREGISTREMENT
+        if company_key != "Inconnu" and "AUCUN" not in gain_final:
+            
+            # Anti-doublon
+            archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
+            if archive and archive.status in ["Envoyé", "Payé"]: continue
+            
+            # Calcul montant pour le total
+            mt = 0
+            try:
+                mt = int(re.search(r'\d+', gain_final).group())
+            except: mt = 0
+            
+            total_gain += mt
             new_cases += 1
             
-            # Création de la Carte HTML
+            # Loi précise du dictionnaire
+            if company_key in LEGAL_DIRECTORY:
+                law_final = LEGAL_DIRECTORY[company_key]["loi"]
+            
+            # Sauvegarde DB
+            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
+            db.session.add(new_lit)
+            
+            # Archivage (Nettoyage Inbox)
+            try:
+                service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
+            except: pass
+
+            # Création de la Carte
             html_cards += f"""
             <div class='card'>
                 <div class='amount-badge'>{gain_final}</div>
                 <span class='radar-tag'>{company_key.upper()}</span>
                 <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
-                <p><small>Détecté par le mode diagnostic</small></p>
+                <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
+                    <i>"{snippet[:120]}..."</i>
+                </p>
+                <p><small>⚖️ {law_final}</small></p>
             </div>"""
-
-    db.session.commit()
-    debug_log += "</ul>"
     
-    if new_cases == 0:
-        return STYLE + f"<h1>Résultat du Diagnostic</h1>{debug_log}<p>Aucun litige validé.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
+    db.session.commit()
+    
+    if new_cases > 0: 
+        html_cards += f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
+    else: 
+        html_cards += "<div class='card'><h3>✅ Tout est propre</h3><p>Aucun nouveau litige trouvé.</p><a href='/' class='btn-logout'>Retour</a></div>"
         
-    return STYLE + f"<h1>Succès ! ({new_cases} trouvés)</h1>{html_cards}<br>{debug_log}<a href='/' class='btn-success'>🚀 TOUT RÉCUPÉRER</a>" + FOOTER
+    return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + WA_BTN + FOOTER
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -311,30 +346,27 @@ def stripe_webhook():
                     creds = get_refreshed_credentials(user.refresh_token)
                     target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
                     corps = f"""MISE EN DEMEURE FORMELLE
-                    
 Objet : Réclamation concernant le dossier : {lit.subject}
-
 À l'attention du Service Juridique de {lit.company.upper()},
-
-Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
-- Nature du litige : {lit.subject}
-- Fondement juridique : {lit.law}
-- Montant réclamé : {lit.amount}
-
-Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement ou au versement de l'indemnité sous un délai de 8 jours ouvrés. À défaut, je saisirai les autorités compétentes et le médiateur.
-
-Dans l'attente de votre retour,
-Cordialement,
-{user.name} - Utilisateur Justicio.fr"""
+Je soussigné(e), {user.name}, réclame une indemnisation.
+- Nature : {lit.subject}
+- Fondement : {lit.law}
+- Montant : {lit.amount}
+Sous toutes réserves."""
                     success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
                     lit.status = "Envoyé" if success else "Erreur"
                     db.session.commit()
+                    # Notif Telegram
                     if success:
-                        send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {int(''.join(filter(str.isdigit, lit.amount)))*0.3}€")
+                        try:
+                             # Calcul du gain (30%) pour la notif
+                            gain_estime = int(re.search(r'\d+', lit.amount).group()) * 0.3
+                            send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {gain_estime}€")
+                        except: pass
         return "OK", 200
     except: return "Error", 400
 
-# ROUTES LÉGALES
+# ROUTES LÉGALES & AUTHENTIFICATION (Standard)
 @app.route("/cgu")
 def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
 @app.route("/confidentialite")
@@ -342,7 +374,6 @@ def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
 def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
-# AUTHENTIFICATION
 @app.route("/login")
 def login():
     flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"], redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
@@ -369,21 +400,3 @@ def callback():
 
 if __name__ == "__main__":
     app.run()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
