@@ -3,7 +3,7 @@ import base64
 import requests
 import stripe
 import json
-import re
+import re  # <--- CRUCIAL pour le calcul des gains
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
@@ -18,24 +18,25 @@ from sqlalchemy import or_
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-app.secret_key = os.environ.get("SECRET_KEY", "justicio_billion_dollar_secret")
+app.secret_key = os.environ.get("SECRET_KEY", "justicio_secret_key_secure")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY")
-DATABASE_URL = os.environ.get("DATABASE_URL")
+STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") 
+DATABASE_URL = os.environ.get("DATABASE_URL") 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
-SCAN_TOKEN = os.environ.get("SCAN_TOKEN", "justicio_secret_2026_xyz")
 WHATSAPP_NUMBER = "33750384314" 
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-stripe.api_key = STRIPE_SK
+# Sécurité Stripe
+if STRIPE_SK:
+    stripe.api_key = STRIPE_SK
 
 # --- RÉPERTOIRE JURIDIQUE ---
 LEGAL_DIRECTORY = {
-    # --- E-COMMERCE & TECH ---
+    # E-COMMERCE
     "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
     "apple": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
     "zalando": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour 14 jours)"},
@@ -46,12 +47,12 @@ LEGAL_DIRECTORY = {
     "fnac": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
     "darty": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
 
-    # --- VOYAGE & HÔTELS ---
+    # VOYAGE & HÔTELS
     "booking": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
     "airbnb": {"email": "theodordelgao@gmail.com", "loi": "le Règlement Rome I (Protection consommateur)"},
     "expedia": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
 
-    # --- TRANSPORTS ---
+    # TRANSPORTS
     "ryanair": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "easyjet": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "lufthansa": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
@@ -62,7 +63,7 @@ LEGAL_DIRECTORY = {
     "eurostar": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "ouigo": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
 
-    # --- VTC ---
+    # VTC / FOOD
     "uber": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
     "deliveroo": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
     "bolt": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"}
@@ -185,13 +186,11 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # 1. Nettoyage de l'affichage (on garde l'historique en base)
+    # Nettoyage visuel
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # 2. REQUÊTE CIBLÉE (INBOX UNIQUEMENT)
-    # On filtre déjà le gros des pubs ici pour ne pas payer l'IA pour rien.
-    # On regarde SEULEMENT la boîte de réception pour voir tes nouveaux tests.
+    # QUERY : INBOX UNIQUEMENT (Le Filtre Laser)
     query = (
         "label:INBOX "
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
@@ -203,118 +202,120 @@ def scan():
         "-subject:\"MISE EN DEMEURE\" -subject:\"Delivery Status\""
     )
 
-    results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
-    msgs = results.get('messages', [])
+    try:
+        results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
+        msgs = results.get('messages', [])
+    except Exception as e:
+        return f"Erreur Gmail API : {str(e)}"
     
     total_gain, new_cases = 0, 0
     html_cards = ""
     
     for m in msgs:
-        # Récupération
-        f = service.users().messages().get(userId='me', id=m['id']).execute()
-        snippet = f.get('snippet', '')
-        subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
-        
-        # Corps
-        payload = f.get('payload', {})
-        body_data = ""
-        if 'parts' in payload:
-            for part in payload['parts']:
-                if part['mimeType'] == 'text/plain':
-                    data = part['body'].get('data', '')
-                    if data:
-                        body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-        body_content = (body_data if body_data else snippet) + " " + subj
-        
-        # --- CERVEAU DU ROBOT ---
+        try:
+            f = service.users().messages().get(userId='me', id=m['id']).execute()
+            snippet = f.get('snippet', '')
+            subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
+            
+            payload = f.get('payload', {})
+            body_data = ""
+            if 'parts' in payload:
+                for part in payload['parts']:
+                    if part['mimeType'] == 'text/plain':
+                        data = part['body'].get('data', '')
+                        if data:
+                            body_data = base64.urlsafe_b64decode(data).decode('utf-8')
+            body_content = (body_data if body_data else snippet) + " " + subj
+            
+            # --- INTELLIGENCE ---
+            ana = analyze_litigation(body_content, subj)
+            extracted_amount = ana[0]
+            law_final = ana[1] if len(ana) > 1 else "Code Civil"
+            
+            gain_final, company_key = "AUCUN", "Inconnu"
 
-        # 1. Analyse IA (Premier filtre intelligent)
-        ana = analyze_litigation(body_content, subj)
-        extracted_amount = ana[0]
-        law_final = ana[1] if len(ana) > 1 else "Code Civil"
-        
-        gain_final, company_key = "AUCUN", "Inconnu"
+            # 1. AVION (250€)
+            airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways"]
+            if any(air in subj.lower() for air in airlines):
+                gain_final = "250€"
+                for air in airlines:
+                    if air in subj.lower(): company_key = air
 
-        # 2. SECTEUR AÉRIEN (Forfait 250€)
-        airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways"]
-        if any(air in subj.lower() for air in airlines):
-            gain_final = "250€"
-            for air in airlines:
-                if air in subj.lower(): company_key = air
+            # 2. COMMERCE (Prix réel + Regex Plan B)
+            else:
+                targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty"]
+                for target in targets:
+                    if target in subj.lower() or target in body_content.lower():
+                        company_key = target
+                        
+                        # A. Prix IA
+                        if any(char.isdigit() for char in extracted_amount):
+                            gain_final = extracted_amount
+                        
+                        # B. Prix Regex (Secours)
+                        if "AUCUN" in gain_final or "Déterminer" in gain_final:
+                            match = re.search(r'(\d+[.,]?\d*)\s?€', body_content)
+                            if match:
+                                gain_final = f"{match.group(1)}€"
+                            else:
+                                gain_final = "À déterminer"
 
-        # 3. E-COMMERCE & AUTRES (Prix Réel)
-        else:
-            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty"]
-            for target in targets:
-                if target in subj.lower() or target in body_content.lower():
-                    company_key = target
-                    
-                    # A. L'IA a-t-elle trouvé un prix ?
-                    if any(char.isdigit() for char in extracted_amount):
-                        gain_final = extracted_amount
-                    
-                    # B. PLAN B : Regex (Si l'IA rate, on cherche "XX€" dans le texte)
-                    import re
-                    if "AUCUN" in gain_final or "Déterminer" in gain_final:
-                        match = re.search(r'(\d+[.,]?\d*)\s?€', body_content)
-                        if match:
-                            gain_final = f"{match.group(1)}€"
-                        else:
-                            gain_final = "À déterminer"
+            # 3. VERDICT
+            if company_key != "Inconnu" and "AUCUN" not in gain_final:
+                # Doublon ?
+                archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
+                if archive and archive.status in ["Envoyé", "Payé"]: continue
+                
+                # Total
+                mt = 0
+                try:
+                    mt = int(re.search(r'\d+', gain_final).group())
+                except: mt = 0
+                total_gain += mt
+                new_cases += 1
+                
+                if company_key in LEGAL_DIRECTORY:
+                    law_final = LEGAL_DIRECTORY[company_key]["loi"]
+                
+                new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
+                db.session.add(new_lit)
+                
+                # Archivage
+                try:
+                    service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
+                except: pass
 
-        # 4. LE VERDICT FINAL (Est-ce un vrai litige ?)
-        # C'est ici qu'on piège les pubs : si gain_final est "AUCUN", on jette.
-        if company_key != "Inconnu" and "AUCUN" not in gain_final:
-            
-            # Vérif doublon
-            archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
-            if archive and archive.status in ["Envoyé", "Payé"]: continue
-            
-            # Calcul total
-            mt = 0
-            try:
-                mt = int(re.search(r'\d+', gain_final).group())
-            except: mt = 0
-            
-            total_gain += mt
-            new_cases += 1
-            
-            if company_key in LEGAL_DIRECTORY:
-                law_final = LEGAL_DIRECTORY[company_key]["loi"]
-            
-            new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
-            db.session.add(new_lit)
-            
-            # ARCHIVAGE (Le mail est traité, on l'enlève de l'Inbox)
-            try:
-                service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
-            except: pass
-
-            html_cards += f"""
-            <div class='card'>
-                <div class='amount-badge'>{gain_final}</div>
-                <span class='radar-tag'>{company_key.upper()}</span>
-                <h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3>
-                <p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'>
-                    <i>"{snippet[:120]}..."</i>
-                </p>
-                <p><small>⚖️ {law_final}</small></p>
-            </div>"""
+                html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{snippet[:120]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
+        except:
+            continue
 
     db.session.commit()
     
-    # Gestion du bouton Stripe
+    # Bouton Stripe Sécurisé
     stripe_btn = ""
     if os.environ.get("STRIPE_SECRET_KEY"):
          stripe_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
     else:
-         stripe_btn = "<div class='sticky-footer' style='background:#fee2e2; color:#b91c1c;'>⚠️ Clé Stripe manquante</div>"
+         stripe_btn = "<div class='sticky-footer' style='background:#fee2e2; color:#b91c1c; padding:10px;'>⚠️ Clé Stripe manquante sur Render</div>"
 
     if new_cases > 0: 
         return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + WA_BTN + FOOTER
     else: 
-        return STYLE + "<h1>✅ Tout est propre</h1><p>Boîte de réception analysée. Aucun litige détecté.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
-        
+        return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun nouveau litige dans la boîte de réception.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
+
+@app.route("/setup-payment")
+def setup_payment():
+    try:
+        session_stripe = stripe.checkout.Session.create(payment_method_types=['card'], mode='setup', success_url=url_for('success_page', _external=True), cancel_url=url_for('index', _external=True))
+        return redirect(session_stripe.url, code=303)
+    except Exception as e:
+        return f"Erreur Stripe : {str(e)}"
+
+@app.route("/success")
+def success_page():
+    count = Litigation.query.filter(Litigation.user_email == session['email'], or_(Litigation.status == "Détecté", Litigation.status == "Envoyé")).count()
+    return STYLE + f"<div style='text-align:center; padding-top:50px;'><h1>Succès !</h1><div class='card'><h3>🚀 {count} Procédures lancées</h3></div><a href='/' class='btn-success'>Retour</a></div>" + FOOTER
+
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
@@ -327,33 +328,40 @@ def stripe_webhook():
                 if user and user.refresh_token:
                     creds = get_refreshed_credentials(user.refresh_token)
                     target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
+                    
+                    # CORPS DU MAIL COMPLET (RESTAURÉ)
                     corps = f"""MISE EN DEMEURE FORMELLE
 Objet : Réclamation concernant le dossier : {lit.subject}
+
 À l'attention du Service Juridique de {lit.company.upper()},
-Je soussigné(e), {user.name}, réclame une indemnisation.
-- Nature : {lit.subject}
-- Fondement : {lit.law}
-- Montant : {lit.amount}
-Sous toutes réserves."""
+
+Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
+- Nature du litige : {lit.subject}
+- Fondement juridique : {lit.law}
+- Montant réclamé : {lit.amount}
+
+Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement ou au versement de l'indemnité sous un délai de 8 jours ouvrés. À défaut, je saisirai les autorités compétentes et le médiateur.
+
+Dans l'attente de votre retour,
+Cordialement,
+{user.name} - Utilisateur Justicio.fr"""
+
                     success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
                     lit.status = "Envoyé" if success else "Erreur"
-                    db.session.commit()
+                    
+                    # NOTIFICATION TELEGRAM (RESTAURÉE)
                     if success:
                         try:
-                            # Calcul 30%
+                            # Calcul du gain estimé (30%)
                             gain_estime = int(re.search(r'\d+', lit.amount).group()) * 0.3
                             send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {gain_estime}€")
                         except: pass
+                        
+            db.session.commit()
         return "OK", 200
     except: return "Error", 400
 
-@app.route("/cgu")
-def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
-@app.route("/confidentialite")
-def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
-@app.route("/mentions-legales")
-def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
-
+# LOGIN / LOGOUT
 @app.route("/login")
 def login():
     flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"], redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
@@ -378,7 +386,12 @@ def callback():
     session["name"], session["email"] = info.get('name'), info.get('email')
     return redirect("/")
 
+@app.route("/cgu")
+def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
+@app.route("/confidentialite")
+def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
+@app.route("/mentions-legales")
+def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
+
 if __name__ == "__main__":
     app.run()
-
-
