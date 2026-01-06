@@ -3,7 +3,8 @@ import base64
 import requests
 import stripe
 import json
-import re  # <--- CRUCIAL pour le calcul des gains
+import re  # Indispensable pour les calculs de prix
+import traceback # Le mouchard pour afficher les erreurs 500
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
@@ -16,6 +17,19 @@ from email.mime.text import MIMEText
 from sqlalchemy import or_
 
 app = Flask(__name__)
+
+# --- MOUCHARD D'ERREUR (Anti-Erreur 500) ---
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Affiche l'erreur exacte sur l'écran si le serveur plante
+    return f"""
+    <div style='font-family:sans-serif; padding:20px; color:red; background:#fee2e2; border:2px solid red;'>
+        <h1>❌ ERREUR CRITIQUE</h1>
+        <p>Une erreur est survenue. Voici les détails techniques :</p>
+        <pre style='background:#333; color:#fff; padding:15px; overflow:auto;'>{traceback.format_exc()}</pre>
+        <a href='/' style='display:inline-block; margin-top:20px; padding:10px; background:#333; color:white; text-decoration:none;'>Retour</a>
+    </div>
+    """, 500
 
 # --- CONFIGURATION ---
 app.secret_key = os.environ.get("SECRET_KEY", "justicio_secret_key_secure")
@@ -30,7 +44,7 @@ WHATSAPP_NUMBER = "33750384314"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Sécurité Stripe
+# Sécurité : On n'active Stripe que si la clé existe
 if STRIPE_SK:
     stripe.api_key = STRIPE_SK
 
