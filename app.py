@@ -3,8 +3,8 @@ import base64
 import requests
 import stripe
 import json
-import re  # Indispensable pour les calculs de prix
-import traceback # Le mouchard pour afficher les erreurs 500
+import re
+import traceback
 from flask import Flask, session, redirect, request, url_for, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
@@ -21,7 +21,6 @@ app = Flask(__name__)
 # --- MOUCHARD D'ERREUR (Anti-Erreur 500) ---
 @app.errorhandler(Exception)
 def handle_exception(e):
-    # Affiche l'erreur exacte sur l'écran si le serveur plante
     return f"""
     <div style='font-family:sans-serif; padding:20px; color:red; background:#fee2e2; border:2px solid red;'>
         <h1>❌ ERREUR CRITIQUE</h1>
@@ -34,17 +33,16 @@ def handle_exception(e):
 # --- CONFIGURATION ---
 app.secret_key = os.environ.get("SECRET_KEY", "justicio_secret_key_secure")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY") 
-DATABASE_URL = os.environ.get("DATABASE_URL") 
+STRIPE_SK = os.environ.get("STRIPE_SECRET_KEY")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
-WHATSAPP_NUMBER = "33750384314" 
+WHATSAPP_NUMBER = "33750384314"
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Sécurité : On n'active Stripe que si la clé existe
 if STRIPE_SK:
     stripe.api_key = STRIPE_SK
 
@@ -97,8 +95,7 @@ LEGAL_TEXTS = {
     <a href='/' class='btn-logout'>Retour</a></div>"""
 }
 
-# --- BASE DE DONNÉES (Configuration Blindée) ---
-# 1. Correction du lien (Render donne parfois "postgres://" qui est obsolète, il faut "postgresql://")
+# --- BASE DE DONNÉES (Configuration Blindée & Anti-Timeout) ---
 db_url = os.environ.get("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -106,11 +103,13 @@ if db_url and db_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 2. Options de connexion (C'est ça qui répare ton erreur SSL)
-# "pool_pre_ping": True -> Vérifie que la connexion est vivante avant de l'utiliser
+# Options vitales pour Render
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
+    "connect_args": {
+        "keepalives": 1,
+    }
 }
 
 db = SQLAlchemy(app)
@@ -132,7 +131,11 @@ class Litigation(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+        print("✅ Base de données synchronisée.")
+    except Exception as e:
+        print(f"❌ Erreur DB : {e}")
 
 # --- FONCTIONS UTILITAIRES ---
 def send_telegram_notif(message):
@@ -163,7 +166,6 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # Prompt Agressif pour le prix
         prompt = f"""
         Analyse ce mail juridiquement :
         Sujet: {subject}
@@ -356,7 +358,6 @@ def stripe_webhook():
                     creds = get_refreshed_credentials(user.refresh_token)
                     target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
                     
-                    # CORPS DU MAIL COMPLET (RESTAURÉ)
                     corps = f"""MISE EN DEMEURE FORMELLE
 Objet : Réclamation concernant le dossier : {lit.subject}
 
@@ -376,11 +377,12 @@ Cordialement,
                     success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
                     lit.status = "Envoyé" if success else "Erreur"
                     
-                    # NOTIFICATION TELEGRAM (RESTAURÉE)
                     if success:
                         try:
-                            # Calcul du gain estimé (30%)
-                            gain_estime = int(re.search(r'\d+', lit.amount).group()) * 0.3
+                            # Sécurité pour éviter le crash si "À déterminer"
+                            mt_str = re.search(r'\d+', lit.amount)
+                            mt = int(mt_str.group()) if mt_str else 0
+                            gain_estime = mt * 0.3
                             send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {gain_estime}€")
                         except: pass
                         
@@ -422,4 +424,3 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
 if __name__ == "__main__":
     app.run()
-
