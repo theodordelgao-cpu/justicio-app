@@ -97,9 +97,22 @@ LEGAL_TEXTS = {
     <a href='/' class='btn-logout'>Retour</a></div>"""
 }
 
-# --- BASE DE DONNÉES ---
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+# --- BASE DE DONNÉES (Configuration Blindée) ---
+# 1. Correction du lien (Render donne parfois "postgres://" qui est obsolète, il faut "postgresql://")
+db_url = os.environ.get("DATABASE_URL")
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# 2. Options de connexion (C'est ça qui répare ton erreur SSL)
+# "pool_pre_ping": True -> Vérifie que la connexion est vivante avant de l'utiliser
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+
 db = SQLAlchemy(app)
 
 class User(db.Model):
@@ -409,3 +422,4 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
 if __name__ == "__main__":
     app.run()
+
