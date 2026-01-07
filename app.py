@@ -341,8 +341,7 @@ def scan():
         return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + WA_BTN + FOOTER
     else: 
         return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun litige détecté (les publicités ont été ignorées).</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
-    else: 
-        return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun nouveau litige dans la boîte de réception.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
+
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -436,4 +435,5 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
 if __name__ == "__main__":
     app.run()
+
 
