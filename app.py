@@ -166,22 +166,28 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
+        # PROMPT "MODE FILTRE ANTI-SPAM"
         prompt = f"""
-        Analyse ce mail juridiquement :
+        Tu es un avocat expert chargé de filtrer les emails.
+        Analyse ce mail :
         Sujet: {subject}
         Contenu: {text[:800]}
+
+        RÈGLES STRICTES :
+        1. Si c'est une PUBLICITÉ, une NEWSLETTER, une notification de compte (mot de passe, connexion), une offre d'essai ("trial", "upgrade") ou une confirmation normale : Réponds UNIQUEMENT "REJET | REJET".
+        2. Si c'est un VRAI LITIGE (Demande de remboursement, Colis non reçu, Vol annulé/retardé) : Réponds "MONTANT | LOI".
         
-        Tâche 1 : Trouve le montant EXACT du préjudice (ex: 142€, 12.50€). Si pas de montant clair, écris 'AUCUN'.
-        Tâche 2 : Cite la loi européenne ou française qui s'applique.
-        
-        Réponds UNIQUEMENT sous ce format : MONTANT | LOI
+        Exemple Pub : "Profitez des soldes" -> REJET | REJET
+        Exemple Litige : "Je n'ai pas reçu ma commande de 142€" -> 142€ | Directive UE 2011/83
         """
+        
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role":"user", "content": prompt}]
+            messages=[{"role":"user", "content": prompt}],
+            temperature=0  # Zéro créativité, on veut du binaire
         )
         return [d.strip() for d in res.choices[0].message.content.split("|")]
-    except: return ["AUCUN", "Inconnu"]
+    except: return ["REJET", "Inconnu"]
 
 # --- STYLE CSS ---
 STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
@@ -219,7 +225,7 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # QUERY : INBOX UNIQUEMENT (Le Filtre Laser)
+    # QUERY BLINDÉE (Exclusions massives des termes marketing anglais/français)
     query = (
         "label:INBOX "
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
@@ -227,7 +233,8 @@ def scan():
         "train OR commande OR order OR livraison OR delivery OR colis OR package OR "
         "sncf OR ryanair OR easyjet OR airfrance OR klm OR lufthansa OR uber OR amazon OR "
         "zalando OR shein OR zara OR booking OR airbnb) "
-        "-promo -solde -newsletter -publicité -advertising -no-reply -from:mailer-daemon "
+        "-promo -solde -soldes -newsletter -publicité -advertising -no-reply -from:mailer-daemon "
+        "-trial -upgrade -features -checklist -welcome -invitation -update -prime "
         "-subject:\"MISE EN DEMEURE\" -subject:\"Delivery Status\""
     )
 
@@ -256,11 +263,15 @@ def scan():
                             body_data = base64.urlsafe_b64decode(data).decode('utf-8')
             body_content = (body_data if body_data else snippet) + " " + subj
             
-            # --- INTELLIGENCE ---
+            # --- INTELLIGENCE (LE JUGE) ---
             ana = analyze_litigation(body_content, subj)
-            extracted_amount = ana[0]
+            extracted_amount = ana[0] # Peut contenir "REJET"
             law_final = ana[1] if len(ana) > 1 else "Code Civil"
             
+            # SI L'IA DIT "REJET", ON PASSE AU SUIVANT (C'est ici qu'on bloque les pubs)
+            if "REJET" in extracted_amount or "REJET" in law_final:
+                continue
+
             gain_final, company_key = "AUCUN", "Inconnu"
 
             # 1. AVION (250€)
@@ -270,14 +281,14 @@ def scan():
                 for air in airlines:
                     if air in subj.lower(): company_key = air
 
-            # 2. COMMERCE (Prix réel + Regex Plan B)
+            # 2. COMMERCE
             else:
                 targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty"]
                 for target in targets:
                     if target in subj.lower() or target in body_content.lower():
                         company_key = target
                         
-                        # A. Prix IA
+                        # A. Prix IA (Si c'est un chiffre)
                         if any(char.isdigit() for char in extracted_amount):
                             gain_final = extracted_amount
                         
@@ -289,7 +300,7 @@ def scan():
                             else:
                                 gain_final = "À déterminer"
 
-            # 3. VERDICT
+            # 3. VERDICT FINAL
             if company_key != "Inconnu" and "AUCUN" not in gain_final:
                 # Doublon ?
                 archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
@@ -320,7 +331,6 @@ def scan():
 
     db.session.commit()
     
-    # Bouton Stripe Sécurisé
     stripe_btn = ""
     if os.environ.get("STRIPE_SECRET_KEY"):
          stripe_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
@@ -329,6 +339,8 @@ def scan():
 
     if new_cases > 0: 
         return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + WA_BTN + FOOTER
+    else: 
+        return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun litige détecté (les publicités ont été ignorées).</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
     else: 
         return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun nouveau litige dans la boîte de réception.</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
 
@@ -424,3 +436,4 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
 if __name__ == "__main__":
     app.run()
+
