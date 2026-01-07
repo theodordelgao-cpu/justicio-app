@@ -157,9 +157,6 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         message['subject'] = subject
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
-        try:
-            service.users().messages().batchModify(userId='me', body={'ids': [sent['id']], 'removeLabelIds': ['INBOX']}).execute()
-        except: pass
         return True
     except: return False
 
@@ -221,11 +218,11 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # Nettoyage visuel
+    # Nettoyage visuel BDD
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # QUERY BLINDÉE (Exclusions massives des termes marketing anglais/français)
+    # QUERY BLINDÉE (Anti-Pub)
     query = (
         "label:INBOX "
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
@@ -268,7 +265,7 @@ def scan():
             extracted_amount = ana[0] # Peut contenir "REJET"
             law_final = ana[1] if len(ana) > 1 else "Code Civil"
             
-            # SI L'IA DIT "REJET", ON PASSE AU SUIVANT (C'est ici qu'on bloque les pubs)
+            # FILTRE : SI L'IA DIT "REJET", ON IGNORE CE MAIL
             if "REJET" in extracted_amount or "REJET" in law_final:
                 continue
 
@@ -300,7 +297,7 @@ def scan():
                             else:
                                 gain_final = "À déterminer"
 
-            # 3. VERDICT FINAL
+            # 3. VERDICT FINAL (PAS D'ARCHIVAGE ICI !)
             if company_key != "Inconnu" and "AUCUN" not in gain_final:
                 # Doublon ?
                 archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
@@ -320,10 +317,7 @@ def scan():
                 new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
                 db.session.add(new_lit)
                 
-                # Archivage
-                try:
-                    service.users().messages().modify(userId='me', id=m['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
-                except: pass
+                # J'AI SUPPRIMÉ LE BLOC ARCHIVAGE ICI (Comme demandé)
 
                 html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{snippet[:120]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
         except:
@@ -341,7 +335,6 @@ def scan():
         return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + WA_BTN + FOOTER
     else: 
         return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun litige détecté (les publicités ont été ignorées).</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
-
 
 @app.route("/setup-payment")
 def setup_payment():
@@ -390,11 +383,24 @@ Cordialement,
                     
                     if success:
                         try:
-                            # Sécurité pour éviter le crash si "À déterminer"
+                            # Notif Telegram
                             mt_str = re.search(r'\d+', lit.amount)
                             mt = int(mt_str.group()) if mt_str else 0
                             gain_estime = mt * 0.3
                             send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {gain_estime}€")
+
+                            # --- NOUVEAU BLOC : ON ARCHIVE LE MAIL MAINTENANT ---
+                            try:
+                                service = build('gmail', 'v1', credentials=creds)
+                                # On retrouve le mail grâce au sujet
+                                q_search = f"subject:\"{lit.subject}\" label:INBOX"
+                                found = service.users().messages().list(userId='me', q=q_search, maxResults=1).execute()
+                                msgs_found = found.get('messages', [])
+                                if msgs_found:
+                                    # Hop, on l'enlève de la boîte de réception
+                                    service.users().messages().modify(userId='me', id=msgs_found[0]['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
+                            except: pass
+                            # ----------------------------------------------------
                         except: pass
                         
             db.session.commit()
@@ -435,5 +441,3 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
 if __name__ == "__main__":
     app.run()
-
-
