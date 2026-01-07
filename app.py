@@ -119,6 +119,7 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True)
     refresh_token = db.Column(db.String(500)) 
     name = db.Column(db.String(100))
+    stripe_customer_id = db.Column(db.String(100))
 
 class Litigation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -354,10 +355,23 @@ def stripe_webhook():
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
     try:
         event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        
+        # Quand le client rentre sa carte (Setup Intent)
         if event["type"] == "setup_intent.succeeded":
+            
+            # 1. On récupère l'ID Client Stripe (L'empreinte de la carte)
+            setup_intent = event["data"]["object"]
+            customer_id = setup_intent.get("customer")
+            
             litigations = Litigation.query.filter_by(status="Détecté").all()
             for lit in litigations:
                 user = User.query.filter_by(email=lit.user_email).first()
+                
+                # 2. ON SAUVEGARDE L'EMPREINTE DANS LA BDD (Pour prélever plus tard)
+                if user and customer_id:
+                    user.stripe_customer_id = customer_id
+                    db.session.commit()
+                
                 if user and user.refresh_token:
                     creds = get_refreshed_credentials(user.refresh_token)
                     target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
@@ -387,20 +401,17 @@ Cordialement,
                             mt_str = re.search(r'\d+', lit.amount)
                             mt = int(mt_str.group()) if mt_str else 0
                             gain_estime = mt * 0.3
-                            send_telegram_notif(f"💰 **JUSTICIO PROFITS**\nClient : {user.name}\nRéclamation : {lit.amount}\nBénéfice (30%) : {gain_estime}€")
+                            send_telegram_notif(f"💰 **JUSTICIO EMPREINTE PRIS**\nClient : {user.name}\nCarte enregistrée pour futur prélèvement.\nLitige : {lit.amount}")
 
-                            # --- NOUVEAU BLOC : ON ARCHIVE LE MAIL MAINTENANT ---
+                            # Archivage du mail (On nettoie l'Inbox)
                             try:
                                 service = build('gmail', 'v1', credentials=creds)
-                                # On retrouve le mail grâce au sujet
                                 q_search = f"subject:\"{lit.subject}\" label:INBOX"
                                 found = service.users().messages().list(userId='me', q=q_search, maxResults=1).execute()
                                 msgs_found = found.get('messages', [])
                                 if msgs_found:
-                                    # Hop, on l'enlève de la boîte de réception
                                     service.users().messages().modify(userId='me', id=msgs_found[0]['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
                             except: pass
-                            # ----------------------------------------------------
                         except: pass
                         
             db.session.commit()
@@ -441,3 +452,4 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
 if __name__ == "__main__":
     app.run()
+
