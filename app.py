@@ -450,6 +450,90 @@ def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
 def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
+@app.route("/cron/check-refunds")
+def check_refunds():
+    # On récupère tous les dossiers qui sont "Envoyés" (En attente de réponse)
+    active_cases = Litigation.query.filter_by(status="Envoyé").all()
+    if not active_cases: return "Aucun dossier en attente."
+    
+    results_log = []
+    
+    for case in active_cases:
+        user = User.query.filter_by(email=case.user_email).first()
+        if not user or not user.refresh_token: continue
+        
+        try:
+            creds = get_refreshed_credentials(user.refresh_token)
+            service = build('gmail', 'v1', credentials=creds)
+            
+            # On cherche une RÉPONSE de la marque
+            company_domain = case.company.lower()
+            query = f"label:INBOX {company_domain} (remboursement OR refund OR virement OR payment OR cloture)"
+            
+            results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
+            messages = results.get('messages', [])
+            
+            for msg in messages:
+                f = service.users().messages().get(userId='me', id=msg['id']).execute()
+                snippet = f.get('snippet', '')
+                
+                # --- L'IA JUGE DE PAIX ---
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                prompt = f"""
+                Tu es un contrôleur financier.
+                Voici un email reçu de {case.company} concernant un litige de {case.amount}.
+                Contenu : "{snippet}"
+                
+                Est-ce que cet email confirme EXPLICITEMENT que le remboursement a été VALIDÉ, EFFECTUÉ ou que le virement est parti ?
+                
+                Réponds UNIQUEMENT par :
+                "OUI" (si l'argent est sûr à 100%)
+                "NON" (si c'est juste un accusé de réception ou une demande d'info)
+                """
+                
+                res = client.chat.completions.create(
+                    model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}]
+                )
+                verdict = res.choices[0].message.content.strip()
+                
+                if "OUI" in verdict:
+                    # 💰 BINGO ! ON PRÉLÈVE AUTOMATIQUEMENT
+                    if user.stripe_customer_id:
+                        mt_str = re.search(r'\d+', case.amount)
+                        amount_total = int(mt_str.group()) if mt_str else 0
+                        commission_cents = int((amount_total * 0.30) * 100) # En centimes
+                        
+                        if commission_cents > 50:
+                            try:
+                                stripe.PaymentIntent.create(
+                                    amount=commission_cents,
+                                    currency='eur',
+                                    customer=user.stripe_customer_id,
+                                    payment_method=user.stripe_customer_id, 
+                                    off_session=True, 
+                                    confirm=True,
+                                    description=f"Commission Justicio - Succès {case.company}"
+                                )
+                                case.status = "Payé"
+                                results_log.append(f"✅ {case.company}: Remboursement détecté -> {amount_total*0.3}€ prélevés !")
+                                
+                                # On archive le mail de confirmation de la marque
+                                service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
+                                break
+                            except Exception as e:
+                                results_log.append(f"❌ Erreur Stripe {case.company}: {str(e)}")
+                        else:
+                            results_log.append(f"⚠️ Montant trop faible ({case.company})")
+                    else:
+                        results_log.append(f"⚠️ Pas de carte enregistrée pour {user.name}")
+                        
+        except Exception as e:
+            results_log.append(f"Erreur technique dossier {case.id}: {str(e)}")
+            
+    db.session.commit()
+    return "<br>".join(results_log) if results_log else "Rien à signaler."
+
 if __name__ == "__main__":
     app.run()
+
 
