@@ -313,7 +313,20 @@ def scan():
 @app.route("/setup-payment")
 def setup_payment():
     try:
-        session_stripe = stripe.checkout.Session.create(payment_method_types=['card'], mode='setup', success_url=url_for('success_page', _external=True), cancel_url=url_for('index', _external=True))
+        # 1. On crée le client Stripe NOUS-MÊMES (pour forcer la création de l'ID)
+        customer = stripe.Customer.create(
+            email=session.get('email'),
+            name=session.get('name')
+        )
+        
+        # 2. On lance la session en lui donnant l'ID qu'on vient de créer
+        session_stripe = stripe.checkout.Session.create(
+            customer=customer.id, # <--- C'est la clé magique qui manquait !
+            payment_method_types=['card'],
+            mode='setup',
+            success_url=url_for('success_page', _external=True),
+            cancel_url=url_for('index', _external=True)
+        )
         return redirect(session_stripe.url, code=303)
     except Exception as e:
         return f"Erreur Stripe : {str(e)}"
@@ -498,3 +511,4 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
