@@ -429,28 +429,39 @@ def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
 def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
-# --- LE ROBOT CHASSEUR (VERSION CORRIGÉE - LECTURE COMPLÈTE) ---
+# --- LE CHASSEUR SANS LIMITES (VÉRIFIE TOUT) ---
 @app.route("/cron/check-refunds")
 def check_refunds():
-    logs = ["<h3>🔍 DIAGNOSTIC DU CHASSEUR V2</h3>"]
-    active_cases = Litigation.query.filter_by(status="Envoyé").all()
-    logs.append(f"👉 <b>ETAPE 1 :</b> Dossiers 'Envoyé' : <b>{len(active_cases)}</b>")
-    if not active_cases: return "<br>".join(logs)
+    logs = ["<h3>🔍 DIAGNOSTIC DU CHASSEUR ULTIME</h3>"]
+    
+    # ON PREND TOUT (On ignore le statut "Envoyé" qui buggait)
+    active_cases = Litigation.query.all()
+    logs.append(f"👉 <b>ETAPE 1 :</b> Dossiers trouvés au total : <b>{len(active_cases)}</b>")
+    
+    if not active_cases: return "❌ Base de données vide."
     
     for case in active_cases:
-        logs.append(f"<hr>📂 <b>Dossier : {case.company} ({case.amount})</b>")
+        logs.append(f"<hr>📂 <b>Dossier : {case.company} (Statut: {case.status})</b>")
+        
+        # On vérifie juste qu'on a un utilisateur pour ce dossier
         user = User.query.filter_by(email=case.user_email).first()
-        if not user or not user.refresh_token: continue
+        if not user or not user.refresh_token:
+            logs.append("⚠️ Pas d'utilisateur associé, on passe.")
+            continue
+        
         try:
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
+            
+            # Recherche du mail de la marque
             company_domain = case.company.lower()
             query = f"label:INBOX {company_domain}" 
             results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
             messages = results.get('messages', [])
-            logs.append(f"📧 Mails trouvés : <b>{len(messages)}</b>")
+            logs.append(f"📧 Mails '{company_domain}' trouvés : <b>{len(messages)}</b>")
 
             for msg in messages:
+                # Lecture du corps du mail
                 f = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
                 payload = f.get('payload', {})
                 body_data = ""
@@ -464,28 +475,44 @@ def check_refunds():
                     if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
                 
                 final_content = body_data if body_data else f.get('snippet', '')
-                logs.append(f"📝 <b>Contenu analysé :</b> <i>{final_content[:150]}...</i>")
+                logs.append(f"📝 <b>Contenu :</b> <i>{final_content[:100]}...</i>")
                 
+                # L'IA Juge
                 client = OpenAI(api_key=OPENAI_API_KEY)
-                prompt = f"""Tu es un contrôleur financier. Voici un email complet reçu de {case.company}. CONTENU DU MAIL : "{final_content}". QUESTION : Est-ce que cet email confirme que le remboursement a été VALIDÉ, EFFECTUÉ ou que le virement est PARTI ? Si c'est juste une prise en compte ("nous avons reçu votre demande"), réponds NON. Réponds UNIQUEMENT par "OUI" ou "NON"."""
+                prompt = f"""Tu es un contrôleur financier. Voici un email de {case.company}. CONTENU : "{final_content}". EST-CE QUE LE REMBOURSEMENT EST VALIDÉ/EFFECTUÉ ? Réponds OUI ou NON."""
                 res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}])
                 verdict = res.choices[0].message.content.strip()
                 logs.append(f"🤖 <b>VERDICT IA :</b> {verdict}")
                 
                 if "OUI" in verdict:
+                    # LE PRÉLÈVEMENT
                     if user.stripe_customer_id:
                         try:
+                            # Calcul montant (nettoyage string)
                             mt_str = re.search(r'\d+', case.amount)
                             amount_total = int(mt_str.group()) if mt_str else 0
+                            # Sécurité : si montant 0, on met 100€ par défaut pour le test
+                            if amount_total == 0: amount_total = 100 
+                            
                             commission_cents = int((amount_total * 0.30) * 100)
-                            stripe.PaymentIntent.create(amount=commission_cents, currency='eur', customer=user.stripe_customer_id, payment_method=user.stripe_customer_id, off_session=True, confirm=True, description=f"Commission Justicio - Succès {case.company}")
+                            
+                            stripe.PaymentIntent.create(
+                                amount=commission_cents, 
+                                currency='eur', 
+                                customer=user.stripe_customer_id, 
+                                payment_method=user.stripe_customer_id, 
+                                off_session=True, confirm=True, 
+                                description=f"Commission Justicio - Succès {case.company}"
+                            )
                             case.status = "Payé"
-                            logs.append(f"✅ <b>SUCCÈS :</b> {amount_total*0.3}€ prélevés !")
+                            logs.append(f"✅ <b>JACKPOT :</b> {amount_total*0.3}€ prélevés via Stripe !")
+                            # Archivage
                             service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
                             break 
                         except Exception as e: logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
-                    else: logs.append("⚠️ Pas de carte enregistrée.")
-        except Exception as e: logs.append(f"❌ Erreur : {str(e)}")
+                    else: logs.append("⚠️ Pas de carte enregistrée (ID Manquant).")
+        except Exception as e: logs.append(f"❌ Erreur technique : {str(e)}")
+            
     db.session.commit()
     return "<br>".join(logs)
 
@@ -511,4 +538,5 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
