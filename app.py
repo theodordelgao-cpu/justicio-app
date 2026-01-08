@@ -450,90 +450,94 @@ def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
 def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
+# --- LE ROBOT CHASSEUR (MODE DEBUG) ---
 @app.route("/cron/check-refunds")
 def check_refunds():
-    # On récupère tous les dossiers qui sont "Envoyés" (En attente de réponse)
-    active_cases = Litigation.query.filter_by(status="Envoyé").all()
-    if not active_cases: return "Aucun dossier en attente."
+    logs = ["<h3>🔍 DIAGNOSTIC DU CHASSEUR</h3>"]
     
-    results_log = []
+    # 1. Vérification de la Base de Données
+    active_cases = Litigation.query.filter_by(status="Envoyé").all()
+    logs.append(f"👉 <b>ETAPE 1 :</b> Dossiers en statut 'Envoyé' trouvés dans la BDD : <b>{len(active_cases)}</b>")
+    
+    if not active_cases:
+        logs.append("❌ <b>PROBLÈME :</b> Aucun dossier n'est marqué comme 'Envoyé'. As-tu bien mis ta carte et validé le paiement ?")
+        return "<br>".join(logs)
     
     for case in active_cases:
+        logs.append(f"<hr>📂 <b>Analyse du dossier : {case.company} ({case.amount})</b>")
         user = User.query.filter_by(email=case.user_email).first()
-        if not user or not user.refresh_token: continue
+        
+        if not user or not user.refresh_token:
+            logs.append("❌ Erreur critique : Utilisateur introuvable ou Token absent.")
+            continue
         
         try:
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
             
-            # On cherche une RÉPONSE de la marque
+            # 2. Vérification Gmail
             company_domain = case.company.lower()
-            query = f"label:INBOX {company_domain} (remboursement OR refund OR virement OR payment OR cloture)"
+            # On simplifie la requête pour voir si au moins il trouve la marque
+            query = f"label:INBOX {company_domain}" 
+            logs.append(f"🕵️ <b>ETAPE 2 :</b> Je cherche dans Gmail : <i>'{query}'</i>")
             
             results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
             messages = results.get('messages', [])
+            logs.append(f"📧 Mails trouvés correspondants : <b>{len(messages)}</b>")
             
+            if not messages:
+                logs.append("⚠️ <b>PROBLÈME :</b> Je ne trouve aucun mail de cette marque dans l'Inbox. Vérifie l'orthographe ou si le mail n'est pas archivé.")
+
             for msg in messages:
                 f = service.users().messages().get(userId='me', id=msg['id']).execute()
                 snippet = f.get('snippet', '')
+                logs.append(f"📝 <b>Contenu lu :</b> <i>{snippet[:100]}...</i>")
                 
-                # --- L'IA JUGE DE PAIX ---
+                # 3. Vérification IA
                 client = OpenAI(api_key=OPENAI_API_KEY)
                 prompt = f"""
                 Tu es un contrôleur financier.
                 Voici un email reçu de {case.company} concernant un litige de {case.amount}.
                 Contenu : "{snippet}"
-                
                 Est-ce que cet email confirme EXPLICITEMENT que le remboursement a été VALIDÉ, EFFECTUÉ ou que le virement est parti ?
-                
-                Réponds UNIQUEMENT par :
-                "OUI" (si l'argent est sûr à 100%)
-                "NON" (si c'est juste un accusé de réception ou une demande d'info)
+                Réponds UNIQUEMENT par "OUI" ou "NON".
                 """
-                
-                res = client.chat.completions.create(
-                    model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}]
-                )
+                res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}])
                 verdict = res.choices[0].message.content.strip()
+                logs.append(f"🤖 <b>ETAPE 3 (L'IA) :</b> Verdict = <b>{verdict}</b>")
                 
                 if "OUI" in verdict:
-                    # 💰 BINGO ! ON PRÉLÈVE AUTOMATIQUEMENT
                     if user.stripe_customer_id:
-                        mt_str = re.search(r'\d+', case.amount)
-                        amount_total = int(mt_str.group()) if mt_str else 0
-                        commission_cents = int((amount_total * 0.30) * 100) # En centimes
-                        
-                        if commission_cents > 50:
-                            try:
-                                stripe.PaymentIntent.create(
-                                    amount=commission_cents,
-                                    currency='eur',
-                                    customer=user.stripe_customer_id,
-                                    payment_method=user.stripe_customer_id, 
-                                    off_session=True, 
-                                    confirm=True,
-                                    description=f"Commission Justicio - Succès {case.company}"
-                                )
-                                case.status = "Payé"
-                                results_log.append(f"✅ {case.company}: Remboursement détecté -> {amount_total*0.3}€ prélevés !")
-                                
-                                # On archive le mail de confirmation de la marque
-                                service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
-                                break
-                            except Exception as e:
-                                results_log.append(f"❌ Erreur Stripe {case.company}: {str(e)}")
-                        else:
-                            results_log.append(f"⚠️ Montant trop faible ({case.company})")
+                        logs.append(f"💳 <b>ETAPE 4 :</b> ID Stripe trouvé ({user.stripe_customer_id}), tentative de prélèvement...")
+                        try:
+                            mt_str = re.search(r'\d+', case.amount)
+                            amount_total = int(mt_str.group()) if mt_str else 0
+                            commission_cents = int((amount_total * 0.30) * 100)
+                            
+                            stripe.PaymentIntent.create(
+                                amount=commission_cents, currency='eur', customer=user.stripe_customer_id,
+                                payment_method=user.stripe_customer_id, off_session=True, confirm=True,
+                                description=f"Commission Justicio - Succès {case.company}"
+                            )
+                            case.status = "Payé"
+                            logs.append(f"✅ <b>SUCCÈS :</b> {amount_total*0.3}€ prélevés !")
+                            service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
+                            break 
+                        except Exception as e:
+                            logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
                     else:
-                        results_log.append(f"⚠️ Pas de carte enregistrée pour {user.name}")
+                        logs.append("⚠️ Pas de carte enregistrée (stripe_customer_id vide).")
+                else:
+                    logs.append("⏹️ L'IA a dit NON -> Pas de prélèvement.")
                         
         except Exception as e:
-            results_log.append(f"Erreur technique dossier {case.id}: {str(e)}")
+            logs.append(f"❌ Erreur technique : {str(e)}")
             
     db.session.commit()
-    return "<br>".join(results_log) if results_log else "Rien à signaler."
+    return "<br>".join(logs)
 
 if __name__ == "__main__":
     app.run()
+
 
 
