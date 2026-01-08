@@ -545,8 +545,18 @@ def check_refunds():
     db.session.commit()
     return "<br>".join(logs)
 
+@app.route("/reset-zara")
+def reset_zara():
+    lit = Litigation.query.filter_by(company="Zara").first()
+    if lit:
+        lit.status = "Détecté" # On le remet au début
+        db.session.commit()
+        return "✅ Dossier Zara remis à zéro (Statut : Détecté). Tu peux remettre ta carte."
+    return "Pas de dossier Zara trouvé."
+
 if __name__ == "__main__":
     app.run()
+
 
 
 
