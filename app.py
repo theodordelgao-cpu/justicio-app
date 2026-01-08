@@ -545,17 +545,34 @@ def check_refunds():
     db.session.commit()
     return "<br>".join(logs)
 
-@app.route("/reset-zara")
-def reset_zara():
-    lit = Litigation.query.filter_by(company="Zara").first()
+# --- LE MARTEAU (RESET FORCE) ---
+@app.route("/force-reset")
+def force_reset():
+    # On prend le premier dossier de la liste, peu importe son nom
+    lit = Litigation.query.first()
+    
     if lit:
-        lit.status = "Détecté" # On le remet au début
+        nom = lit.company
+        ancien_statut = lit.status
+        lit.status = "Détecté" # Retour case départ
         db.session.commit()
-        return "✅ Dossier Zara remis à zéro (Statut : Détecté). Tu peux remettre ta carte."
-    return "Pas de dossier Zara trouvé."
+        return f"✅ Dossier '<b>{nom}</b>' trouvé !<br>Statut passé de '<i>{ancien_statut}</i>' à '<b>Détecté</b>'.<br><br>👉 Tu peux retourner sur l'accueil et remettre ta carte."
+    
+    return "❌ La base de données est vide (0 dossier)."
+
+# --- VÉRIFICATEUR DE CARTE (POUR ETRE SUR) ---
+@app.route("/verif-user")
+def verif_user():
+    users = User.query.all()
+    res = []
+    for u in users:
+        etat_carte = f"✅ CARTE OK ({u.stripe_customer_id})" if u.stripe_customer_id else "❌ PAS DE CARTE"
+        res.append(f"Utilisateur : {u.name} | {u.email} | {etat_carte}")
+    return "<br>".join(res)
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
