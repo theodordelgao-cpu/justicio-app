@@ -16,6 +16,9 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from sqlalchemy import or_
 
+# --- VARIABLE GLOBALE POUR LE MOUCHARD ---
+DEBUG_LOGS = [] 
+
 app = Flask(__name__)
 
 # --- MOUCHARD D'ERREUR (Anti-Erreur 500) ---
@@ -48,7 +51,6 @@ if STRIPE_SK:
 
 # --- RÉPERTOIRE JURIDIQUE ---
 LEGAL_DIRECTORY = {
-    # E-COMMERCE
     "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
     "apple": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
     "zalando": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour 14 jours)"},
@@ -58,13 +60,9 @@ LEGAL_DIRECTORY = {
     "asos": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour)"},
     "fnac": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
     "darty": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
-
-    # VOYAGE & HÔTELS
     "booking": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
     "airbnb": {"email": "theodordelgao@gmail.com", "loi": "le Règlement Rome I (Protection consommateur)"},
     "expedia": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
-
-    # TRANSPORTS
     "ryanair": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "easyjet": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
     "lufthansa": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
@@ -74,8 +72,6 @@ LEGAL_DIRECTORY = {
     "sncf": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "eurostar": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
     "ouigo": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
-
-    # VTC / FOOD
     "uber": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
     "deliveroo": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
     "bolt": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"}
@@ -95,22 +91,14 @@ LEGAL_TEXTS = {
     <a href='/' class='btn-logout'>Retour</a></div>"""
 }
 
-# --- BASE DE DONNÉES (Configuration Blindée & Anti-Timeout) ---
+# --- BASE DE DONNÉES ---
 db_url = os.environ.get("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# Options vitales pour Render
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "pool_pre_ping": True,
-    "pool_recycle": 300,
-    "connect_args": {
-        "keepalives": 1,
-    }
-}
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_pre_ping": True, "pool_recycle": 300, "connect_args": {"keepalives": 1}}
 
 db = SQLAlchemy(app)
 
@@ -157,14 +145,13 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         message['to'] = target_email
         message['subject'] = subject
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        sent = service.users().messages().send(userId='me', body={'raw': raw}).execute()
+        service.users().messages().send(userId='me', body={'raw': raw}).execute()
         return True
     except: return False
 
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # PROMPT "MODE FILTRE ANTI-SPAM"
         prompt = f"""
         Tu es un avocat expert chargé de filtrer les emails.
         Analyse ce mail :
@@ -182,7 +169,7 @@ def analyze_litigation(text, subject):
         res = client.chat.completions.create(
             model="gpt-4o-mini", 
             messages=[{"role":"user", "content": prompt}],
-            temperature=0  # Zéro créativité, on veut du binaire
+            temperature=0 
         )
         return [d.strip() for d in res.choices[0].message.content.split("|")]
     except: return ["REJET", "Inconnu"]
@@ -223,7 +210,6 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # QUERY BLINDÉE (Anti-Pub)
     query = (
         "label:INBOX "
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
@@ -261,14 +247,11 @@ def scan():
                             body_data = base64.urlsafe_b64decode(data).decode('utf-8')
             body_content = (body_data if body_data else snippet) + " " + subj
             
-            # --- INTELLIGENCE (LE JUGE) ---
             ana = analyze_litigation(body_content, subj)
-            extracted_amount = ana[0] # Peut contenir "REJET"
+            extracted_amount = ana[0]
             law_final = ana[1] if len(ana) > 1 else "Code Civil"
             
-            # FILTRE : SI L'IA DIT "REJET", ON IGNORE CE MAIL
-            if "REJET" in extracted_amount or "REJET" in law_final:
-                continue
+            if "REJET" in extracted_amount or "REJET" in law_final: continue
 
             gain_final, company_key = "AUCUN", "Inconnu"
 
@@ -285,12 +268,8 @@ def scan():
                 for target in targets:
                     if target in subj.lower() or target in body_content.lower():
                         company_key = target
-                        
-                        # A. Prix IA (Si c'est un chiffre)
                         if any(char.isdigit() for char in extracted_amount):
                             gain_final = extracted_amount
-                        
-                        # B. Prix Regex (Secours)
                         if "AUCUN" in gain_final or "Déterminer" in gain_final:
                             match = re.search(r'(\d+[.,]?\d*)\s?€', body_content)
                             if match:
@@ -298,13 +277,10 @@ def scan():
                             else:
                                 gain_final = "À déterminer"
 
-            # 3. VERDICT FINAL (PAS D'ARCHIVAGE ICI !)
             if company_key != "Inconnu" and "AUCUN" not in gain_final:
-                # Doublon ?
                 archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
                 if archive and archive.status in ["Envoyé", "Payé"]: continue
                 
-                # Total
                 mt = 0
                 try:
                     mt = int(re.search(r'\d+', gain_final).group())
@@ -318,11 +294,8 @@ def scan():
                 new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
                 db.session.add(new_lit)
                 
-                # J'AI SUPPRIMÉ LE BLOC ARCHIVAGE ICI (Comme demandé)
-
                 html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{snippet[:120]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
-        except:
-            continue
+        except: continue
 
     db.session.commit()
     
@@ -350,73 +323,66 @@ def success_page():
     count = Litigation.query.filter(Litigation.user_email == session['email'], or_(Litigation.status == "Détecté", Litigation.status == "Envoyé")).count()
     return STYLE + f"<div style='text-align:center; padding-top:50px;'><h1>Succès !</h1><div class='card'><h3>🚀 {count} Procédures lancées</h3></div><a href='/' class='btn-success'>Retour</a></div>" + FOOTER
 
+# --- LE WEBHOOK ESPION (Mouchard) ---
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
+    global DEBUG_LOGS
+    if len(DEBUG_LOGS) > 20: DEBUG_LOGS.pop(0)
+    
+    DEBUG_LOGS.append(f"🔔 WEBHOOK REÇU à {datetime.utcnow()} ! Tentative de lecture...")
+    
     payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
+    
     try:
         event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        DEBUG_LOGS.append(f"👉 Type d'événement : {event['type']}")
         
-        # Quand le client rentre sa carte (Setup Intent)
         if event["type"] == "setup_intent.succeeded":
-            
-            # 1. On récupère l'ID Client Stripe (L'empreinte de la carte)
-            setup_intent = event["data"]["object"]
-            customer_id = setup_intent.get("customer")
+            intent = event["data"]["object"]
+            customer_id = intent.get("customer")
+            DEBUG_LOGS.append(f"💳 Customer ID reçu : {customer_id}")
             
             litigations = Litigation.query.filter_by(status="Détecté").all()
+            DEBUG_LOGS.append(f"📂 Dossiers 'Détecté' trouvés : {len(litigations)}")
+            
+            sauvegarde_ok = False
+            
             for lit in litigations:
                 user = User.query.filter_by(email=lit.user_email).first()
-                
-                # 2. ON SAUVEGARDE L'EMPREINTE DANS LA BDD (Pour prélever plus tard)
-                if user and customer_id:
+                if user:
+                    # 1. Sauvegarde de la carte
                     user.stripe_customer_id = customer_id
                     db.session.commit()
-                
-                if user and user.refresh_token:
-                    creds = get_refreshed_credentials(user.refresh_token)
-                    target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
+                    DEBUG_LOGS.append(f"✅ CARTE SAUVEGARDÉE pour {user.email}")
+                    sauvegarde_ok = True
                     
-                    corps = f"""MISE EN DEMEURE FORMELLE
-Objet : Réclamation concernant le dossier : {lit.subject}
-
-À l'attention du Service Juridique de {lit.company.upper()},
-
-Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
-- Nature du litige : {lit.subject}
-- Fondement juridique : {lit.law}
-- Montant réclamé : {lit.amount}
-
-Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement ou au versement de l'indemnité sous un délai de 8 jours ouvrés. À défaut, je saisirai les autorités compétentes et le médiateur.
-
-Dans l'attente de votre retour,
-Cordialement,
-{user.name} - Utilisateur Justicio.fr"""
-
-                    success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
-                    lit.status = "Envoyé" if success else "Erreur"
-                    
-                    if success:
-                        try:
-                            # Notif Telegram
-                            mt_str = re.search(r'\d+', lit.amount)
-                            mt = int(mt_str.group()) if mt_str else 0
-                            gain_estime = mt * 0.3
-                            send_telegram_notif(f"💰 **JUSTICIO EMPREINTE PRIS**\nClient : {user.name}\nCarte enregistrée pour futur prélèvement.\nLitige : {lit.amount}")
-
-                            # Archivage du mail (On nettoie l'Inbox)
-                            try:
-                                service = build('gmail', 'v1', credentials=creds)
-                                q_search = f"subject:\"{lit.subject}\" label:INBOX"
-                                found = service.users().messages().list(userId='me', q=q_search, maxResults=1).execute()
-                                msgs_found = found.get('messages', [])
-                                if msgs_found:
-                                    service.users().messages().modify(userId='me', id=msgs_found[0]['id'], body={'removeLabelIds': ['INBOX', 'UNREAD']}).execute()
-                            except: pass
-                        except: pass
+                    # 2. Envoi du mail
+                    if user.refresh_token:
+                        creds = get_refreshed_credentials(user.refresh_token)
+                        target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
                         
-            db.session.commit()
-        return "OK", 200
-    except: return "Error", 400
+                        corps = f"""MISE EN DEMEURE FORMELLE\nObjet : Réclamation concernant le dossier : {lit.subject}\n\nÀ l'attention du Service Juridique de {lit.company.upper()},\n\nJe soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :\n- Nature du litige : {lit.subject}\n- Fondement juridique : {lit.law}\n- Montant réclamé : {lit.amount}\n\nConformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement sous un délai de 8 jours ouvrés.\n\nCordialement,\n{user.name}"""
+                        
+                        success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
+                        lit.status = "Envoyé" if success else "Erreur"
+                        DEBUG_LOGS.append(f"📧 Mail envoyé pour {lit.company} : {success}")
+                        
+                        if success:
+                            send_telegram_notif(f"💰 **JUSTICIO EMPREINTE PRIS**\nClient : {user.name}\nLitige : {lit.amount}")
+            
+            if not sauvegarde_ok:
+                DEBUG_LOGS.append("⚠️ ALERTE : ID Stripe reçu mais aucun User/Dossier trouvé pour l'associer.")
+
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ ERREUR WEBHOOK : {str(e)}")
+        return "Error", 400
+        
+    return "OK", 200
+
+# --- ROUTE POUR LIRE LE MOUCHARD ---
+@app.route("/debug-logs")
+def show_debug_logs():
+    return "<h1>🕵️ Journal du Webhook</h1>" + "<br><br>".join(reversed(DEBUG_LOGS))
 
 # LOGIN / LOGOUT
 @app.route("/login")
@@ -454,65 +420,41 @@ def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 @app.route("/cron/check-refunds")
 def check_refunds():
     logs = ["<h3>🔍 DIAGNOSTIC DU CHASSEUR V2</h3>"]
-    
     active_cases = Litigation.query.filter_by(status="Envoyé").all()
     logs.append(f"👉 <b>ETAPE 1 :</b> Dossiers 'Envoyé' : <b>{len(active_cases)}</b>")
-    
     if not active_cases: return "<br>".join(logs)
     
     for case in active_cases:
         logs.append(f"<hr>📂 <b>Dossier : {case.company} ({case.amount})</b>")
         user = User.query.filter_by(email=case.user_email).first()
         if not user or not user.refresh_token: continue
-        
         try:
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
-            
-            # Recherche élargie
             company_domain = case.company.lower()
             query = f"label:INBOX {company_domain}" 
-            
             results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
             messages = results.get('messages', [])
             logs.append(f"📧 Mails trouvés : <b>{len(messages)}</b>")
 
             for msg in messages:
-                # --- RECUPERATION DU CORPS ENTIER (ET PAS JUSTE LE SNIPPET) ---
                 f = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
                 payload = f.get('payload', {})
                 body_data = ""
-                
                 if 'parts' in payload:
                     for part in payload['parts']:
                         if part['mimeType'] == 'text/plain':
                             data = part['body'].get('data', '')
-                            if data:
-                                body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-                # Fallback si pas de parts
+                            if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
                 if not body_data and 'body' in payload:
                     data = payload['body'].get('data', '')
-                    if data:
-                        body_data = base64.urlsafe_b64decode(data).decode('utf-8')
+                    if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
                 
                 final_content = body_data if body_data else f.get('snippet', '')
-                # ------------------------------------------------------------
-
                 logs.append(f"📝 <b>Contenu analysé :</b> <i>{final_content[:150]}...</i>")
                 
                 client = OpenAI(api_key=OPENAI_API_KEY)
-                prompt = f"""
-                Tu es un contrôleur financier.
-                Voici un email complet reçu de {case.company}.
-                
-                CONTENU DU MAIL :
-                "{final_content}"
-                
-                QUESTION : Est-ce que cet email confirme que le remboursement a été VALIDÉ, EFFECTUÉ ou que le virement est PARTI ?
-                Si c'est juste une prise en compte ("nous avons reçu votre demande"), réponds NON.
-                
-                Réponds UNIQUEMENT par "OUI" ou "NON".
-                """
+                prompt = f"""Tu es un contrôleur financier. Voici un email complet reçu de {case.company}. CONTENU DU MAIL : "{final_content}". QUESTION : Est-ce que cet email confirme que le remboursement a été VALIDÉ, EFFECTUÉ ou que le virement est PARTI ? Si c'est juste une prise en compte ("nous avons reçu votre demande"), réponds NON. Réponds UNIQUEMENT par "OUI" ou "NON"."""
                 res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}])
                 verdict = res.choices[0].message.content.strip()
                 logs.append(f"🤖 <b>VERDICT IA :</b> {verdict}")
@@ -523,44 +465,28 @@ def check_refunds():
                             mt_str = re.search(r'\d+', case.amount)
                             amount_total = int(mt_str.group()) if mt_str else 0
                             commission_cents = int((amount_total * 0.30) * 100)
-                            
-                            stripe.PaymentIntent.create(
-                                amount=commission_cents, currency='eur', customer=user.stripe_customer_id,
-                                payment_method=user.stripe_customer_id, off_session=True, confirm=True,
-                                description=f"Commission Justicio - Succès {case.company}"
-                            )
+                            stripe.PaymentIntent.create(amount=commission_cents, currency='eur', customer=user.stripe_customer_id, payment_method=user.stripe_customer_id, off_session=True, confirm=True, description=f"Commission Justicio - Succès {case.company}")
                             case.status = "Payé"
                             logs.append(f"✅ <b>SUCCÈS :</b> {amount_total*0.3}€ prélevés !")
-                            # On archive le mail
                             service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
                             break 
-                        except Exception as e:
-                            logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
-                    else:
-                        logs.append("⚠️ Pas de carte enregistrée.")
-                        
-        except Exception as e:
-            logs.append(f"❌ Erreur : {str(e)}")
-            
+                        except Exception as e: logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
+                    else: logs.append("⚠️ Pas de carte enregistrée.")
+        except Exception as e: logs.append(f"❌ Erreur : {str(e)}")
     db.session.commit()
     return "<br>".join(logs)
 
 # --- LE MARTEAU (RESET FORCE) ---
 @app.route("/force-reset")
 def force_reset():
-    # On prend le premier dossier de la liste, peu importe son nom
     lit = Litigation.query.first()
-    
     if lit:
         nom = lit.company
-        ancien_statut = lit.status
-        lit.status = "Détecté" # Retour case départ
+        lit.status = "Détecté"
         db.session.commit()
-        return f"✅ Dossier '<b>{nom}</b>' trouvé !<br>Statut passé de '<i>{ancien_statut}</i>' à '<b>Détecté</b>'.<br><br>👉 Tu peux retourner sur l'accueil et remettre ta carte."
-    
-    return "❌ La base de données est vide (0 dossier)."
+        return f"✅ Dossier '<b>{nom}</b>' remis à l'état 'Détecté'.<br><br>👉 Tu peux retourner sur l'accueil et remettre ta carte."
+    return "❌ La base de données est vide."
 
-# --- VÉRIFICATEUR DE CARTE (POUR ETRE SUR) ---
 @app.route("/verif-user")
 def verif_user():
     users = User.query.all()
@@ -572,9 +498,3 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
-
-
-
-
-
-
