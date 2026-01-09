@@ -210,6 +210,7 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
+    # On garde la même requête
     query = (
         "label:INBOX "
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
@@ -231,6 +232,9 @@ def scan():
     total_gain, new_cases = 0, 0
     html_cards = ""
     
+    # --- LE MOUCHARD DU SCAN ---
+    debug_rejected = ["<h3>🗑️ Corbeille (Mails analysés mais rejetés)</h3>"]
+    
     for m in msgs:
         try:
             f = service.users().messages().get(userId='me', id=m['id']).execute()
@@ -251,11 +255,14 @@ def scan():
             extracted_amount = ana[0]
             law_final = ana[1] if len(ana) > 1 else "Code Civil"
             
-            if "REJET" in extracted_amount or "REJET" in law_final: continue
+            # --- DIAGNOSTIC ---
+            if "REJET" in extracted_amount or "REJET" in law_final:
+                debug_rejected.append(f"<p>❌ <b>Rejeté par l'IA :</b> {subj} <br><small>Cause : {extracted_amount} | {law_final}</small></p>")
+                continue
 
             gain_final, company_key = "AUCUN", "Inconnu"
 
-            # 1. AVION (250€)
+            # 1. AVION
             airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways"]
             if any(air in subj.lower() for air in airlines):
                 gain_final = "250€"
@@ -279,7 +286,9 @@ def scan():
 
             if company_key != "Inconnu" and "AUCUN" not in gain_final:
                 archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
-                if archive and archive.status in ["Envoyé", "Payé"]: continue
+                if archive and archive.status in ["Envoyé", "Payé"]: 
+                    debug_rejected.append(f"<p>⚠️ <b>Déjà traité :</b> {subj}</p>")
+                    continue
                 
                 mt = 0
                 try:
@@ -295,21 +304,25 @@ def scan():
                 db.session.add(new_lit)
                 
                 html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{snippet[:120]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
-        except: continue
+            else:
+                debug_rejected.append(f"<p>⚠️ <b>Marque inconnue ou Pas de gain :</b> {subj} ({company_key})</p>")
+
+        except Exception as e:
+            debug_rejected.append(f"<p>❌ Erreur lecture mail : {str(e)}</p>")
+            continue
 
     db.session.commit()
     
     stripe_btn = ""
     if os.environ.get("STRIPE_SECRET_KEY"):
          stripe_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-weight:bold'>Total : {total_gain}€</div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
-    else:
-         stripe_btn = "<div class='sticky-footer' style='background:#fee2e2; color:#b91c1c; padding:10px;'>⚠️ Clé Stripe manquante sur Render</div>"
+    
+    debug_html = "<div style='margin-top:50px; padding:20px; background:#f1f5f9; border-radius:10px; color:#64748b;'>" + "".join(debug_rejected) + "</div>"
 
     if new_cases > 0: 
-        return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + WA_BTN + FOOTER
+        return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + debug_html + WA_BTN + FOOTER
     else: 
-        return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun litige détecté (les publicités ont été ignorées).</p><a href='/' class='btn-logout'>Retour</a>" + FOOTER
-
+        return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun litige détecté.</p>" + debug_html + "<a href='/' class='btn-logout'>Retour</a>" + FOOTER
 @app.route("/setup-payment")
 def setup_payment():
     try:
@@ -537,6 +550,7 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
