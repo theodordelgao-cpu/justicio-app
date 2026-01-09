@@ -149,29 +149,45 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         return True
     except: return False
 
-def analyze_litigation(text, subject):
+def analyze_litigation(text, subject, sender):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # PROMPT "MODE AGRESSIF" (Devine ou invente, mais ne dis jamais "Inconnu")
+        # PROMPT EXPERT : TRI SÉLECTIF ET SÉCURITÉ
         prompt = f"""
-        Tu es un expert juridique. Analyse ce mail.
-        Sujet: {subject}
-        Contenu: {text[:800]}
+        Tu es un Auditeur Juridique Senior pour une société de protection des consommateurs.
+        Ton rôle est de filtrer les emails entrants pour identifier UNIQUEMENT les litiges non résolus qui méritent une intervention.
 
-        Tâche : Identifie le MONTANT, la LOI, et la MARQUE.
+        DONNÉES DU MAIL :
+        - EXPÉDITEUR : {sender}
+        - SUJET : {subject}
+        - CORPS : {text[:1000]}
 
-        RÈGLES IMPÉRATIVES :
-        1. MARQUE : Tu DOIS trouver une marque. Regarde le sujet, le corps, les indices.
-           - Si tu vois "Colis" ou "Commande" et aucune marque -> Dis "AMAZON" (par défaut).
-           - Si tu vois "Retour" et aucune marque -> Dis "ZALANDO" (par défaut).
-           - Si tu vois "Train", "TGV", "Inoui" -> Dis "SNCF".
-           - Si tu vois "AF..." ou "Vol" -> Dis "AIR FRANCE".
-           - NE RÉPONDS JAMAIS "NON SPÉCIFIÉE". Devine la plus probable.
+        --- RÈGLES D'ÉLIMINATION (SOIS IMPITOYABLE) ---
+        1. ⛔ REJET PUB : Si c'est une newsletter, une promo ("Soldes", "Offre"), ou un spam -> "REJET | PUB | REJET".
+        2. ⛔ REJET RÉSOLU : Si le mail confirme que l'argent a DÉJÀ été envoyé ("Virement effectué", "Remboursement validé", "Compte crédité") -> "REJET | DÉJÀ PAYÉ | REJET".
+        3. ⛔ REJET ARNAQUE : Si l'expéditeur semble suspect pour une grande marque (ex: "service@amazon-remboursement-bizarre.com"), rejette-le -> "REJET | SUSPECT | REJET".
+        4. ⛔ REJET ADMIN : Si c'est juste un changement de mot de passe ou une notif de connexion -> "REJET | NON PERTINENT | REJET".
 
-        2. MONTANT : Cherche un chiffre en euros. Si tu ne trouves RIEN, écris "À déterminer". N'écris JAMAIS le mot "MONTANT".
+        --- RÈGLES DE SÉLECTION (LE LITIGE ACTIF) ---
+        Si le mail indique un PROBLÈME (Retard, Annulation, Colis non reçu, Produit défectueux, Demande de retour) :
+        
+        1. IDENTIFIE LA MARQUE :
+           - Regarde le DOMAINE de l'email expéditeur (ex: "@zara.com" -> ZARA). C'est la priorité.
+           - Si l'expéditeur est générique (ex: testeur), cherche la marque dans le texte.
+           - Si le texte dit "Colis" sans marque -> Déduis "AMAZON" ou le transporteur.
+           - Si le texte dit "Vol" ou "AF..." -> Déduis "AIR FRANCE".
+           
+        2. IDENTIFIE LE MONTANT :
+           - Trouve la somme en jeu (ex: "prix du billet", "valeur du colis").
+           - Si introuvable -> Écris "À déterminer".
+           
+        3. IDENTIFIE LA LOI :
+           - Vol annulé/retardé -> "Règlement CE 261/2004"
+           - Colis/Retour -> "Directive UE 2011/83"
+           - Train -> "Règlement UE 2021/782"
 
-        3. SORTIE : Si c'est une Pub/Newsletter -> "REJET | REJET | REJET".
-           Sinon -> "MONTANT | LOI | MARQUE"
+        FORMAT DE RÉPONSE FINAL :
+        MONTANT | LOI | MARQUE
         """
         
         res = client.chat.completions.create(
@@ -180,6 +196,7 @@ def analyze_litigation(text, subject):
             temperature=0 
         )
         parts = [d.strip() for d in res.choices[0].message.content.split("|")]
+        # Sécurité format
         if len(parts) < 3: return parts + ["Inconnu"] * (3 - len(parts))
         return parts
     except: return ["REJET", "Inconnu", "Inconnu"]
@@ -217,30 +234,33 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # Nettoyage
+    # On vide la table pour le test (pour ne pas avoir de doublons visuels)
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
+    # Requête large pour ne rien rater
     query = "label:INBOX (litige OR remboursement OR refund OR annulation OR retard OR delay OR colis OR commande OR livraison OR sncf OR airfrance OR easyjet OR ryanair OR amazon OR zalando OR zara OR booking OR uber)"
     
     try:
-        results = service.users().messages().list(userId='me', q=query, maxResults=30).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=40).execute()
         msgs = results.get('messages', [])
     except Exception as e: return f"Erreur Gmail : {e}"
     
     total_gain, new_cases = 0, 0
     html_cards = ""
-    # Mouchard simplifié
-    debug_rejected = ["<h3>🗑️ Analyse IA (Détails)</h3>"]
+    debug_rejected = ["<h3>🗑️ Rapport de Rejet (Mails ignorés)</h3>"]
     
     for m in msgs:
         try:
             f = service.users().messages().get(userId='me', id=m['id'], format='full').execute()
             snippet = f.get('snippet', '')
             headers = f['payload'].get('headers', [])
-            subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
             
-            # Récupération propre du texte
+            # --- EXTRACTION DES PREUVES ---
+            subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
+            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu") 
+            
+            # Lecture du corps
             payload = f.get('payload', {})
             body_data = ""
             def get_text(parts):
@@ -258,30 +278,29 @@ def scan():
             
             clean_body = re.sub('<[^<]+?>', ' ', body_data) if body_data else snippet
             
-            # --- C'EST ICI QUE TOUT CHANGE ---
-            # On récupère les 3 infos directement de l'IA
-            ana = analyze_litigation(clean_body, subj)
+            # --- ENVOI A L'EXPERT (IA) ---
+            ana = analyze_litigation(clean_body, subj, sender)
+            
             extracted_amount = ana[0]
             law_final = ana[1]
-            company_detected = ana[2] # L'IA nous donne la marque !
+            company_detected = ana[2]
 
-            # Si l'IA rejette ou ne trouve pas la marque
+            # SI L'IA REJETTE LE MAIL
             if "REJET" in extracted_amount or "REJET" in company_detected:
-                debug_rejected.append(f"<p>❌ {subj} -> Rejeté (Non pertinent ou Pub)</p>")
+                debug_rejected.append(f"<p>❌ <b>{subj}</b><br><small>Expéditeur: {sender}<br>Motif: {extracted_amount}</small></p>")
                 continue
             
-            # Vérification doublon
+            # Vérification si dossier déjà existant
             archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
             if archive and archive.status in ["Envoyé", "Payé"]: continue
             
-            # Nettoyage du montant pour le total
+            # Nettoyage montant
             mt = 0
             try: mt = int(re.search(r'\d+', extracted_amount).group())
             except: mt = 0
             total_gain += mt
             new_cases += 1
             
-            # Création du dossier avec la marque trouvée par l'IA
             new_lit = Litigation(user_email=session['email'], company=company_detected, amount=extracted_amount, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
             
@@ -297,7 +316,7 @@ def scan():
 
     debug_html = "<div style='margin-top:50px;color:#64748b;background:#e2e8f0;padding:20px;border-radius:10px;'>" + "".join(debug_rejected) + "</div>"
     
-    if new_cases > 0: return STYLE + "<h1>Résultat</h1>" + html_cards + stripe_btn + debug_html
+    if new_cases > 0: return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + debug_html
     else: return STYLE + "<h1>Rien à signaler</h1>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>"
 
 @app.route("/setup-payment")
@@ -527,6 +546,7 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
