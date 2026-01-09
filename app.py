@@ -152,44 +152,37 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject, sender):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # PROMPT FINAL "MACHINE À CASH"
+        # PROMPT "MODE COMPTABLE PRÉCIS"
         prompt = f"""
-        Tu es un Algorithme de Récupération d'Indemnités.
-        Ta mission : Transformer des emails de problèmes en dossiers à encaisser.
-
+        Tu es un Expert en Réclamation.
+        
         DONNÉES :
         - FROM : {sender}
         - SUJET : {subject}
         - CORPS : {text[:1500]}
 
-        --- RÈGLES DE TRI (DANS L'ORDRE) ---
+        --- 1. TRI (ON GARDE ?) ---
+        - Si "Virement effectué", "Remboursement validé" -> RÉPONDS : "REJET | PAYÉ | REJET"
+        - Si Pub, Promo, Newsletter -> RÉPONDS : "REJET | PUB | REJET"
         
-        1. 🗑️ POUBELLE (C'est mort) :
-           - Si le mail dit "Virement effectué", "Remboursement validé", "Compte crédité" -> RÉPONDS : "REJET | PAYÉ | REJET"
-           - Si c'est "Pub", "Soldes", "Promo", "Newsletter", "Sécurité" -> RÉPONDS : "REJET | PUB | REJET"
-           - Si c'est Vinted/Leboncoin (Transaction annulée sans perte) -> RÉPONDS : "REJET | C2C | REJET"
+        --- 2. IDENTIFICATION MARQUE ---
+        - Regarde l'email expéditeur (ex: "@sncf.fr", "@amazon.com").
+        - Si c'est un particulier (test), cherche "TGV", "Air France", "Zara" dans le texte.
+        - "Colis" sans marque -> "AMAZON".
 
-        2. 🏢 DÉTECTION MARQUE (Sois malin) :
-           - Regarde le domaine de l'email (ex: "@sncf.fr", "@amazon.com").
-           - SI L'EXPÉDITEUR EST UN PARTICULIER (ex: gmail, yahoo) -> C'est un TEST. Cherche la marque dans le texte ("TGV", "Air France", "Zara").
-           - Si tu vois "Colis" sans marque -> Mets "AMAZON" par défaut.
-           - Si tu vois "Vol" sans marque -> Mets "AIR FRANCE" par défaut.
+        --- 3. LE MONTANT (RÈGLE D'OR) ---
+        - VOL AVION ANNULÉ/RETARDÉ (Air France, EasyJet) -> Écris "250€" (C'est la loi).
+        - POUR TOUT LE RESTE (Train, Colis, Amazon, Zara, Apple...) :
+          -> CHERCHE LE PRIX EXACT dans le texte (ex: "42.99€", "120€").
+          -> SI TU NE TROUVES PAS DE PRIX EXPLICITE : Écris IMPÉRATIVEMENT "À déterminer".
+          -> N'INVENTE JAMAIS DE FORFAIT (Pas de 50€, pas de 30€).
 
-        3. 💰 ESTIMATION MONTANT (Mode Forfaitaire OBLIGATOIRE) :
-           - Si un prix précis est écrit (ex: "80€", "42.99€") -> GARDE-LE.
-           - SINON, APPLIQUE CES FORFAITS :
-             * Avion (Vol annulé/retardé) -> Écris "250€"
-             * Train (Retard) -> Écris "50€"
-             * Colis / Commande non reçue -> Écris "50€"
-             * Tout autre litige -> Écris "30€"
-           (Interdiction de répondre "À déterminer" ou "0€")
+        --- 4. LOI ---
+        - Avion -> Règl. CE 261/2004
+        - Train -> Règl. UE 2021/782
+        - E-commerce -> Directive UE 2011/83
 
-        4. ⚖️ LOI :
-           - Avion -> Règl. CE 261/2004
-           - Train -> Règl. UE 2021/782
-           - E-commerce -> Directive UE 2011/83
-
-        RÉPONSE FINALE ATTENDUE :
+        RÉPONSE FINALE :
         MONTANT | LOI | MARQUE
         """
         
@@ -202,7 +195,7 @@ def analyze_litigation(text, subject, sender):
         if len(parts) < 3: return parts + ["Inconnu"] * (3 - len(parts))
         return parts
     except: return ["REJET", "Inconnu", "Inconnu"]
-
+        
 # --- STYLE CSS ---
 STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
 body{{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:120px;display:flex;flex-direction:column;align-items:center;color:#1e293b}}
@@ -236,11 +229,10 @@ def scan():
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # Reset propre de la base pour le test
-    Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
-    db.session.commit()
-
-    # Requête large + Exclusion des pubs évidentes
+    # 🛑 ON ARRÊTE DE TOUT SUPPRIMER !
+    # On garde l'historique pour ne pas perdre les montants saisis par le client.
+    
+    # Requête Gmail
     query = "label:INBOX (litige OR remboursement OR refund OR annulation OR retard OR delay OR colis OR commande OR livraison OR sncf OR airfrance OR easyjet OR ryanair OR amazon OR zalando OR zara OR booking OR uber) -category:promotions -category:social"
     
     try:
@@ -248,21 +240,56 @@ def scan():
         msgs = results.get('messages', [])
     except Exception as e: return f"Erreur Gmail : {e}"
     
-    total_gain, new_cases = 0, 0
+    total_gain = 0
+    new_cases_count = 0
     html_cards = ""
     debug_rejected = ["<h3>🗑️ Rapport de Rejet</h3>"]
     
+    # On récupère tous les dossiers existants d'un coup pour éviter les requêtes lentes
+    existing_lits = {l.subject: l for l in Litigation.query.filter_by(user_email=session['email']).all()}
+
     for m in msgs:
         try:
+            # 1. RECUPERATION LIGHT (Juste les entêtes d'abord)
             f = service.users().messages().get(userId='me', id=m['id'], format='full').execute()
-            snippet = f.get('snippet', '')
             headers = f['payload'].get('headers', [])
-            
-            # --- EXTRACTION DONNÉES CLÉS ---
             subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sujet Inconnu")
+            
+            # 2. EST-CE QU'ON CONNAIT DÉJÀ CE DOSSIER ?
+            if subj in existing_lits:
+                dossier = existing_lits[subj]
+                
+                # Si c'est déjà payé/envoyé, on ignore
+                if dossier.status in ["Envoyé", "Payé"]: continue
+                
+                # Si le dossier est "Détecté", on l'affiche SANS rappeler l'IA (Gratuit !)
+                amount_val = dossier.amount
+                company = dossier.company
+                law = dossier.law
+                
+                # Gestion de l'affichage (Input ou Badge)
+                amount_display = ""
+                
+                # Si l'utilisateur a déjà mis un prix (ex: "120€"), on l'affiche en vert
+                if "€" in amount_val and "déterminer" not in amount_val:
+                    amount_display = f"<div class='amount-badge'>{amount_val}</div>"
+                    try: total_gain += int(re.search(r'\d+', amount_val).group())
+                    except: pass
+                else:
+                    # Sinon, on remet l'input
+                    amount_display = f"""<input type='number' placeholder='Prix €' 
+                    onchange='saveAmount({dossier.id}, this)' 
+                    style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"""
+                
+                html_cards += f"<div class='card'>{amount_display}<span class='radar-tag'>{company.upper()}</span><h3>{subj}</h3><p><i>Dossier existant...</i></p><small>⚖️ {law}</small></div>"
+                new_cases_count += 1
+                continue # ON PASSE AU SUIVANT (Pas d'IA)
+
+            # --- SI ON EST ICI, C'EST UN NOUVEAU MAIL -> ON LANCE L'IA ---
+            
+            snippet = f.get('snippet', '')
             sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
             
-            # Lecture Corps (Récursive pour gérer les sous-parties HTML)
             payload = f.get('payload', {})
             def get_text_content(p):
                 text = ""
@@ -274,48 +301,77 @@ def scan():
                 return text
 
             body_raw = get_text_content(payload)
-            # Nettoyage HTML brutal pour ne garder que le texte utile
             clean_body = re.sub('<[^<]+?>', ' ', body_raw) if body_raw else snippet
-            clean_body = re.sub(r'\s+', ' ', clean_body).strip() # Enlève les espaces multiples
+            clean_body = re.sub(r'\s+', ' ', clean_body).strip()
 
-            # --- APPEL IA ---
+            # IA ANALYSE
             ana = analyze_litigation(clean_body, subj, sender)
             extracted_amount = ana[0]
             law_final = ana[1]
             company_detected = ana[2]
 
-            # FILTRAGE
             if "REJET" in extracted_amount or "REJET" in company_detected:
                 debug_rejected.append(f"<p>❌ <b>{subj}</b><br><small>Motif : {extracted_amount}</small></p>")
                 continue
             
-            # ANTI-DOUBLON
-            archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
-            if archive and archive.status in ["Envoyé", "Payé"]: continue
-            
-            # CALCUL TOTAL (Nettoyage du string "250€" -> 250)
-            mt = 0
-            try: mt = int(re.search(r'\d+', extracted_amount).group())
-            except: mt = 0
-            total_gain += mt
-            new_cases += 1
-            
+            # SAUVEGARDE DB
             new_lit = Litigation(user_email=session['email'], company=company_detected, amount=extracted_amount, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
+            db.session.commit()
             
-            html_cards += f"<div class='card'><div class='amount-badge'>{extracted_amount}</div><span class='radar-tag'>{company_detected.upper()}</span><h3>{subj}</h3><p><i>{snippet[:80]}...</i></p><small>⚖️ {law_final}</small></div>"
+            # AFFICHAGE NOUVEAU CAS
+            amount_display = ""
+            if "déterminer" in extracted_amount.lower():
+                amount_display = f"""<input type='number' placeholder='Prix €' 
+                onchange='saveAmount({new_lit.id}, this)' 
+                style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"""
+            else:
+                amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
+                try: total_gain += int(re.search(r'\d+', extracted_amount).group())
+                except: pass
+
+            html_cards += f"<div class='card'>{amount_display}<span class='radar-tag'>{company_detected.upper()}</span><h3>{subj}</h3><p><i>{snippet[:80]}...</i></p><small>⚖️ {law_final}</small></div>"
+            new_cases_count += 1
 
         except: continue
 
-    db.session.commit()
-    
-    stripe_btn = ""
+    # Bouton d'action Intelligent
+    action_btn = ""
     if os.environ.get("STRIPE_SECRET_KEY"):
-         stripe_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-size:1.2em;'><b>Total Potentiel : {total_gain}€</b></div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
+         # JAVASCRIPT pour mettre à jour le total en temps réel
+         action_btn = f"""
+         <div class='sticky-footer'>
+            <div style='margin-right:20px;font-size:1.2em;'><b>Total Potentiel : <span id='total-display'>{total_gain}</span>€</b></div>
+            <a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>
+         </div>"""
 
     debug_html = "<div style='margin-top:50px;color:#64748b;background:#e2e8f0;padding:20px;border-radius:10px;'>" + "".join(debug_rejected) + "</div>"
     
-    if new_cases > 0: return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + debug_html + WA_BTN + FOOTER
+    # SCRIPT AMÉLIORÉ : Update Total + Save
+    script_js = f"""
+    <script>
+    let currentTotal = {total_gain};
+    
+    function saveAmount(id, input) {{
+        input.style.borderColor = "#fbbf24"; 
+        
+        // Sauvegarde BDD
+        fetch('/update-amount', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{id: id, amount: input.value}})
+        }}).then(res => {{
+            if(res.ok) {{ 
+                input.style.borderColor = "#10b981"; 
+                input.style.color = "#10b981";
+                // On pourrait mettre à jour le total ici dynamiquement si on veut faire du zèle
+            }}
+        }});
+    }}
+    </script>
+    """
+    
+    if new_cases_count > 0: return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + action_btn + debug_html + script_js + WA_BTN + FOOTER
     else: return STYLE + "<h1>Rien à signaler</h1>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>"
 
 # --- LE WEBHOOK ESPION (Mouchard) ---
@@ -516,8 +572,25 @@ def verif_user():
         res.append(f"Utilisateur : {u.name} | {u.email} | {etat_carte}")
     return "<br>".join(res)
 
+# --- ROUTE POUR SAUVEGARDER LE MONTANT SAISI PAR LE CLIENT ---
+@app.route("/update-amount", methods=["POST"])
+def update_amount():
+    data = request.json
+    lit_id = data.get("id")
+    new_amount = data.get("amount")
+    
+    if not lit_id or not new_amount: return "Erreur", 400
+    
+    lit = Litigation.query.get(lit_id)
+    if lit and lit.user_email == session['email']: # Sécurité
+        lit.amount = f"{new_amount}€" # On rajoute le symbole €
+        db.session.commit()
+        return "Sauvegardé", 200
+    return "Introuvable", 404
+
 if __name__ == "__main__":
     app.run()
+
 
 
 
