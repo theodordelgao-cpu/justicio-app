@@ -313,17 +313,18 @@ def scan():
 @app.route("/setup-payment")
 def setup_payment():
     try:
-        # 1. On crée le client Stripe NOUS-MÊMES (pour forcer la création de l'ID)
+        # On crée le client
         customer = stripe.Customer.create(
             email=session.get('email'),
             name=session.get('name')
         )
         
-        # 2. On lance la session en lui donnant l'ID qu'on vient de créer
         session_stripe = stripe.checkout.Session.create(
-            customer=customer.id, # <--- C'est la clé magique qui manquait !
+            customer=customer.id,
             payment_method_types=['card'],
             mode='setup',
+            # 👇 C'EST LA LIGNE MAGIQUE POUR QUE LA BANQUE ACCEPTE LE PRÉLÈVEMENT FUTUR 👇
+            payment_method_options={'card': {'setup_future_usage': 'off_session'}},
             success_url=url_for('success_page', _external=True),
             cancel_url=url_for('index', _external=True)
         )
@@ -429,11 +430,10 @@ def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
 def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
-# --- LE CHASSEUR QUI TROUVE LA CARTE ---
+# --- LE CHASSEUR (VERSION LIVE & TEST COMPATIBLE) ---
 @app.route("/cron/check-refunds")
 def check_refunds():
     logs = ["<h3>🔍 DIAGNOSTIC FINAL</h3>"]
-    
     active_cases = Litigation.query.all()
     logs.append(f"👉 <b>ETAPE 1 :</b> Dossiers totaux : <b>{len(active_cases)}</b>")
     
@@ -447,7 +447,6 @@ def check_refunds():
         try:
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
-            
             company_domain = case.company.lower()
             query = f"label:INBOX {company_domain}" 
             results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
@@ -467,11 +466,9 @@ def check_refunds():
                 if not body_data and 'body' in payload:
                     data = payload['body'].get('data', '')
                     if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-                
                 final_content = body_data if body_data else f.get('snippet', '')
-                logs.append(f"📝 <b>Contenu :</b> <i>{final_content[:100]}...</i>")
+                logs.append(f"📝 <b>Contenu :</b> <i>{final_content[:50]}...</i>")
                 
-                # IA
                 client = OpenAI(api_key=OPENAI_API_KEY)
                 prompt = f"""Tu es un contrôleur financier. Voici un email de {case.company}. CONTENU : "{final_content}". EST-CE QUE LE REMBOURSEMENT EST VALIDÉ/EFFECTUÉ ? Réponds OUI ou NON."""
                 res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}])
@@ -481,17 +478,12 @@ def check_refunds():
                 if "OUI" in verdict:
                     if user.stripe_customer_id:
                         try:
-                            # --- CORRECTION ICI : ON RÉCUPÈRE LA CARTE (pm_...) ---
-                            payment_methods = stripe.PaymentMethod.list(
-                                customer=user.stripe_customer_id,
-                                type="card"
-                            )
-                            
+                            # Récupération carte
+                            payment_methods = stripe.PaymentMethod.list(customer=user.stripe_customer_id, type="card")
                             if payment_methods and len(payment_methods.data) > 0:
-                                carte_id = payment_methods.data[0].id # On prend la première carte trouvée
+                                carte_id = payment_methods.data[0].id
                                 logs.append(f"💳 Carte trouvée : {carte_id}")
-
-                                # Calcul montant
+                                
                                 mt_str = re.search(r'\d+', case.amount)
                                 amount_total = int(mt_str.group()) if mt_str else 0
                                 if amount_total == 0: amount_total = 100 
@@ -502,7 +494,8 @@ def check_refunds():
                                     amount=commission_cents, 
                                     currency='eur', 
                                     customer=user.stripe_customer_id, 
-                                    payment_method=carte_id, # <--- ON UTILISE L'ID DE LA CARTE MAINTENANT
+                                    payment_method=carte_id,
+                                    payment_method_types=['card'],
                                     off_session=True, 
                                     confirm=True, 
                                     description=f"Commission Justicio - Succès {case.company}"
@@ -511,10 +504,11 @@ def check_refunds():
                                 logs.append(f"✅ <b>JACKPOT :</b> {amount_total*0.3}€ prélevés !")
                                 service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
                                 break 
-                            else:
-                                logs.append("⚠️ Le client a un ID Stripe, mais aucune carte attachée.")
-                                
-                        except Exception as e: logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
+                            else: logs.append("⚠️ ID Client ok mais pas de carte trouvée.")
+                        except stripe.error.CardError as e:
+                            logs.append(f"❌ <b>CARTE REFUSÉE (Banque) :</b> {e.error.message}")
+                        except Exception as e:
+                            logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
                     else: logs.append("⚠️ Pas de Customer ID.")
         except Exception as e: logs.append(f"❌ Erreur technique : {str(e)}")
             
@@ -543,6 +537,7 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
