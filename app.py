@@ -200,6 +200,7 @@ def logout():
     session.clear()
     return redirect("/")
 
+# --- VERSION SCANNER RAYONS X (Lit tout : HTML & Texte) ---
 @app.route("/scan")
 def scan():
     if "credentials" not in session: return redirect("/login")
@@ -210,7 +211,6 @@ def scan():
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
-    # On garde la même requête
     query = (
         "label:INBOX "
         "(retard OR delay OR annulation OR cancelled OR remboursement OR refund OR "
@@ -231,59 +231,77 @@ def scan():
     
     total_gain, new_cases = 0, 0
     html_cards = ""
-    
-    # --- LE MOUCHARD DU SCAN ---
     debug_rejected = ["<h3>🗑️ Corbeille (Mails analysés mais rejetés)</h3>"]
     
     for m in msgs:
         try:
-            f = service.users().messages().get(userId='me', id=m['id']).execute()
+            # --- 1. LECTURE PUISSANTE (TEXTE + HTML) ---
+            f = service.users().messages().get(userId='me', id=m['id'], format='full').execute()
             snippet = f.get('snippet', '')
-            subj = next((h['value'] for h in f['payload'].get('headers', []) if h['name'].lower() == 'subject'), "Inconnu")
+            headers = f['payload'].get('headers', [])
+            subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
             
             payload = f.get('payload', {})
             body_data = ""
-            if 'parts' in payload:
-                for part in payload['parts']:
+            
+            # Fonction interne pour chercher le texte
+            def get_data_from_parts(parts):
+                text_content = ""
+                html_content = ""
+                for part in parts:
+                    if part.get('parts'): # Si c'est imbriqué
+                        res = get_data_from_parts(part['parts'])
+                        if res: return res
+                    
                     if part['mimeType'] == 'text/plain':
                         data = part['body'].get('data', '')
-                        if data:
-                            body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-            body_content = (body_data if body_data else snippet) + " " + subj
+                        if data: text_content += base64.urlsafe_b64decode(data).decode('utf-8')
+                    elif part['mimeType'] == 'text/html':
+                        data = part['body'].get('data', '')
+                        if data: html_content += base64.urlsafe_b64decode(data).decode('utf-8')
+                
+                return text_content if text_content else html_content
+
+            if 'parts' in payload:
+                body_data = get_data_from_parts(payload['parts'])
+            elif 'body' in payload and payload['body'].get('data'):
+                body_data = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
+
+            # Nettoyage HTML basique (si on a chopé du HTML)
+            clean_body = re.sub('<[^<]+?>', ' ', body_data) if body_data else snippet
+            full_content = (clean_body + " " + subj).lower() # On met tout en minuscule pour la recherche
             
-            ana = analyze_litigation(body_content, subj)
+            # --- 2. ANALYSE IA ---
+            ana = analyze_litigation(clean_body[:1000], subj)
             extracted_amount = ana[0]
             law_final = ana[1] if len(ana) > 1 else "Code Civil"
             
-            # --- DIAGNOSTIC ---
             if "REJET" in extracted_amount or "REJET" in law_final:
-                debug_rejected.append(f"<p>❌ <b>Rejeté par l'IA :</b> {subj} <br><small>Cause : {extracted_amount} | {law_final}</small></p>")
+                debug_rejected.append(f"<p>❌ <b>Rejeté par l'IA :</b> {subj} <br><small>Cause : {extracted_amount}</small></p>")
                 continue
 
             gain_final, company_key = "AUCUN", "Inconnu"
 
-            # 1. AVION
+            # --- 3. DÉTECTION MARQUE (DANS TOUT LE TEXTE) ---
             airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways"]
-            if any(air in subj.lower() for air in airlines):
+            if any(air in full_content for air in airlines):
                 gain_final = "250€"
                 for air in airlines:
-                    if air in subj.lower(): company_key = air
+                    if air in full_content: company_key = air
 
-            # 2. COMMERCE
             else:
                 targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty"]
                 for target in targets:
-                    if target in subj.lower() or target in body_content.lower():
+                    if target in full_content: # Recherche large
                         company_key = target
                         if any(char.isdigit() for char in extracted_amount):
                             gain_final = extracted_amount
                         if "AUCUN" in gain_final or "Déterminer" in gain_final:
-                            match = re.search(r'(\d+[.,]?\d*)\s?€', body_content)
-                            if match:
-                                gain_final = f"{match.group(1)}€"
-                            else:
-                                gain_final = "À déterminer"
+                            match = re.search(r'(\d+[.,]?\d*)\s?€', clean_body)
+                            if match: gain_final = f"{match.group(1)}€"
+                            else: gain_final = "À déterminer"
 
+            # --- 4. VALIDATION ---
             if company_key != "Inconnu" and "AUCUN" not in gain_final:
                 archive = Litigation.query.filter_by(user_email=session['email'], subject=subj).first()
                 if archive and archive.status in ["Envoyé", "Payé"]: 
@@ -291,24 +309,21 @@ def scan():
                     continue
                 
                 mt = 0
-                try:
-                    mt = int(re.search(r'\d+', gain_final).group())
+                try: mt = int(re.search(r'\d+', gain_final).group())
                 except: mt = 0
                 total_gain += mt
                 new_cases += 1
                 
-                if company_key in LEGAL_DIRECTORY:
-                    law_final = LEGAL_DIRECTORY[company_key]["loi"]
+                if company_key in LEGAL_DIRECTORY: law_final = LEGAL_DIRECTORY[company_key]["loi"]
                 
                 new_lit = Litigation(user_email=session['email'], company=company_key, amount=gain_final, law=law_final, subject=subj, status="Détecté")
                 db.session.add(new_lit)
-                
-                html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{snippet[:120]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
+                html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{clean_body[:100]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
             else:
-                debug_rejected.append(f"<p>⚠️ <b>Marque inconnue ou Pas de gain :</b> {subj} ({company_key})</p>")
+                debug_rejected.append(f"<p>⚠️ <b>Marque introuvable dans le corps :</b> {subj} (Lu: {len(clean_body)} chars)</p>")
 
         except Exception as e:
-            debug_rejected.append(f"<p>❌ Erreur lecture mail : {str(e)}</p>")
+            debug_rejected.append(f"<p>❌ Erreur lecture : {str(e)}</p>")
             continue
 
     db.session.commit()
@@ -323,6 +338,7 @@ def scan():
         return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + stripe_btn + debug_html + WA_BTN + FOOTER
     else: 
         return STYLE + "<h1>✅ Tout est propre</h1><p>Aucun litige détecté.</p>" + debug_html + "<a href='/' class='btn-logout'>Retour</a>" + FOOTER
+
 @app.route("/setup-payment")
 def setup_payment():
     try:
@@ -550,6 +566,7 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
