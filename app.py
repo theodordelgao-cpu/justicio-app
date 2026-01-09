@@ -200,14 +200,14 @@ def logout():
     session.clear()
     return redirect("/")
 
-# --- VERSION SCANNER RAYONS X (Lit tout : HTML & Texte) ---
+# --- SCANNER INTELLIGENT (Avec Synonymes & Déductions) ---
 @app.route("/scan")
 def scan():
     if "credentials" not in session: return redirect("/login")
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # Nettoyage visuel BDD
+    # Nettoyage
     Litigation.query.filter_by(user_email=session['email'], status="Détecté").delete()
     db.session.commit()
 
@@ -226,16 +226,26 @@ def scan():
     try:
         results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
         msgs = results.get('messages', [])
-    except Exception as e:
-        return f"Erreur Gmail API : {str(e)}"
+    except Exception as e: return f"Erreur Gmail API : {str(e)}"
     
     total_gain, new_cases = 0, 0
     html_cards = ""
     debug_rejected = ["<h3>🗑️ Corbeille (Mails analysés mais rejetés)</h3>"]
     
+    # --- CERVEAU DES SYNONYMES ---
+    # Si le robot ne trouve pas le nom exact, il cherche ces indices
+    SMART_ALIASES = {
+        "tgv": "sncf", "inoui": "sncf", "ouigo": "sncf", "train": "sncf",
+        "af ": "air france", "af1": "air france", "af2": "air france", "af3": "air france", # Codes vols
+        "zalando": "zalando", "amazon": "amazon", "prime": "amazon",
+        "easyjet": "easyjet", "ryanair": "ryanair", "uber": "uber",
+        "booking": "booking", "hotel": "booking", "hébergement": "booking",
+        "zara": "zara", "vêtement": "zalando" # Par défaut
+    }
+
     for m in msgs:
         try:
-            # --- 1. LECTURE PUISSANTE (TEXTE + HTML) ---
+            # LECTURE CONTENU
             f = service.users().messages().get(userId='me', id=m['id'], format='full').execute()
             snippet = f.get('snippet', '')
             headers = f['payload'].get('headers', [])
@@ -244,32 +254,23 @@ def scan():
             payload = f.get('payload', {})
             body_data = ""
             
-            # Fonction interne pour chercher le texte
             def get_data_from_parts(parts):
                 text_content = ""
-                html_content = ""
                 for part in parts:
-                    if part.get('parts'): # Si c'est imbriqué
+                    if part.get('parts'): 
                         res = get_data_from_parts(part['parts'])
                         if res: return res
-                    
                     if part['mimeType'] == 'text/plain':
                         data = part['body'].get('data', '')
                         if data: text_content += base64.urlsafe_b64decode(data).decode('utf-8')
-                    elif part['mimeType'] == 'text/html':
-                        data = part['body'].get('data', '')
-                        if data: html_content += base64.urlsafe_b64decode(data).decode('utf-8')
-                
-                return text_content if text_content else html_content
+                return text_content
 
-            if 'parts' in payload:
-                body_data = get_data_from_parts(payload['parts'])
+            if 'parts' in payload: body_data = get_data_from_parts(payload['parts'])
             elif 'body' in payload and payload['body'].get('data'):
                 body_data = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
 
-            # Nettoyage HTML basique (si on a chopé du HTML)
             clean_body = re.sub('<[^<]+?>', ' ', body_data) if body_data else snippet
-            full_content = (clean_body + " " + subj).lower() # On met tout en minuscule pour la recherche
+            full_content = (clean_body + " " + subj).lower() # TOUT EN MINUSCULE
             
             # --- 2. ANALYSE IA ---
             ana = analyze_litigation(clean_body[:1000], subj)
@@ -282,24 +283,36 @@ def scan():
 
             gain_final, company_key = "AUCUN", "Inconnu"
 
-            # --- 3. DÉTECTION MARQUE (DANS TOUT LE TEXTE) ---
+            # --- 3. DÉTECTION INTELLIGENTE (ALIAS) ---
+            # D'abord on cherche les vraies marques
             airlines = ["ryanair", "lufthansa", "air france", "easyjet", "klm", "volotea", "vueling", "transavia", "british airways"]
-            if any(air in full_content for air in airlines):
-                gain_final = "250€"
-                for air in airlines:
-                    if air in full_content: company_key = air
-
+            targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty"]
+            
+            all_brands = airlines + targets
+            
+            # Recherche Exacte
+            for brand in all_brands:
+                if brand in full_content:
+                    company_key = brand
+                    break
+            
+            # Recherche par Synonyme (Plan B)
+            if company_key == "Inconnu":
+                for alias, brand in SMART_ALIASES.items():
+                    if alias in full_content:
+                        company_key = brand
+                        break
+            
+            # Logique Prix (Avion vs Commerce)
+            if company_key in airlines:
+                 gain_final = "250€"
             else:
-                targets = ["sncf", "booking", "airbnb", "uber", "deliveroo", "zara", "amazon", "apple", "zalando", "shein", "asos", "fnac", "darty"]
-                for target in targets:
-                    if target in full_content: # Recherche large
-                        company_key = target
-                        if any(char.isdigit() for char in extracted_amount):
-                            gain_final = extracted_amount
-                        if "AUCUN" in gain_final or "Déterminer" in gain_final:
-                            match = re.search(r'(\d+[.,]?\d*)\s?€', clean_body)
-                            if match: gain_final = f"{match.group(1)}€"
-                            else: gain_final = "À déterminer"
+                 if any(char.isdigit() for char in extracted_amount):
+                     gain_final = extracted_amount
+                 if "AUCUN" in gain_final or "Déterminer" in gain_final:
+                     match = re.search(r'(\d+[.,]?\d*)\s?€', clean_body)
+                     if match: gain_final = f"{match.group(1)}€"
+                     else: gain_final = "À déterminer"
 
             # --- 4. VALIDATION ---
             if company_key != "Inconnu" and "AUCUN" not in gain_final:
@@ -320,7 +333,8 @@ def scan():
                 db.session.add(new_lit)
                 html_cards += f"<div class='card'><div class='amount-badge'>{gain_final}</div><span class='radar-tag'>{company_key.upper()}</span><h3 style='margin:10px 0; font-size:1.1rem'>{subj}</h3><p style='color:#64748b; font-size:0.9rem; background:#f1f5f9; padding:10px; border-radius:10px'><i>\"{clean_body[:100]}...\"</i></p><p><small>⚖️ {law_final}</small></p></div>"
             else:
-                debug_rejected.append(f"<p>⚠️ <b>Marque introuvable dans le corps :</b> {subj} (Lu: {len(clean_body)} chars)</p>")
+                # ICI ON AFFICHE CE QUE LE ROBOT A VRAIMENT LU POUR COMPRENDRE
+                debug_rejected.append(f"<p>⚠️ <b>Marque introuvable.</b><br>Sujet: {subj}<br>Marque cherchée dans : <i>{full_content[:100]}...</i></p>")
 
         except Exception as e:
             debug_rejected.append(f"<p>❌ Erreur lecture : {str(e)}</p>")
@@ -566,6 +580,7 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
