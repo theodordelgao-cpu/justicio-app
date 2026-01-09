@@ -152,20 +152,26 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # NOUVEAU PROMPT : On demande explicitement la MARQUE
+        # PROMPT "MODE AGRESSIF" (Devine ou invente, mais ne dis jamais "Inconnu")
         prompt = f"""
         Tu es un expert juridique. Analyse ce mail.
         Sujet: {subject}
         Contenu: {text[:800]}
 
-        Tâche : Identifie le MONTANT, la LOI, et la MARQUE (l'entreprise).
-        Si le nom de la marque n'est pas écrit, déduis-le (ex: "AF123" -> Air France, "TGV" -> SNCF).
+        Tâche : Identifie le MONTANT, la LOI, et la MARQUE.
 
-        RÈGLES :
-        1. Si Pub/Newsletter/Pas de litige -> Réponds "REJET | REJET | REJET".
-        2. Si LITIGE -> Réponds "MONTANT | LOI | MARQUE".
+        RÈGLES IMPÉRATIVES :
+        1. MARQUE : Tu DOIS trouver une marque. Regarde le sujet, le corps, les indices.
+           - Si tu vois "Colis" ou "Commande" et aucune marque -> Dis "AMAZON" (par défaut).
+           - Si tu vois "Retour" et aucune marque -> Dis "ZALANDO" (par défaut).
+           - Si tu vois "Train", "TGV", "Inoui" -> Dis "SNCF".
+           - Si tu vois "AF..." ou "Vol" -> Dis "AIR FRANCE".
+           - NE RÉPONDS JAMAIS "NON SPÉCIFIÉE". Devine la plus probable.
 
-        Exemple : 250€ | Règlement CE 261/2004 | Air France
+        2. MONTANT : Cherche un chiffre en euros. Si tu ne trouves RIEN, écris "À déterminer". N'écris JAMAIS le mot "MONTANT".
+
+        3. SORTIE : Si c'est une Pub/Newsletter -> "REJET | REJET | REJET".
+           Sinon -> "MONTANT | LOI | MARQUE"
         """
         
         res = client.chat.completions.create(
@@ -174,7 +180,6 @@ def analyze_litigation(text, subject):
             temperature=0 
         )
         parts = [d.strip() for d in res.choices[0].message.content.split("|")]
-        # On s'assure d'avoir 3 éléments
         if len(parts) < 3: return parts + ["Inconnu"] * (3 - len(parts))
         return parts
     except: return ["REJET", "Inconnu", "Inconnu"]
@@ -522,6 +527,7 @@ def verif_user():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
