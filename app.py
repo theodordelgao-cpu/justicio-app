@@ -152,37 +152,31 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
 def analyze_litigation(text, subject, sender):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # PROMPT "MODE COMPTABLE PRÉCIS"
+        # PROMPT "CHIRURGIEN" (Précision Absolue)
         prompt = f"""
-        Tu es un Expert en Réclamation.
+        Tu es un Expert Comptable rigoureux.
         
-        DONNÉES :
+        INPUT :
         - FROM : {sender}
         - SUJET : {subject}
         - CORPS : {text[:1500]}
 
-        --- 1. TRI (ON GARDE ?) ---
-        - Si "Virement effectué", "Remboursement validé" -> RÉPONDS : "REJET | PAYÉ | REJET"
-        - Si Pub, Promo, Newsletter -> RÉPONDS : "REJET | PUB | REJET"
+        RÈGLES STRICTES :
         
-        --- 2. IDENTIFICATION MARQUE ---
-        - Regarde l'email expéditeur (ex: "@sncf.fr", "@amazon.com").
-        - Si c'est un particulier (test), cherche "TGV", "Air France", "Zara" dans le texte.
-        - "Colis" sans marque -> "AMAZON".
+        1. LE PRIX (Le nerf de la guerre) :
+           - Tu dois CHERCHER un montant explicite en euros dans le texte (ex: "42.99€", "120€", "remboursement de 14€").
+           - ⚠️ INTERDICTION D'ESTIMER. Si tu ne vois pas de chiffre écrit noir sur blanc : Écris "À déterminer".
+           - Exception : Pour un VOL AVION (Air France, EasyJet, etc.) annulé/retardé, c'est la loi : mets "250€".
+        
+        2. LA MARQUE :
+           - Regarde l'adresse mail expéditeur.
+           - Si c'est "Colis" sans marque -> Mets "AMAZON".
+        
+        3. LE TRI :
+           - Si "Virement effectué" ou "Remboursement validé" -> "REJET | PAYÉ | REJET".
+           - Si Pub/Promo -> "REJET | PUB | REJET".
 
-        --- 3. LE MONTANT (RÈGLE D'OR) ---
-        - VOL AVION ANNULÉ/RETARDÉ (Air France, EasyJet) -> Écris "250€" (C'est la loi).
-        - POUR TOUT LE RESTE (Train, Colis, Amazon, Zara, Apple...) :
-          -> CHERCHE LE PRIX EXACT dans le texte (ex: "42.99€", "120€").
-          -> SI TU NE TROUVES PAS DE PRIX EXPLICITE : Écris IMPÉRATIVEMENT "À déterminer".
-          -> N'INVENTE JAMAIS DE FORFAIT (Pas de 50€, pas de 30€).
-
-        --- 4. LOI ---
-        - Avion -> Règl. CE 261/2004
-        - Train -> Règl. UE 2021/782
-        - E-commerce -> Directive UE 2011/83
-
-        RÉPONSE FINALE :
+        RÉPONSE :
         MONTANT | LOI | MARQUE
         """
         
@@ -588,8 +582,18 @@ def update_amount():
         return "Sauvegardé", 200
     return "Introuvable", 404
 
+@app.route("/force-reset")
+def force_reset():
+    try:
+        num_deleted = Litigation.query.delete()
+        db.session.commit()
+        return f"✅ Base VIDÉE ({num_deleted} dossiers supprimés). <br><a href='/scan'>Relancer un Scan PROPRE</a>"
+    except Exception as e:
+        return f"Erreur : {e}"
+        
 if __name__ == "__main__":
     app.run()
+
 
 
 
