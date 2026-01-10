@@ -49,7 +49,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 if STRIPE_SK:
     stripe.api_key = STRIPE_SK
 
-# --- RÉPERTOIRE JURIDIQUE ---
+# --- RÉPERTOIRE JURIDIQUE COMPLET ---
 LEGAL_DIRECTORY = {
     "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
     "apple": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
@@ -149,10 +149,10 @@ def send_stealth_litigation(creds, target_email, subject, body_text):
         return True
     except: return False
 
+# --- IA CERVEAU (MODE CHIRURGIEN - NE PAS MODIFIER) ---
 def analyze_litigation(text, subject, sender):
     client = OpenAI(api_key=OPENAI_API_KEY)
     try:
-        # PROMPT "CHIRURGIEN" (Précision Absolue)
         prompt = f"""
         Tu es un Expert Comptable rigoureux.
         
@@ -162,11 +162,10 @@ def analyze_litigation(text, subject, sender):
         - CORPS : {text[:1500]}
 
         RÈGLES STRICTES :
-        
         1. LE PRIX (Le nerf de la guerre) :
-           - Tu dois CHERCHER un montant explicite en euros dans le texte (ex: "42.99€", "120€", "remboursement de 14€").
-           - ⚠️ INTERDICTION D'ESTIMER. Si tu ne vois pas de chiffre écrit noir sur blanc : Écris "À déterminer".
-           - Exception : Pour un VOL AVION (Air France, EasyJet, etc.) annulé/retardé, c'est la loi : mets "250€".
+           - CHERCHE un montant explicite (ex: "42.99€", "120€").
+           - ⚠️ INTERDICTION D'ESTIMER. Si pas de chiffre écrit : Écris "À déterminer".
+           - EXCEPTION : Pour un VOL AVION (Air France, EasyJet...) annulé/retardé -> C'est la loi : mets "250€".
         
         2. LA MARQUE :
            - Regarde l'adresse mail expéditeur.
@@ -179,17 +178,12 @@ def analyze_litigation(text, subject, sender):
         RÉPONSE :
         MONTANT | LOI | MARQUE
         """
-        
-        res = client.chat.completions.create(
-            model="gpt-4o-mini", 
-            messages=[{"role":"user", "content": prompt}],
-            temperature=0 
-        )
+        res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}], temperature=0)
         parts = [d.strip() for d in res.choices[0].message.content.split("|")]
         if len(parts) < 3: return parts + ["Inconnu"] * (3 - len(parts))
         return parts
     except: return ["REJET", "Inconnu", "Inconnu"]
-        
+
 # --- STYLE CSS ---
 STYLE = f"""<style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
 body{{font-family:'Outfit',sans-serif;background:#f8fafc;padding:40px 20px;padding-bottom:120px;display:flex;flex-direction:column;align-items:center;color:#1e293b}}
@@ -209,26 +203,32 @@ WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" ta
 @app.route("/")
 def index():
     if "credentials" not in session: return redirect("/login")
-    return STYLE + f"<h1>⚖️ JUSTICIO</h1><p>Compte : <b>{session.get('name')}</b></p><a href='/scan' class='btn-success' style='background:#4f46e5'>🔍 ANALYSER MES LITIGES</a><br><a href='/logout' class='btn-logout'>Se déconnecter</a>" + WA_BTN + FOOTER
+    active_count = Litigation.query.filter_by(user_email=session['email']).count()
+    badge = f"<span style='background:red; color:white; padding:2px 8px; border-radius:50px; font-size:0.8rem; vertical-align:top;'>{active_count}</span>" if active_count > 0 else ""
+
+    return STYLE + f"""
+    <div style='text-align:center; margin-top:50px;'>
+        <div style='font-size:3rem; margin-bottom:10px;'>⚖️</div>
+        <h1 style='margin-bottom:5px;'>JUSTICIO</h1>
+        <p style='color:#64748b; margin-bottom:40px;'>Bienvenue, <b>{session.get('name')}</b></p>
+        <a href='/scan' class='btn-success' style='display:block; max-width:300px; margin:0 auto 20px auto; background:#4f46e5; box-shadow:0 10px 20px rgba(79, 70, 229, 0.3);'>🔍 LANCER UN SCAN</a>
+        <a href='/dashboard' style='display:block; max-width:300px; margin:0 auto; padding:15px; background:white; color:#334155; text-decoration:none; border-radius:50px; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.05);'>📂 SUIVRE MES LITIGES {badge}</a>
+        <br><br><a href='/logout' class='btn-logout'>Se déconnecter</a>
+    </div>""" + WA_BTN + FOOTER
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/")
 
-# --- SCANNER INTELLIGENT (Avec Synonymes & Déductions) ---
+# --- SCANNER INTELLIGENT (Avec Mémoire + Input) ---
 @app.route("/scan")
 def scan():
     if "credentials" not in session: return redirect("/login")
     creds = Credentials(**session["credentials"])
     service = build('gmail', 'v1', credentials=creds)
     
-    # 🛑 ON ARRÊTE DE TOUT SUPPRIMER !
-    # On garde l'historique pour ne pas perdre les montants saisis par le client.
-    
-    # Requête Gmail
     query = "label:INBOX (litige OR remboursement OR refund OR annulation OR retard OR delay OR colis OR commande OR livraison OR sncf OR airfrance OR easyjet OR ryanair OR amazon OR zalando OR zara OR booking OR uber) -category:promotions -category:social"
-    
     try:
         results = service.users().messages().list(userId='me', q=query, maxResults=40).execute()
         msgs = results.get('messages', [])
@@ -239,197 +239,118 @@ def scan():
     html_cards = ""
     debug_rejected = ["<h3>🗑️ Rapport de Rejet</h3>"]
     
-    # On récupère tous les dossiers existants d'un coup pour éviter les requêtes lentes
+    # CACHE INTELLIGENT (On récupère tout ce qu'on sait déjà)
     existing_lits = {l.subject: l for l in Litigation.query.filter_by(user_email=session['email']).all()}
 
     for m in msgs:
         try:
-            # 1. RECUPERATION LIGHT (Juste les entêtes d'abord)
             f = service.users().messages().get(userId='me', id=m['id'], format='full').execute()
             headers = f['payload'].get('headers', [])
-            subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sujet Inconnu")
+            subj = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Inconnu")
+            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
+            snippet = f.get('snippet', '')
             
-            # 2. EST-CE QU'ON CONNAIT DÉJÀ CE DOSSIER ?
+            # --- DOSSIER EXISTANT (PAS D'APPEL IA) ---
             if subj in existing_lits:
                 dossier = existing_lits[subj]
-                
-                # Si c'est déjà payé/envoyé, on ignore
                 if dossier.status in ["Envoyé", "Payé"]: continue
                 
-                # Si le dossier est "Détecté", on l'affiche SANS rappeler l'IA (Gratuit !)
-                amount_val = dossier.amount
-                company = dossier.company
-                law = dossier.law
-                
-                # Gestion de l'affichage (Input ou Badge)
-                amount_display = ""
-                
-                # Si l'utilisateur a déjà mis un prix (ex: "120€"), on l'affiche en vert
-                if "€" in amount_val and "déterminer" not in amount_val:
-                    amount_display = f"<div class='amount-badge'>{amount_val}</div>"
-                    try: total_gain += int(re.search(r'\d+', amount_val).group())
+                # Gestion affichage : Input ou Badge
+                if "€" in dossier.amount and "déterminer" not in dossier.amount:
+                    amount_display = f"<div class='amount-badge'>{dossier.amount}</div>"
+                    try: total_gain += int(re.search(r'\d+', dossier.amount).group())
                     except: pass
                 else:
-                    # Sinon, on remet l'input
-                    amount_display = f"""<input type='number' placeholder='Prix €' 
-                    onchange='saveAmount({dossier.id}, this)' 
-                    style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"""
+                    # On nettoie pour afficher la valeur dans l'input
+                    val = dossier.amount.replace("€", "").replace("À déterminer", "").strip()
+                    amount_display = f"<input type='number' value='{val}' placeholder='Prix €' onchange='saveAmount({dossier.id}, this)' style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"
                 
-                html_cards += f"<div class='card'>{amount_display}<span class='radar-tag'>{company.upper()}</span><h3>{subj}</h3><p><i>Dossier existant...</i></p><small>⚖️ {law}</small></div>"
+                html_cards += f"<div class='card'>{amount_display}<span class='radar-tag'>{dossier.company.upper()}</span><h3>{subj}</h3><p><i>Dossier existant...</i></p><small>⚖️ {dossier.law}</small></div>"
                 new_cases_count += 1
-                continue # ON PASSE AU SUIVANT (Pas d'IA)
+                continue
 
-            # --- SI ON EST ICI, C'EST UN NOUVEAU MAIL -> ON LANCE L'IA ---
-            
-            snippet = f.get('snippet', '')
-            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
-            
+            # --- NOUVEAU DOSSIER -> IA ---
             payload = f.get('payload', {})
-            def get_text_content(p):
-                text = ""
+            def get_text(p):
+                t = ""
                 if 'parts' in p:
-                    for part in p['parts']: text += get_text_content(part)
+                    for part in p['parts']: t += get_text(part)
                 elif p.get('mimeType') == 'text/plain' or p.get('mimeType') == 'text/html':
-                    data = p['body'].get('data', '')
-                    if data: text += base64.urlsafe_b64decode(data).decode('utf-8')
-                return text
-
-            body_raw = get_text_content(payload)
+                    d = p['body'].get('data', '')
+                    if d: t += base64.urlsafe_b64decode(d).decode('utf-8')
+                return t
+            body_raw = get_text(payload)
             clean_body = re.sub('<[^<]+?>', ' ', body_raw) if body_raw else snippet
             clean_body = re.sub(r'\s+', ' ', clean_body).strip()
 
-            # IA ANALYSE
             ana = analyze_litigation(clean_body, subj, sender)
-            extracted_amount = ana[0]
-            law_final = ana[1]
-            company_detected = ana[2]
+            extracted_amount, law_final, company_detected = ana[0], ana[1], ana[2]
 
             if "REJET" in extracted_amount or "REJET" in company_detected:
-                debug_rejected.append(f"<p>❌ <b>{subj}</b><br><small>Motif : {extracted_amount}</small></p>")
+                debug_rejected.append(f"<p>❌ {subj} -> {extracted_amount}</p>")
                 continue
             
-            # SAUVEGARDE DB
             new_lit = Litigation(user_email=session['email'], company=company_detected, amount=extracted_amount, law=law_final, subject=subj, status="Détecté")
             db.session.add(new_lit)
             db.session.commit()
             
-            # AFFICHAGE NOUVEAU CAS
             amount_display = ""
             if "déterminer" in extracted_amount.lower():
-                amount_display = f"""<input type='number' placeholder='Prix €' 
-                onchange='saveAmount({new_lit.id}, this)' 
-                style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"""
+                 amount_display = f"<input type='number' placeholder='Prix €' onchange='saveAmount({new_lit.id}, this)' style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"
             else:
-                amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
-                try: total_gain += int(re.search(r'\d+', extracted_amount).group())
-                except: pass
+                 amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
+                 try: total_gain += int(re.search(r'\d+', extracted_amount).group())
+                 except: pass
 
             html_cards += f"<div class='card'>{amount_display}<span class='radar-tag'>{company_detected.upper()}</span><h3>{subj}</h3><p><i>{snippet[:80]}...</i></p><small>⚖️ {law_final}</small></div>"
             new_cases_count += 1
-
         except: continue
 
-    # Bouton d'action Intelligent
     action_btn = ""
     if os.environ.get("STRIPE_SECRET_KEY"):
-         # JAVASCRIPT pour mettre à jour le total en temps réel
-         action_btn = f"""
-         <div class='sticky-footer'>
-            <div style='margin-right:20px;font-size:1.2em;'><b>Total Potentiel : <span id='total-display'>{total_gain}</span>€</b></div>
-            <a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>
-         </div>"""
+         action_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-size:1.2em;'><b>Total Potentiel : <span id='total-display'>{total_gain}</span>€</b></div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
 
+    script_js = """<script>function saveAmount(id, input) { input.style.borderColor = "#fbbf24"; fetch('/update-amount', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: id, amount: input.value})}).then(res => { if(res.ok) { input.style.borderColor = "#10b981"; input.style.color = "#10b981"; }}); }</script>"""
     debug_html = "<div style='margin-top:50px;color:#64748b;background:#e2e8f0;padding:20px;border-radius:10px;'>" + "".join(debug_rejected) + "</div>"
-    
-    # SCRIPT AMÉLIORÉ : Update Total + Save
-    script_js = f"""
-    <script>
-    let currentTotal = {total_gain};
-    
-    function saveAmount(id, input) {{
-        input.style.borderColor = "#fbbf24"; 
-        
-        // Sauvegarde BDD
-        fetch('/update-amount', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{id: id, amount: input.value}})
-        }}).then(res => {{
-            if(res.ok) {{ 
-                input.style.borderColor = "#10b981"; 
-                input.style.color = "#10b981";
-                // On pourrait mettre à jour le total ici dynamiquement si on veut faire du zèle
-            }}
-        }});
-    }}
-    </script>
-    """
-    
+
     if new_cases_count > 0: return STYLE + "<h1>Résultat du Scan</h1>" + html_cards + action_btn + debug_html + script_js + WA_BTN + FOOTER
     else: return STYLE + "<h1>Rien à signaler</h1>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>"
 
-# --- LE WEBHOOK ESPION (Mouchard) ---
-@app.route("/webhook", methods=["POST"])
-def stripe_webhook():
-    global DEBUG_LOGS
-    if len(DEBUG_LOGS) > 20: DEBUG_LOGS.pop(0)
-    
-    DEBUG_LOGS.append(f"🔔 WEBHOOK REÇU à {datetime.utcnow()} ! Tentative de lecture...")
-    
-    payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
-    
+# --- ROUTE UPDATE AMOUNT (AJAX) ---
+@app.route("/update-amount", methods=["POST"])
+def update_amount():
+    data = request.json
+    lit = Litigation.query.get(data.get("id"))
+    if lit and lit.user_email == session['email']:
+        lit.amount = f"{data.get('amount')}€"
+        db.session.commit()
+        return "OK", 200
+    return "Error", 400
+
+# --- DASHBOARD CLIENT (NOUVEAU) ---
+@app.route("/dashboard")
+def dashboard():
+    if "credentials" not in session: return redirect("/login")
+    cases = Litigation.query.filter_by(user_email=session['email']).order_by(Litigation.id.desc()).all()
+    html_rows = ""
+    for case in cases:
+        color, status_text = "#3b82f6", "En attente action"
+        if case.status in ["Envoyé", "En cours"]: color, status_text = "#f59e0b", "Traitement en cours..."
+        elif case.status == "Payé": color, status_text = "#10b981", "✅ VIREMENT REÇU"
+        html_rows += f"<div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; border-left:5px solid {color}; box-shadow:0 2px 5px rgba(0,0,0,0.05); display:flex; justify-content:space-between; align-items:center;'><div><div style='font-weight:bold; font-size:1.1rem; color:#1e293b'>{case.company.upper()}</div><div style='font-size:0.9rem; color:#64748b'>{case.subject[:40]}...</div><div style='font-size:0.8rem; color:#94a3b8; margin-top:5px;'>⚖️ {case.law}</div></div><div style='text-align:right;'><div style='font-size:1.2rem; font-weight:bold; color:{color}'>{case.amount}</div><div style='font-size:0.8rem; background:{color}20; color:{color}; padding:3px 8px; border-radius:5px; display:inline-block; margin-top:5px;'>{status_text}</div></div></div>"
+    if not html_rows: html_rows = "<p style='text-align:center; color:#94a3b8'>Aucun dossier.</p>"
+    return STYLE + f"<div style='max-width:600px; margin:0 auto;'><h1>📂 Mes Dossiers</h1><div style='margin-bottom:30px;'>{html_rows}</div><div class='sticky-footer'><a href='/scan' class='btn-success' style='background:#4f46e5; margin-right:10px;'>🔍 SCANNER</a><a href='/' class='btn-logout'>Retour Accueil</a></div></div>" + FOOTER
+
+# --- RESET (UN SEUL) ---
+@app.route("/force-reset")
+def force_reset():
     try:
-        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-        DEBUG_LOGS.append(f"👉 Type d'événement : {event['type']}")
-        
-        if event["type"] == "setup_intent.succeeded":
-            intent = event["data"]["object"]
-            customer_id = intent.get("customer")
-            DEBUG_LOGS.append(f"💳 Customer ID reçu : {customer_id}")
-            
-            litigations = Litigation.query.filter_by(status="Détecté").all()
-            DEBUG_LOGS.append(f"📂 Dossiers 'Détecté' trouvés : {len(litigations)}")
-            
-            sauvegarde_ok = False
-            
-            for lit in litigations:
-                user = User.query.filter_by(email=lit.user_email).first()
-                if user:
-                    # 1. Sauvegarde de la carte
-                    user.stripe_customer_id = customer_id
-                    db.session.commit()
-                    DEBUG_LOGS.append(f"✅ CARTE SAUVEGARDÉE pour {user.email}")
-                    sauvegarde_ok = True
-                    
-                    # 2. Envoi du mail
-                    if user.refresh_token:
-                        creds = get_refreshed_credentials(user.refresh_token)
-                        target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
-                        
-                        corps = f"""MISE EN DEMEURE FORMELLE\nObjet : Réclamation concernant le dossier : {lit.subject}\n\nÀ l'attention du Service Juridique de {lit.company.upper()},\n\nJe soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :\n- Nature du litige : {lit.subject}\n- Fondement juridique : {lit.law}\n- Montant réclamé : {lit.amount}\n\nConformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement sous un délai de 8 jours ouvrés.\n\nCordialement,\n{user.name}"""
-                        
-                        success = send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps)
-                        lit.status = "Envoyé" if success else "Erreur"
-                        DEBUG_LOGS.append(f"📧 Mail envoyé pour {lit.company} : {success}")
-                        
-                        if success:
-                            send_telegram_notif(f"💰 **JUSTICIO EMPREINTE PRIS**\nClient : {user.name}\nLitige : {lit.amount}")
-            
-            if not sauvegarde_ok:
-                DEBUG_LOGS.append("⚠️ ALERTE : ID Stripe reçu mais aucun User/Dossier trouvé pour l'associer.")
+        num_deleted = Litigation.query.delete()
+        db.session.commit()
+        return f"✅ Base VIDÉE ({num_deleted} dossiers supprimés). <br><a href='/scan'>Relancer un Scan PROPRE</a>"
+    except Exception as e: return f"Erreur : {e}"
 
-    except Exception as e:
-        DEBUG_LOGS.append(f"❌ ERREUR WEBHOOK : {str(e)}")
-        return "Error", 400
-        
-    return "OK", 200
-
-# --- ROUTE POUR LIRE LE MOUCHARD ---
-@app.route("/debug-logs")
-def show_debug_logs():
-    return "<h1>🕵️ Journal du Webhook</h1>" + "<br><br>".join(reversed(DEBUG_LOGS))
-
-# LOGIN / LOGOUT
+# --- LOGIN ---
 @app.route("/login")
 def login():
     flow = Flow.from_client_config({"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}, scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.modify", "openid"], redirect_uri=url_for('callback', _external=True).replace("http://", "https://"))
@@ -454,6 +375,62 @@ def callback():
     session["name"], session["email"] = info.get('name'), info.get('email')
     return redirect("/")
 
+@app.route("/setup-payment")
+def setup_payment():
+    try:
+        session_stripe = stripe.checkout.Session.create(
+            customer=stripe.Customer.create(email=session.get('email'), name=session.get('name')).id,
+            payment_method_types=['card'], mode='setup',
+            payment_method_options={'card': {'setup_future_usage': 'off_session'}},
+            success_url=url_for('success_page', _external=True), cancel_url=url_for('index', _external=True)
+        )
+        return redirect(session_stripe.url, code=303)
+    except Exception as e: return f"Erreur Stripe: {e}"
+
+@app.route("/success")
+def success_page():
+    count = Litigation.query.filter_by(user_email=session['email'], status="Détecté").count()
+    return STYLE + f"<div style='text-align:center;'><h1>Succès !</h1><div class='card'><h3>🚀 {count} Procédures prêtes</h3></div><a href='/dashboard' class='btn-success'>VOIR MES DOSSIERS</a></div>"
+
+# --- WEBHOOK (Le Mouchard + Action) ---
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+    global DEBUG_LOGS
+    if len(DEBUG_LOGS) > 20: DEBUG_LOGS.pop(0)
+    DEBUG_LOGS.append(f"🔔 WEBHOOK REÇU à {datetime.utcnow()}")
+    payload, sig = request.get_data(), request.headers.get("Stripe-Signature")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        if event["type"] == "setup_intent.succeeded":
+            intent = event["data"]["object"]
+            customer_id = intent.get("customer")
+            litigations = Litigation.query.filter_by(status="Détecté").all()
+            
+            # On associe la carte à TOUS les dossiers en attente
+            sauvegarde_ok = False
+            for lit in litigations:
+                user = User.query.filter_by(email=lit.user_email).first()
+                if user:
+                    user.stripe_customer_id = customer_id
+                    db.session.commit()
+                    sauvegarde_ok = True
+                    # Envoi Mail Furtif
+                    if user.refresh_token:
+                        creds = get_refreshed_credentials(user.refresh_token)
+                        target_email = LEGAL_DIRECTORY.get(lit.company.lower(), {}).get("email", "legal@compagnie.com")
+                        corps = f"""MISE EN DEMEURE FORMELLE\nObjet : Réclamation concernant le dossier : {lit.subject}\n\nÀ l'attention du Service Juridique de {lit.company.upper()},\n\nJe soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :\n- Nature du litige : {lit.subject}\n- Fondement juridique : {lit.law}\n- Montant réclamé : {lit.amount}\n\nConformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement sous un délai de 8 jours ouvrés.\n\nCordialement,\n{user.name}"""
+                        
+                        if send_stealth_litigation(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps):
+                            lit.status = "Envoyé"
+                            send_telegram_notif(f"💰 **JUSTICIO :** Dossier {lit.amount} envoyé !")
+            
+            db.session.commit()
+    except Exception as e: DEBUG_LOGS.append(f"Erreur Webhook: {e}")
+    return "OK", 200
+
+@app.route("/debug-logs")
+def show_debug_logs(): return "<h1>🕵️ Logs</h1>" + "<br>".join(reversed(DEBUG_LOGS))
+
 @app.route("/cgu")
 def cgu(): return STYLE + LEGAL_TEXTS["CGU"] + FOOTER
 @app.route("/confidentialite")
@@ -461,101 +438,60 @@ def confidentialite(): return STYLE + LEGAL_TEXTS["CONFIDENTIALITE"] + FOOTER
 @app.route("/mentions-legales")
 def mentions_legales(): return STYLE + LEGAL_TEXTS["MENTIONS"] + FOOTER
 
-# --- LE CHASSEUR (VERSION LIVE & TEST COMPATIBLE) ---
+# --- CHASSEUR (CRON JOB) ---
 @app.route("/cron/check-refunds")
 def check_refunds():
-    logs = ["<h3>🔍 DIAGNOSTIC FINAL</h3>"]
+    logs = ["<h3>🔍 CHASSEUR ACTIF</h3>"]
     active_cases = Litigation.query.all()
-    logs.append(f"👉 <b>ETAPE 1 :</b> Dossiers totaux : <b>{len(active_cases)}</b>")
-    
-    if not active_cases: return "❌ Base de données vide."
     
     for case in active_cases:
-        logs.append(f"<hr>📂 <b>Dossier : {case.company}</b>")
-        user = User.query.filter_by(email=case.user_email).first()
-        if not user or not user.refresh_token: continue
-        
-        try:
-            creds = get_refreshed_credentials(user.refresh_token)
-            service = build('gmail', 'v1', credentials=creds)
-            company_domain = case.company.lower()
-            query = f"label:INBOX {company_domain}" 
-            results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
-            messages = results.get('messages', [])
-            logs.append(f"📧 Mails '{company_domain}' trouvés : <b>{len(messages)}</b>")
-
-            for msg in messages:
-                # Lecture
-                f = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
-                payload = f.get('payload', {})
-                body_data = ""
-                if 'parts' in payload:
-                    for part in payload['parts']:
-                        if part['mimeType'] == 'text/plain':
-                            data = part['body'].get('data', '')
-                            if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-                if not body_data and 'body' in payload:
-                    data = payload['body'].get('data', '')
-                    if data: body_data = base64.urlsafe_b64decode(data).decode('utf-8')
-                final_content = body_data if body_data else f.get('snippet', '')
-                logs.append(f"📝 <b>Contenu :</b> <i>{final_content[:50]}...</i>")
-                
-                client = OpenAI(api_key=OPENAI_API_KEY)
-                prompt = f"""Tu es un contrôleur financier. Voici un email de {case.company}. CONTENU : "{final_content}". EST-CE QUE LE REMBOURSEMENT EST VALIDÉ/EFFECTUÉ ? Réponds OUI ou NON."""
-                res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}])
-                verdict = res.choices[0].message.content.strip()
-                logs.append(f"🤖 <b>VERDICT IA :</b> {verdict}")
-                
-                if "OUI" in verdict:
-                    if user.stripe_customer_id:
-                        try:
-                            # Récupération carte
-                            payment_methods = stripe.PaymentMethod.list(customer=user.stripe_customer_id, type="card")
-                            if payment_methods and len(payment_methods.data) > 0:
-                                carte_id = payment_methods.data[0].id
-                                logs.append(f"💳 Carte trouvée : {carte_id}")
-                                
-                                mt_str = re.search(r'\d+', case.amount)
-                                amount_total = int(mt_str.group()) if mt_str else 0
-                                if amount_total == 0: amount_total = 100 
-                                commission_cents = int((amount_total * 0.30) * 100)
-                                
-                                # Prélèvement
-                                stripe.PaymentIntent.create(
-                                    amount=commission_cents, 
-                                    currency='eur', 
-                                    customer=user.stripe_customer_id, 
-                                    payment_method=carte_id,
-                                    payment_method_types=['card'],
-                                    off_session=True, 
-                                    confirm=True, 
-                                    description=f"Commission Justicio - Succès {case.company}"
-                                )
-                                case.status = "Payé"
-                                logs.append(f"✅ <b>JACKPOT :</b> {amount_total*0.3}€ prélevés !")
-                                service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
-                                break 
-                            else: logs.append("⚠️ ID Client ok mais pas de carte trouvée.")
-                        except stripe.error.CardError as e:
-                            logs.append(f"❌ <b>CARTE REFUSÉE (Banque) :</b> {e.error.message}")
-                        except Exception as e:
-                            logs.append(f"❌ <b>ERREUR STRIPE :</b> {str(e)}")
-                    else: logs.append("⚠️ Pas de Customer ID.")
-        except Exception as e: logs.append(f"❌ Erreur technique : {str(e)}")
+        # On ne vérifie que les dossiers envoyés (ou en cours)
+        if case.status in ["Envoyé", "En cours"]:
+            logs.append(f"<hr>📂 <b>{case.company}</b>")
+            user = User.query.filter_by(email=case.user_email).first()
+            if not user or not user.refresh_token: continue
             
+            try:
+                creds = get_refreshed_credentials(user.refresh_token)
+                service = build('gmail', 'v1', credentials=creds)
+                query = f"label:INBOX \"{case.company}\"" 
+                results = service.users().messages().list(userId='me', q=query, maxResults=5).execute()
+                messages = results.get('messages', [])
+                
+                for msg in messages:
+                    f = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+                    snippet = f.get('snippet', '')
+                    
+                    # IA VERDICT
+                    client = OpenAI(api_key=OPENAI_API_KEY)
+                    prompt = f"""Tu es contrôleur financier. Mail de {case.company} : "{snippet}". Est-ce que le remboursement est FAIT/VIRÉ ? Réponds OUI ou NON."""
+                    res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user", "content": prompt}])
+                    verdict = res.choices[0].message.content.strip()
+                    logs.append(f"🤖 IA : {verdict}")
+                    
+                    if "OUI" in verdict and user.stripe_customer_id:
+                        # LE PRÉLÈVEMENT MAGIQUE
+                        payment_methods = stripe.PaymentMethod.list(customer=user.stripe_customer_id, type="card")
+                        if payment_methods and len(payment_methods.data) > 0:
+                            mt_str = re.search(r'\d+', case.amount)
+                            amount = int(mt_str.group()) if mt_str else 100
+                            
+                            stripe.PaymentIntent.create(
+                                amount=int((amount*0.30)*100), currency='eur',
+                                customer=user.stripe_customer_id,
+                                payment_method=payment_methods.data[0].id,
+                                payment_method_types=['card'],
+                                off_session=True, confirm=True,
+                                description=f"Com Justicio - {case.company}"
+                            )
+                            case.status = "Payé"
+                            logs.append(f"✅ <b>JACKPOT : {amount*0.3}€ PRÉLEVÉS !</b>")
+                            # Archive mail pour ne plus le traiter
+                            service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['INBOX']}).execute()
+                            break
+            except Exception as e: logs.append(f"❌ Erreur : {e}")
     db.session.commit()
     return "<br>".join(logs)
-
-# --- LE MARTEAU (RESET FORCE) ---
-@app.route("/force-reset")
-def force_reset():
-    lit = Litigation.query.first()
-    if lit:
-        nom = lit.company
-        lit.status = "Détecté"
-        db.session.commit()
-        return f"✅ Dossier '<b>{nom}</b>' remis à l'état 'Détecté'.<br><br>👉 Tu peux retourner sur l'accueil et remettre ta carte."
-    return "❌ La base de données est vide."
 
 @app.route("/verif-user")
 def verif_user():
@@ -566,43 +502,5 @@ def verif_user():
         res.append(f"Utilisateur : {u.name} | {u.email} | {etat_carte}")
     return "<br>".join(res)
 
-# --- ROUTE POUR SAUVEGARDER LE MONTANT SAISI PAR LE CLIENT ---
-@app.route("/update-amount", methods=["POST"])
-def update_amount():
-    data = request.json
-    lit_id = data.get("id")
-    new_amount = data.get("amount")
-    
-    if not lit_id or not new_amount: return "Erreur", 400
-    
-    lit = Litigation.query.get(lit_id)
-    if lit and lit.user_email == session['email']: # Sécurité
-        lit.amount = f"{new_amount}€" # On rajoute le symbole €
-        db.session.commit()
-        return "Sauvegardé", 200
-    return "Introuvable", 404
-
-@app.route("/force-reset")
-def force_reset():
-    try:
-        num_deleted = Litigation.query.delete()
-        db.session.commit()
-        return f"✅ Base VIDÉE ({num_deleted} dossiers supprimés). <br><a href='/scan'>Relancer un Scan PROPRE</a>"
-    except Exception as e:
-        return f"Erreur : {e}"
-        
 if __name__ == "__main__":
     app.run()
-
-
-
-
-
-
-
-
-
-
-
-
-
