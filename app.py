@@ -49,13 +49,12 @@ BLACKLIST_SENDERS = [
 BLACKLIST_SUBJECTS = [
     "crédit", "coupon", "offer", "offre", "promo", "solde", "félicitations",
     "gagné", "cadeau", "newsletter", "sélectionné", "mise à jour", "security",
-    "connexion", "facture", "invoice", "bienvenue", "welcome", "confirmation d'inscription",
+    "connexion", "bienvenue", "welcome", "confirmation d'inscription",
     "verify your", "vérifiez votre", "activate", "activer"
 ]
 
 BLACKLIST_KEYWORDS = [
-    "unsubscribe", "se désabonner", "cliquez ici", "click here", 
-    "téléchargez", "download", "10% off", "réduction"
+    "unsubscribe", "se désabonner", "téléchargez", "download", "10% off", "réduction"
 ]
 
 # ========================================
