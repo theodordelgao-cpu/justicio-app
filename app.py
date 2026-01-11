@@ -1284,6 +1284,31 @@ def mentions_legales():
 # DEBUG
 # ========================================
 
+@app.route("/reset-stripe")
+def reset_stripe():
+    """Réinitialise le customer Stripe de l'utilisateur connecté"""
+    if "email" not in session:
+        return redirect("/login")
+    
+    user = User.query.filter_by(email=session['email']).first()
+    if user:
+        old_id = user.stripe_customer_id
+        user.stripe_customer_id = None
+        db.session.commit()
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>✅ Stripe Réinitialisé</h1>
+            <p>Ancien Customer ID : <code>{old_id}</code></p>
+            <p>Un nouveau sera créé lors du prochain paiement.</p>
+            <br>
+            <a href='/scan' class='btn-success'>Relancer le Scan</a>
+            <br><br>
+            <a href='/' class='btn-logout'>Retour</a>
+        </div>
+        """ + FOOTER
+    
+    return "Utilisateur non trouvé"
+
 @app.route("/debug-logs")
 def show_debug_logs():
     """Affiche les logs de debug"""
