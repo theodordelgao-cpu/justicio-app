@@ -1162,8 +1162,7 @@ Cordialement,
             <p>Votre carte est enregistrée. Les réclamations ont été envoyées aux entreprises concernées.</p>
             <p style='color:#10b981; font-weight:bold;'>Vous recevrez une copie dans vos emails envoyés.</p>
             <p style='color:#64748b; font-size:0.9rem; margin-top:15px;'>
-                💡 Le système scanne automatiquement votre boîte mail pour détecter les remboursements.
-                <br>Une commission de 30% sera prélevée uniquement en cas de succès.
+                💡 Notre système surveille automatiquement votre boîte mail et vous notifiera dès qu'un remboursement sera détecté.
             </p>
         </div>
         {error_html}
