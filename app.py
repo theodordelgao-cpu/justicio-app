@@ -261,12 +261,13 @@ INPUT :
 RÈGLES STRICTES :
 
 1. MONTANT (Le nerf de la guerre) :
-   - Cherche un montant EXPLICITE (ex: "42.99€", "120 EUR", "50 dollars")
+   - Cherche un montant EXPLICITE EN EUROS (ex: "42.99€", "120 EUR", "50 euros")
    - ⚠️ INTERDICTION D'ESTIMER. Si aucun chiffre visible : Écris "À déterminer"
+   - ⚠️ INTERDICTION DE RENVOYER DES POURCENTAGES (jamais de "25% du billet")
    - EXCEPTION VOL ANNULÉ/RETARDÉ : Si compagnie aérienne (Air France, Ryanair, EasyJet, Lufthansa, KLM, British Airways...) 
      ET (annulation OR retard > 3h) → Mets automatiquement "250€"
-   - EXCEPTION TRAIN RETARDÉ : Si SNCF/Eurostar/Ouigo ET retard > 60min → Mets "25% du billet" 
-     (sauf si montant précis visible)
+   - EXCEPTION TRAIN RETARDÉ : Si SNCF/Eurostar/Ouigo ET retard mentionné → Mets "À déterminer"
+     (L'utilisateur devra calculer lui-même le pourcentage)
 
 2. MARQUE :
    - Extrais depuis l'adresse email (@amazon.fr → AMAZON)
@@ -293,6 +294,7 @@ MONTANT | LOI | MARQUE
 Exemples :
 - "42.99€ | la Directive UE 2011/83 | AMAZON"
 - "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE"
+- "À déterminer | le Règlement (UE) 2021/782 | SNCF"
 - "À déterminer | l'Article L217-4 | FNAC"
 - "REJET | PAYÉ | REJET" (si déjà remboursé)
 - "REJET | PUB | REJET" (si publicité)
@@ -582,15 +584,32 @@ def scan():
                 if dossier.status in ["Envoyé", "Payé"]:
                     continue
                 
-                if "€" in dossier.amount and "déterminer" not in dossier.amount.lower():
+                # LOGIQUE MONÉTAIRE STRICTE : Vérification du montant valide
+                amount_str = dossier.amount.strip()
+                is_valid_amount = (
+                    "€" in amount_str and 
+                    "%" not in amount_str and 
+                    "déterminer" not in amount_str.lower() and
+                    re.search(r'\d+', amount_str) is not None
+                )
+                
+                if is_valid_amount:
+                    # Montant valide → Badge vert
                     amount_display = f"<div class='amount-badge'>{dossier.amount}</div>"
                     try:
                         total_gain += int(re.search(r'\d+', dossier.amount).group())
                     except:
                         pass
-                else:
-                    val = dossier.amount.replace("€", "").replace("À déterminer", "").strip()
-                    amount_display = f"<input type='number' value='{val}' placeholder='Prix €' class='amount-input' onchange='saveAmount({dossier.id}, this.value)'>"
+            else:
+                # Montant invalide (%, "À déterminer", pas de €) → Input manuel
+                hint_text = ""
+                if "%" in amount_str:
+                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
+                elif "déterminer" in amount_str.lower():
+                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
+                
+                val = re.sub(r'[^\d]', '', amount_str)
+                amount_display = f"<input type='number' value='{val}' placeholder='Prix €' class='amount-input' onchange='saveAmount({dossier.id}, this.value)'>{hint_text}"
                 
                 html_cards += f"""
                 <div class='card'>
@@ -632,14 +651,31 @@ def scan():
                 debug_rejected.append(f"<p>⚠️ Doublon ignoré : {subject}</p>")
                 continue
             
-            if "déterminer" in extracted_amount.lower():
-                amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' onchange='saveAmount({new_lit.id}, this.value)'>"
-            else:
+            # LOGIQUE MONÉTAIRE STRICTE : Vérification du montant valide
+            amount_str = extracted_amount.strip()
+            is_valid_amount = (
+                "€" in amount_str and 
+                "%" not in amount_str and 
+                "déterminer" not in amount_str.lower() and
+                re.search(r'\d+', amount_str) is not None
+            )
+            
+            if is_valid_amount:
+                # Montant valide → Badge vert + Calcul du total
                 amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
                 try:
                     total_gain += int(re.search(r'\d+', extracted_amount).group())
                 except:
                     pass
+            else:
+                # Montant invalide (%, "À déterminer", pas de €) → Input manuel
+                hint_text = ""
+                if "%" in amount_str:
+                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
+                elif "déterminer" in amount_str.lower():
+                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
+                
+                amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' onchange='saveAmount({new_lit.id}, this.value)'>{hint_text}"
             
             html_cards += f"""
             <div class='card'>
