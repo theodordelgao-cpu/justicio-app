@@ -1019,7 +1019,6 @@ def setup_payment():
             customer=user.stripe_customer_id,
             payment_method_types=['card'],
             mode='setup',
-            payment_method_options={'card': {'setup_future_usage': 'off_session'}},
             success_url=url_for('success_page', _external=True).replace("http://", "https://"),
             cancel_url=url_for('index', _external=True).replace("http://", "https://")
         )
