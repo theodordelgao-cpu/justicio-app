@@ -836,12 +836,14 @@ def dashboard():
     
     html_rows = ""
     for case in cases:
-        if case.status == "Payé":
-            color, status_text = "#10b981", "✅ VIREMENT REÇU"
+        if case.status == "Remboursé":
+            color, status_text = "#10b981", "✅ REMBOURSÉ - Commission prélevée"
+        elif case.status == "En attente de remboursement":
+            color, status_text = "#f59e0b", "⏳ En attente de remboursement"
         elif case.status in ["Envoyé", "En cours"]:
-            color, status_text = "#f59e0b", "Traitement en cours..."
+            color, status_text = "#3b82f6", "📧 Mise en demeure envoyée"
         else:
-            color, status_text = "#3b82f6", "En attente action"
+            color, status_text = "#94a3b8", "🔍 Détecté - En attente d'action"
         
         html_rows += f"""
         <div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; 
@@ -1085,7 +1087,7 @@ Cordialement,
 """
             
             if send_litigation_email(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps):
-                lit.status = "Envoyé"
+                lit.status = "En attente de remboursement"
                 sent_count += 1
                 send_telegram_notif(f"📧 **JUSTICIO** : Mise en demeure {lit.amount} envoyée à {lit.company.upper()} !")
                 DEBUG_LOGS.append(f"✅ Mail envoyé pour {lit.company}")
@@ -1183,7 +1185,7 @@ Cordialement,
 """
                     
                     if send_litigation_email(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps):
-                        lit.status = "Envoyé"
+                        lit.status = "En attente de remboursement"
                         send_telegram_notif(f"💰 **JUSTICIO** : Dossier {lit.amount} envoyé à {lit.company.upper()} !")
                         DEBUG_LOGS.append(f"✅ Mail envoyé pour {lit.company}")
                 
@@ -1201,46 +1203,77 @@ Cordialement,
 # CRON JOB - CHASSEUR DE REMBOURSEMENTS
 # ========================================
 
+SCAN_TOKEN = os.environ.get("SCAN_TOKEN")
+
 @app.route("/cron/check-refunds")
 def check_refunds():
-    """Vérifie les remboursements et prélève la commission"""
-    logs = ["<h3>🔍 CHASSEUR ACTIF</h3>"]
+    """Vérifie les remboursements et prélève la commission - SÉCURISÉ PAR TOKEN"""
     
+    # Vérification du token de sécurité
+    token = request.args.get("token")
+    if SCAN_TOKEN and token != SCAN_TOKEN:
+        return "⛔ Accès refusé - Token invalide", 403
+    
+    logs = ["<h3>🔍 CHASSEUR DE REMBOURSEMENTS ACTIF</h3>"]
+    logs.append(f"<p>🕐 Scan lancé à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>")
+    
+    # Chercher les litiges en attente de remboursement
     active_cases = Litigation.query.filter(
-        Litigation.status.in_(["Envoyé", "En cours"])
+        Litigation.status == "En attente de remboursement"
     ).all()
+    
+    logs.append(f"<p>📂 {len(active_cases)} dossier(s) en attente de remboursement</p>")
     
     for case in active_cases:
         logs.append(f"<hr>📂 <b>{case.company.upper()}</b> - {case.amount}")
         
         user = User.query.filter_by(email=case.user_email).first()
         if not user or not user.refresh_token:
-            logs.append("❌ Pas de refresh token")
+            logs.append("❌ Pas de refresh token pour cet utilisateur")
+            continue
+        
+        if not user.stripe_customer_id:
+            logs.append("❌ Pas de carte enregistrée (stripe_customer_id manquant)")
             continue
         
         try:
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
             
-            query = f'label:INBOX "{case.company}" (remboursement OR refund OR virement OR payment OR paiement)'
+            # Recherche d'emails de remboursement
+            query = f'label:INBOX "{case.company}" (remboursement OR refund OR virement OR "a]été crédité" OR "has been refunded" OR "montant remboursé")'
             results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
             messages = results.get('messages', [])
+            
+            logs.append(f"📧 {len(messages)} email(s) trouvé(s) pour {case.company}")
             
             for msg in messages:
                 msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
                 snippet = msg_data.get('snippet', '')
                 
+                # Extraire la date de l'email
+                headers = msg_data['payload'].get('headers', [])
+                email_date = next((h['value'] for h in headers if h['name'].lower() == 'date'), "Date inconnue")
+                
+                logs.append(f"<p style='margin-left:20px;'>📩 Email du {email_date[:20]}...</p>")
+                
                 if not OPENAI_API_KEY:
+                    logs.append("❌ Pas d'API OpenAI configurée")
                     continue
                 
+                # Analyse IA pour confirmer le remboursement
                 client = OpenAI(api_key=OPENAI_API_KEY)
-                prompt = f"""Tu es contrôleur financier. 
+                prompt = f"""Tu es un détecteur de remboursements bancaires.
 
-Email de {case.company} : "{snippet}"
+Email de {case.company} :
+"{snippet}"
 
-Question : Est-ce que ce mail confirme qu'un REMBOURSEMENT/VIREMENT a été EFFECTUÉ ?
+Montant attendu : {case.amount}
 
-Réponds uniquement par OUI ou NON."""
+Question : Est-ce que cet email CONFIRME qu'un REMBOURSEMENT ou VIREMENT a été EFFECTUÉ avec succès ?
+(Pas une promesse, pas un "sera remboursé", mais bien un remboursement DÉJÀ FAIT)
+
+Réponds UNIQUEMENT par OUI ou NON."""
 
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -1250,58 +1283,77 @@ Réponds uniquement par OUI ou NON."""
                 )
                 
                 verdict = response.choices[0].message.content.strip().upper()
-                logs.append(f"🤖 IA Verdict : {verdict}")
+                logs.append(f"<p style='margin-left:20px;'>🤖 IA Verdict : <b>{verdict}</b></p>")
                 
-                if "OUI" in verdict and user.stripe_customer_id:
+                if "OUI" in verdict:
+                    # REMBOURSEMENT DÉTECTÉ ! On prélève la commission
                     amount = extract_numeric_amount(case.amount)
                     if amount <= 0:
-                        logs.append("❌ Montant non trouvé ou invalide")
+                        logs.append("❌ Montant non extractible")
                         continue
                     
                     commission = int(amount * 0.30)
+                    logs.append(f"<p style='margin-left:20px;'>💰 Commission à prélever : <b>{commission}€</b> (30% de {amount}€)</p>")
                     
                     try:
+                        # Récupérer la carte enregistrée
                         payment_methods = stripe.PaymentMethod.list(
                             customer=user.stripe_customer_id,
                             type="card"
                         )
                         
                         if not payment_methods.data:
-                            logs.append("❌ Pas de carte enregistrée")
+                            logs.append("❌ Aucune carte enregistrée pour ce client")
                             continue
                         
-                        stripe.PaymentIntent.create(
-                            amount=commission * 100,
+                        # Prélever la commission
+                        payment_intent = stripe.PaymentIntent.create(
+                            amount=commission * 100,  # Stripe utilise les centimes
                             currency='eur',
                             customer=user.stripe_customer_id,
                             payment_method=payment_methods.data[0].id,
-                            payment_method_types=['card'],
                             off_session=True,
                             confirm=True,
-                            description=f"Commission Justicio - {case.company}"
+                            description=f"Commission Justicio 30% - {case.company.upper()} - Dossier #{case.id}"
                         )
                         
-                        case.status = "Payé"
-                        db.session.commit()
-                        
-                        logs.append(f"✅ <b>JACKPOT : {commission}€ PRÉLEVÉS !</b>")
-                        send_telegram_notif(f"💰 **{commission}€** prélevés sur {case.company.upper()} !")
-                        
-                        service.users().messages().modify(
-                            userId='me',
-                            id=msg['id'],
-                            body={'removeLabelIds': ['INBOX']}
-                        ).execute()
-                        
-                        break
+                        if payment_intent.status == "succeeded":
+                            # Mettre à jour le statut
+                            case.status = "Remboursé"
+                            case.updated_at = datetime.utcnow()
+                            db.session.commit()
+                            
+                            logs.append(f"<p style='margin-left:20px; color:#10b981; font-weight:bold;'>✅ JACKPOT ! {commission}€ PRÉLEVÉS AVEC SUCCÈS !</p>")
+                            send_telegram_notif(f"💰💰💰 **JUSTICIO JACKPOT** 💰💰💰\n\n{commission}€ prélevés sur {case.company.upper()} !\nClient: {user.email}\nDossier #{case.id}")
+                            
+                            # Archiver l'email (retirer de INBOX)
+                            try:
+                                service.users().messages().modify(
+                                    userId='me',
+                                    id=msg['id'],
+                                    body={'removeLabelIds': ['INBOX']}
+                                ).execute()
+                                logs.append("<p style='margin-left:20px;'>📥 Email archivé</p>")
+                            except:
+                                pass
+                            
+                            break  # Passer au dossier suivant
+                        else:
+                            logs.append(f"❌ Paiement non confirmé : {payment_intent.status}")
                     
                     except stripe.error.CardError as e:
-                        logs.append(f"❌ Erreur carte : {e.user_message}")
+                        logs.append(f"<p style='margin-left:20px; color:red;'>❌ Erreur carte : {e.user_message}</p>")
+                        DEBUG_LOGS.append(f"Stripe CardError {case.company}: {e.user_message}")
                     except Exception as e:
-                        logs.append(f"❌ Erreur prélèvement : {str(e)}")
+                        logs.append(f"<p style='margin-left:20px; color:red;'>❌ Erreur prélèvement : {str(e)}</p>")
+                        DEBUG_LOGS.append(f"Stripe Error {case.company}: {str(e)}")
         
         except Exception as e:
-            logs.append(f"❌ Erreur : {str(e)}")
+            logs.append(f"<p style='color:red;'>❌ Erreur générale : {str(e)}</p>")
+            DEBUG_LOGS.append(f"CRON Error {case.company}: {str(e)}")
+    
+    logs.append("<hr>")
+    logs.append(f"<p>✅ Scan terminé à {datetime.utcnow().strftime('%H:%M:%S')} UTC</p>")
     
     return STYLE + "<br>".join(logs) + "<br><br><a href='/' class='btn-success'>Retour</a>"
 
