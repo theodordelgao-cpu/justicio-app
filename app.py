@@ -592,12 +592,14 @@ def logout():
     return redirect("/")
 
 # ========================================
-# SCANNER INTELLIGENT - BUG N°1 CORRIGÉ
+# SCANNER INTELLIGENT - VERSION CORRIGÉE
+# Les litiges ne sont PAS enregistrés en base lors du scan
+# Ils sont stockés en session et enregistrés seulement après paiement
 # ========================================
 
 @app.route("/scan")
 def scan():
-    """Scanner de litiges avec pare-feu anti-spam - VERSION CORRIGÉE"""
+    """Scanner de litiges - Détection SANS enregistrement en base"""
     if "credentials" not in session:
         return redirect("/login")
     
@@ -627,21 +629,29 @@ def scan():
     html_cards = ""
     debug_rejected = ["<h3>🗑️ Rapport de Filtrage</h3>"]
     
-    # Charger les dossiers existants en mémoire
-    existing_litigations = {}
+    # Charger les message_id DÉJÀ EN BASE (pour ne pas les re-scanner)
+    existing_message_ids = set()
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
         if lit.message_id:
-            existing_litigations[lit.message_id] = lit
+            existing_message_ids.add(lit.message_id)
+    
+    # Liste temporaire des litiges détectés (stockée en session)
+    detected_litigations = []
     
     for msg in messages:
         try:
+            message_id = msg['id']
+            
+            # SKIP si déjà en base de données
+            if message_id in existing_message_ids:
+                continue
+            
             msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
             headers = msg_data['payload'].get('headers', [])
             
             subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
             sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
             snippet = msg_data.get('snippet', '')
-            message_id = msg['id']
             
             # ÉTAPE 1: Vérification spam
             spam_detected, spam_reason = is_spam(sender, subject, snippet)
@@ -649,45 +659,7 @@ def scan():
                 debug_rejected.append(f"<p>🛑 <b>SPAM BLOQUÉ :</b> {subject}<br><small>{sender}</small><br><i>Raison: {spam_reason}</i></p>")
                 continue
             
-            # ÉTAPE 2: Vérifier si le dossier existe déjà
-            if message_id in existing_litigations:
-                dossier = existing_litigations[message_id]
-                
-                # Ignorer les dossiers déjà traités
-                if dossier.status in ["Envoyé", "Payé"]:
-                    continue
-                
-                # LOGIQUE MONÉTAIRE - BUG N°3 CORRIGÉ
-                # Utiliser la fonction helper pour vérifier le montant
-                if is_valid_euro_amount(dossier.amount):
-                    # Montant valide → Badge vert
-                    amount_display = f"<div class='amount-badge'>{dossier.amount}</div>"
-                    total_gain += extract_numeric_amount(dossier.amount)
-                else:
-                    # Montant invalide → Input manuel avec hint
-                    hint_text = ""
-                    if "%" in dossier.amount:
-                        hint_text = "<div class='amount-hint'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
-                    else:
-                        hint_text = "<div class='amount-hint'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
-                    
-                    val = extract_numeric_amount(dossier.amount)
-                    val_str = str(val) if val > 0 else ""
-                    amount_display = f"<input type='number' value='{val_str}' placeholder='Prix €' class='amount-input' onchange='saveAmount({dossier.id}, this.value)'>{hint_text}"
-                
-                html_cards += f"""
-                <div class='card'>
-                    {amount_display}
-                    <span class='radar-tag'>{dossier.company.upper()}</span>
-                    <h3>{subject}</h3>
-                    <p><i>Dossier existant (scan précédent)</i></p>
-                    <small>⚖️ {dossier.law}</small>
-                </div>
-                """
-                new_cases_count += 1
-                continue
-            
-            # ÉTAPE 3: NOUVEAU DOSSIER - Analyser avec l'IA
+            # ÉTAPE 2: Analyser avec l'IA
             body_text = extract_email_content(msg_data)
             analysis = analyze_litigation(body_text, subject, sender)
             extracted_amount, law_final, company_detected = analysis[0], analysis[1], analysis[2]
@@ -699,40 +671,29 @@ def scan():
             
             company_normalized = company_detected.lower().strip()
             
-            # ÉTAPE 4: Sauvegarder le nouveau dossier en base
-            new_lit = Litigation(
-                user_email=session['email'],
-                company=company_normalized,
-                amount=extracted_amount,
-                law=law_final,
-                subject=subject,
-                message_id=message_id,
-                status="Détecté"
-            )
+            # STOCKER EN MÉMOIRE (pas en base !)
+            litigation_data = {
+                "message_id": message_id,
+                "company": company_normalized,
+                "amount": extracted_amount,
+                "law": law_final,
+                "subject": subject,
+                "snippet": snippet
+            }
+            detected_litigations.append(litigation_data)
             
-            try:
-                db.session.add(new_lit)
-                db.session.commit()
-            except IntegrityError:
-                db.session.rollback()
-                debug_rejected.append(f"<p>⚠️ Doublon ignoré : {subject}</p>")
-                continue
-            
-            # ÉTAPE 5: Construire l'affichage - APRÈS avoir sauvegardé
-            # LOGIQUE MONÉTAIRE - BUG N°3 CORRIGÉ
+            # Construire l'affichage
             if is_valid_euro_amount(extracted_amount):
-                # Montant valide → Badge vert + Calcul du total
                 amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
                 total_gain += extract_numeric_amount(extracted_amount)
             else:
-                # Montant invalide → Input manuel avec hint
                 hint_text = ""
                 if "%" in extracted_amount:
                     hint_text = "<div class='amount-hint'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
                 else:
                     hint_text = "<div class='amount-hint'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
                 
-                amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' onchange='saveAmount({new_lit.id}, this.value)'>{hint_text}"
+                amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' data-index='{new_cases_count}' onchange='updateAmount(this)'>{hint_text}"
             
             html_cards += f"""
             <div class='card'>
@@ -749,38 +710,43 @@ def scan():
             debug_rejected.append(f"<p>❌ Erreur traitement : {str(e)}</p>")
             continue
     
+    # Stocker les litiges détectés en session (pour les enregistrer après paiement)
+    session['detected_litigations'] = detected_litigations
+    session['total_gain'] = total_gain
+    
     # Bouton d'action sticky
     action_btn = ""
     if new_cases_count > 0 and STRIPE_SK:
         action_btn = f"""
         <div class='sticky-footer'>
             <div style='margin-right:20px; font-size:1.2em;'>
-                <b>Total Validé : <span id='total-display'>{total_gain}</span>€</b>
+                <b>Total Détecté : <span id='total-display'>{total_gain}</span>€</b>
             </div>
             <a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>
         </div>
         """
     
-    # Script JS pour mise à jour AJAX des montants
+    # Script JS pour mise à jour des montants en session
     script_js = """
     <script>
-    function saveAmount(id, value) {
+    function updateAmount(input) {
+        const index = input.getAttribute('data-index');
+        const value = input.value;
         if (!value || value <= 0) return;
         
-        fetch('/update-amount', {
+        fetch('/update-detected-amount', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id: id, amount: value})
+            body: JSON.stringify({index: parseInt(index), amount: value})
         }).then(res => {
             if(res.ok) {
-                const input = event.target;
                 input.style.borderColor = '#10b981';
                 input.style.color = '#10b981';
                 
                 // Mettre à jour le total affiché
-                let total = parseInt(document.getElementById('total-display').textContent) || 0;
-                total += parseInt(value);
-                document.getElementById('total-display').textContent = total;
+                res.json().then(data => {
+                    document.getElementById('total-display').textContent = data.total;
+                });
             }
         });
     }
@@ -790,17 +756,64 @@ def scan():
     debug_html = "<div class='debug-section'>" + "".join(debug_rejected) + "</div>"
     
     if new_cases_count > 0:
-        return STYLE + "<h1>✅ Résultat du Scan</h1>" + html_cards + action_btn + debug_html + script_js + WA_BTN + FOOTER
+        return STYLE + f"<h1>✅ {new_cases_count} Litige(s) Détecté(s)</h1>" + html_cards + action_btn + debug_html + script_js + WA_BTN + FOOTER
     else:
-        return STYLE + "<h1>Aucun litige détecté</h1>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>" + FOOTER
+        # Vérifier s'il y a des dossiers en cours
+        existing_count = Litigation.query.filter_by(user_email=session['email']).count()
+        if existing_count > 0:
+            return STYLE + f"""
+            <div style='text-align:center; padding:50px;'>
+                <h1>✅ Aucun nouveau litige</h1>
+                <p>Vous avez déjà <b>{existing_count} dossier(s)</b> en cours de traitement.</p>
+                <br>
+                <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
+            </div>
+            """ + debug_html + FOOTER
+        else:
+            return STYLE + "<h1>Aucun litige détecté</h1><p>Votre boîte mail ne contient pas de litiges identifiables.</p>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>" + FOOTER
 
 # ========================================
-# MISE À JOUR MONTANT (AJAX)
+# MISE À JOUR MONTANT EN SESSION (avant paiement)
+# ========================================
+
+@app.route("/update-detected-amount", methods=["POST"])
+def update_detected_amount():
+    """Met à jour le montant d'un litige détecté (en session, pas encore en base)"""
+    if "email" not in session:
+        return jsonify({"error": "Non authentifié"}), 401
+    
+    data = request.json
+    index = data.get("index")
+    amount = data.get("amount")
+    
+    if index is None or not amount:
+        return jsonify({"error": "Données manquantes"}), 400
+    
+    detected = session.get('detected_litigations', [])
+    if index < 0 or index >= len(detected):
+        return jsonify({"error": "Index invalide"}), 400
+    
+    # Mettre à jour le montant
+    detected[index]['amount'] = f"{amount}€"
+    session['detected_litigations'] = detected
+    
+    # Recalculer le total
+    total = 0
+    for lit in detected:
+        if is_valid_euro_amount(lit['amount']):
+            total += extract_numeric_amount(lit['amount'])
+    
+    session['total_gain'] = total
+    
+    return jsonify({"success": True, "amount": f"{amount}€", "total": total}), 200
+
+# ========================================
+# MISE À JOUR MONTANT (pour dossiers déjà en base)
 # ========================================
 
 @app.route("/update-amount", methods=["POST"])
 def update_amount():
-    """Met à jour le montant d'un litige"""
+    """Met à jour le montant d'un litige déjà en base"""
     if "email" not in session:
         return jsonify({"error": "Non authentifié"}), 401
     
@@ -1032,7 +1045,7 @@ def setup_payment():
 
 @app.route("/success")
 def success_page():
-    """Page de succès après configuration paiement - ENVOIE LES MISES EN DEMEURE"""
+    """Page de succès - ENREGISTRE les litiges en base ET envoie les mises en demeure"""
     if "email" not in session:
         return redirect("/login")
     
@@ -1040,24 +1053,51 @@ def success_page():
     if not user or not user.refresh_token:
         return "Erreur : utilisateur non trouvé ou pas de refresh token"
     
-    # Récupérer les litiges en attente
-    litigations = Litigation.query.filter_by(
-        user_email=session['email'], 
-        status="Détecté"
-    ).all()
+    # Récupérer les litiges détectés depuis la session
+    detected_litigations = session.get('detected_litigations', [])
+    
+    if not detected_litigations:
+        return STYLE + """
+        <div style='text-align:center; padding:50px;'>
+            <h1>⚠️ Aucun litige à traiter</h1>
+            <p>Veuillez d'abord scanner votre boîte mail.</p>
+            <br>
+            <a href='/scan' class='btn-success'>🔍 SCANNER</a>
+        </div>
+        """ + FOOTER
     
     sent_count = 0
     errors = []
     
-    for lit in litigations:
-        # Vérifier que le montant est valide avant d'envoyer
-        if not is_valid_euro_amount(lit.amount):
-            errors.append(f"⚠️ {lit.company}: montant invalide ({lit.amount})")
+    for lit_data in detected_litigations:
+        # Vérifier que le montant est valide avant d'enregistrer
+        if not is_valid_euro_amount(lit_data['amount']):
+            errors.append(f"⚠️ {lit_data['company']}: montant invalide ({lit_data['amount']}) - non enregistré")
             continue
         
+        # ÉTAPE 1: Enregistrer en base de données
+        new_lit = Litigation(
+            user_email=session['email'],
+            company=lit_data['company'],
+            amount=lit_data['amount'],
+            law=lit_data['law'],
+            subject=lit_data['subject'],
+            message_id=lit_data['message_id'],
+            status="Détecté"
+        )
+        
+        try:
+            db.session.add(new_lit)
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            errors.append(f"⚠️ {lit_data['company']}: doublon ignoré")
+            continue
+        
+        # ÉTAPE 2: Envoyer la mise en demeure
         try:
             creds = get_refreshed_credentials(user.refresh_token)
-            company_key = lit.company.lower()
+            company_key = lit_data['company'].lower()
             legal_info = LEGAL_DIRECTORY.get(company_key, {
                 "email": "theodordelgao@gmail.com",
                 "loi": "le Droit Européen de la Consommation"
@@ -1067,15 +1107,15 @@ def success_page():
             
             corps = f"""MISE EN DEMEURE FORMELLE
 
-Objet : Réclamation concernant le dossier : {lit.subject}
+Objet : Réclamation concernant le dossier : {lit_data['subject']}
 
-À l'attention du Service Juridique de {lit.company.upper()},
+À l'attention du Service Juridique de {lit_data['company'].upper()},
 
 Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
 
-- Nature du litige : {lit.subject}
-- Fondement juridique : {lit.law}
-- Montant réclamé : {lit.amount}
+- Nature du litige : {lit_data['subject']}
+- Fondement juridique : {lit_data['law']}
+- Montant réclamé : {lit_data['amount']}
 
 Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement sous un délai de 8 jours ouvrés.
 
@@ -1086,19 +1126,22 @@ Cordialement,
 {user.email}
 """
             
-            if send_litigation_email(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps):
-                lit.status = "En attente de remboursement"
+            if send_litigation_email(creds, target_email, f"MISE EN DEMEURE - {lit_data['company'].upper()}", corps):
+                new_lit.status = "En attente de remboursement"
+                db.session.commit()
                 sent_count += 1
-                send_telegram_notif(f"📧 **JUSTICIO** : Mise en demeure {lit.amount} envoyée à {lit.company.upper()} !")
-                DEBUG_LOGS.append(f"✅ Mail envoyé pour {lit.company}")
+                send_telegram_notif(f"📧 **JUSTICIO** : Mise en demeure {lit_data['amount']} envoyée à {lit_data['company'].upper()} !")
+                DEBUG_LOGS.append(f"✅ Mail envoyé pour {lit_data['company']}")
             else:
-                errors.append(f"❌ {lit.company}: échec d'envoi")
+                errors.append(f"❌ {lit_data['company']}: échec d'envoi email")
         
         except Exception as e:
-            errors.append(f"❌ {lit.company}: {str(e)}")
-            DEBUG_LOGS.append(f"❌ Erreur envoi {lit.company}: {str(e)}")
+            errors.append(f"❌ {lit_data['company']}: {str(e)}")
+            DEBUG_LOGS.append(f"❌ Erreur envoi {lit_data['company']}: {str(e)}")
     
-    db.session.commit()
+    # Vider la session des litiges détectés (ils sont maintenant en base)
+    session.pop('detected_litigations', None)
+    session.pop('total_gain', None)
     
     # Affichage du résultat
     error_html = ""
@@ -1112,9 +1155,13 @@ Cordialement,
             <h3>🚀 {sent_count} Mise(s) en demeure envoyée(s) !</h3>
             <p>Votre carte est enregistrée. Les réclamations ont été envoyées aux entreprises concernées.</p>
             <p style='color:#10b981; font-weight:bold;'>Vous recevrez une copie dans vos emails envoyés.</p>
+            <p style='color:#64748b; font-size:0.9rem; margin-top:15px;'>
+                💡 Le système scanne automatiquement votre boîte mail pour détecter les remboursements.
+                <br>Une commission de 30% sera prélevée uniquement en cas de succès.
+            </p>
         </div>
         {error_html}
-        <a href='/dashboard' class='btn-success'>VOIR MES DOSSIERS</a>
+        <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
     </div>
     """ + FOOTER
 
