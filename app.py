@@ -128,6 +128,25 @@ class Litigation(db.Model):
 
 with app.app_context():
     try:
+        # Migration : Ajoute message_id si manquant
+        from sqlalchemy import text, inspect
+        inspector = inspect(db.engine)
+        columns = [col['name'] for col in inspector.get_columns('litigation')]
+        
+        if 'message_id' not in columns:
+            print("🔄 Migration : Ajout de message_id...")
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE litigation ADD COLUMN message_id VARCHAR(100)'))
+                conn.commit()
+            print("✅ Colonne message_id ajoutée")
+        
+        if 'updated_at' not in columns:
+            print("🔄 Migration : Ajout de updated_at...")
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE litigation ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()'))
+                conn.commit()
+            print("✅ Colonne updated_at ajoutée")
+        
         db.create_all()
         print("✅ Base de données synchronisée.")
     except Exception as e:
