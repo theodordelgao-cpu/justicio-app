@@ -616,6 +616,7 @@ def scan():
      ryanair OR amazon OR zalando OR booking OR uber OR deliveroo OR bolt OR
      fnac OR darty OR zara OR asos OR lufthansa OR klm OR eurostar OR ouigo)
     -category:promotions -category:social
+    -subject:"MISE EN DEMEURE"
     """
     
     try:
@@ -657,6 +658,11 @@ def scan():
             spam_detected, spam_reason = is_spam(sender, subject, snippet)
             if spam_detected:
                 debug_rejected.append(f"<p>🛑 <b>SPAM BLOQUÉ :</b> {subject}<br><small>{sender}</small><br><i>Raison: {spam_reason}</i></p>")
+                continue
+            
+            # ÉTAPE 1.5: Ignorer les mises en demeure (emails envoyés par nous)
+            if "MISE EN DEMEURE" in subject.upper():
+                debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
                 continue
             
             # ÉTAPE 2: Analyser avec l'IA
