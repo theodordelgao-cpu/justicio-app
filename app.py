@@ -49,6 +49,10 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 if STRIPE_SK:
     stripe.api_key = STRIPE_SK
 
+# --- ⛔ LISTE NOIRE (LE PARE-FEU) ---
+BLACKLIST_SENDERS = ["temu", "shein", "aliexpress", "vinted", "ionos", "dribbble", "linkedin", "pinterest", "tiktok", "newsletter", "no-reply@accounts.google.com"]
+BLACKLIST_SUBJECTS = ["crédit", "coupon", "offer", "offre", "promo", "solde", "félicitations", "gagné", "cadeau", "newsletter", "sélectionné", "mise à jour", "security", "connexion", "facture", "invoice"]
+
 # --- RÉPERTOIRE JURIDIQUE COMPLET ---
 LEGAL_DIRECTORY = {
     "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
@@ -214,6 +218,7 @@ def index():
         <a href='/scan' class='btn-success' style='display:block; max-width:300px; margin:0 auto 20px auto; background:#4f46e5; box-shadow:0 10px 20px rgba(79, 70, 229, 0.3);'>🔍 LANCER UN SCAN</a>
         <a href='/dashboard' style='display:block; max-width:300px; margin:0 auto; padding:15px; background:white; color:#334155; text-decoration:none; border-radius:50px; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.05);'>📂 SUIVRE MES LITIGES {badge}</a>
         <br><br><a href='/logout' class='btn-logout'>Se déconnecter</a>
+        <br><br><a href='/force-reset' style='color:red; font-size:0.8rem;'>⚠️ Réinitialiser la base (Bug fix)</a>
     </div>""" + WA_BTN + FOOTER
 
 @app.route("/logout")
@@ -221,7 +226,7 @@ def logout():
     session.clear()
     return redirect("/")
 
-# --- SCANNER INTELLIGENT (Avec Mémoire + Input) ---
+# --- SCANNER INTELLIGENT (Avec Mémoire + Input + PARE-FEU) ---
 @app.route("/scan")
 def scan():
     if "credentials" not in session: return redirect("/login")
@@ -250,6 +255,18 @@ def scan():
             sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
             snippet = f.get('snippet', '')
             
+            # --- 🛡️ PARE-FEU ANTI-SPAM ---
+            # Si le sender ou le sujet contient un mot interdit, on jette DIRECT.
+            is_spam = False
+            for black in BLACKLIST_SENDERS:
+                if black in sender.lower(): is_spam = True
+            for black in BLACKLIST_SUBJECTS:
+                if black in subj.lower(): is_spam = True
+            
+            if is_spam:
+                debug_rejected.append(f"<p>🛑 <b>SPAM BLOQUÉ :</b> {subj} <br><small>{sender}</small></p>")
+                continue # On passe au suivant
+
             # --- DOSSIER EXISTANT (PAS D'APPEL IA) ---
             if subj in existing_lits:
                 dossier = existing_lits[subj]
@@ -261,7 +278,6 @@ def scan():
                     try: total_gain += int(re.search(r'\d+', dossier.amount).group())
                     except: pass
                 else:
-                    # On nettoie pour afficher la valeur dans l'input
                     val = dossier.amount.replace("€", "").replace("À déterminer", "").strip()
                     amount_display = f"<input type='number' value='{val}' placeholder='Prix €' onchange='saveAmount({dossier.id}, this)' style='position:absolute; top:30px; right:30px; padding:10px; border:2px solid #ef4444; border-radius:10px; width:100px; font-weight:bold; font-size:1.1rem; color:#ef4444; z-index:10;'>"
                 
@@ -308,7 +324,7 @@ def scan():
 
     action_btn = ""
     if os.environ.get("STRIPE_SECRET_KEY"):
-         action_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-size:1.2em;'><b>Total Potentiel : <span id='total-display'>{total_gain}</span>€</b></div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
+         action_btn = f"<div class='sticky-footer'><div style='margin-right:20px;font-size:1.2em;'><b>Total Validé : <span id='total-display'>{total_gain}</span>€</b></div><a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a></div>"
 
     script_js = """<script>function saveAmount(id, input) { input.style.borderColor = "#fbbf24"; fetch('/update-amount', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: id, amount: input.value})}).then(res => { if(res.ok) { input.style.borderColor = "#10b981"; input.style.color = "#10b981"; }}); }</script>"""
     debug_html = "<div style='margin-top:50px;color:#64748b;background:#e2e8f0;padding:20px;border-radius:10px;'>" + "".join(debug_rejected) + "</div>"
@@ -327,7 +343,7 @@ def update_amount():
         return "OK", 200
     return "Error", 400
 
-# --- DASHBOARD CLIENT (NOUVEAU) ---
+# --- DASHBOARD CLIENT ---
 @app.route("/dashboard")
 def dashboard():
     if "credentials" not in session: return redirect("/login")
@@ -341,13 +357,13 @@ def dashboard():
     if not html_rows: html_rows = "<p style='text-align:center; color:#94a3b8'>Aucun dossier.</p>"
     return STYLE + f"<div style='max-width:600px; margin:0 auto;'><h1>📂 Mes Dossiers</h1><div style='margin-bottom:30px;'>{html_rows}</div><div class='sticky-footer'><a href='/scan' class='btn-success' style='background:#4f46e5; margin-right:10px;'>🔍 SCANNER</a><a href='/' class='btn-logout'>Retour Accueil</a></div></div>" + FOOTER
 
-# --- RESET (UN SEUL) ---
+# --- RESET (POUR NETTOYER LA BDD) ---
 @app.route("/force-reset")
 def force_reset():
     try:
         num_deleted = Litigation.query.delete()
         db.session.commit()
-        return f"✅ Base VIDÉE ({num_deleted} dossiers supprimés). <br><a href='/scan'>Relancer un Scan PROPRE</a>"
+        return f"✅ Base VIDÉE ({num_deleted} dossiers supprimés). <br><a href='/scan' class='btn-success'>Relancer Scan</a>"
     except Exception as e: return f"Erreur : {e}"
 
 # --- LOGIN ---
@@ -364,12 +380,7 @@ def callback():
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
     info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
-    user = User.query.filter_by(email=info.get('email')).first()
-    if not user:
-        user = User(email=info.get('email'), name=info.get('name'), refresh_token=creds.refresh_token)
-        db.session.add(user)
-    else:
-        if creds.refresh_token: user.refresh_token = creds.refresh_token
+    if not User.query.filter_by(email=info.get('email')).first(): db.session.add(User(email=info.get('email'), name=info.get('name'), refresh_token=creds.refresh_token))
     db.session.commit()
     session["credentials"] = {'token': creds.token, 'refresh_token': creds.refresh_token, 'token_uri': creds.token_uri, 'client_id': creds.client_id, 'client_secret': creds.client_secret, 'scopes': creds.scopes}
     session["name"], session["email"] = info.get('name'), info.get('email')
