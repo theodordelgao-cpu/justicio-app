@@ -1030,19 +1030,88 @@ def setup_payment():
 
 @app.route("/success")
 def success_page():
-    """Page de succès après configuration paiement"""
+    """Page de succès après configuration paiement - ENVOIE LES MISES EN DEMEURE"""
     if "email" not in session:
         return redirect("/login")
     
-    count = Litigation.query.filter_by(user_email=session['email'], status="Détecté").count()
+    user = User.query.filter_by(email=session['email']).first()
+    if not user or not user.refresh_token:
+        return "Erreur : utilisateur non trouvé ou pas de refresh token"
+    
+    # Récupérer les litiges en attente
+    litigations = Litigation.query.filter_by(
+        user_email=session['email'], 
+        status="Détecté"
+    ).all()
+    
+    sent_count = 0
+    errors = []
+    
+    for lit in litigations:
+        # Vérifier que le montant est valide avant d'envoyer
+        if not is_valid_euro_amount(lit.amount):
+            errors.append(f"⚠️ {lit.company}: montant invalide ({lit.amount})")
+            continue
+        
+        try:
+            creds = get_refreshed_credentials(user.refresh_token)
+            company_key = lit.company.lower()
+            legal_info = LEGAL_DIRECTORY.get(company_key, {
+                "email": "theodordelgao@gmail.com",
+                "loi": "le Droit Européen de la Consommation"
+            })
+            
+            target_email = legal_info["email"]
+            
+            corps = f"""MISE EN DEMEURE FORMELLE
+
+Objet : Réclamation concernant le dossier : {lit.subject}
+
+À l'attention du Service Juridique de {lit.company.upper()},
+
+Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
+
+- Nature du litige : {lit.subject}
+- Fondement juridique : {lit.law}
+- Montant réclamé : {lit.amount}
+
+Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement sous un délai de 8 jours ouvrés.
+
+À défaut de réponse satisfaisante, je me réserve le droit de saisir les autorités compétentes.
+
+Cordialement,
+{user.name}
+{user.email}
+"""
+            
+            if send_litigation_email(creds, target_email, f"MISE EN DEMEURE - {lit.company.upper()}", corps):
+                lit.status = "Envoyé"
+                sent_count += 1
+                send_telegram_notif(f"📧 **JUSTICIO** : Mise en demeure {lit.amount} envoyée à {lit.company.upper()} !")
+                DEBUG_LOGS.append(f"✅ Mail envoyé pour {lit.company}")
+            else:
+                errors.append(f"❌ {lit.company}: échec d'envoi")
+        
+        except Exception as e:
+            errors.append(f"❌ {lit.company}: {str(e)}")
+            DEBUG_LOGS.append(f"❌ Erreur envoi {lit.company}: {str(e)}")
+    
+    db.session.commit()
+    
+    # Affichage du résultat
+    error_html = ""
+    if errors:
+        error_html = "<div style='background:#fee2e2; padding:15px; border-radius:10px; margin-top:20px;'>" + "<br>".join(errors) + "</div>"
     
     return STYLE + f"""
     <div style='text-align:center; padding:50px;'>
         <h1>✅ Succès !</h1>
         <div class='card' style='max-width:400px; margin:20px auto;'>
-            <h3>🚀 {count} Procédures Prêtes</h3>
-            <p>Votre carte est enregistrée. Les réclamations seront envoyées automatiquement.</p>
+            <h3>🚀 {sent_count} Mise(s) en demeure envoyée(s) !</h3>
+            <p>Votre carte est enregistrée. Les réclamations ont été envoyées aux entreprises concernées.</p>
+            <p style='color:#10b981; font-weight:bold;'>Vous recevrez une copie dans vos emails envoyés.</p>
         </div>
+        {error_html}
         <a href='/dashboard' class='btn-success'>VOIR MES DOSSIERS</a>
     </div>
     """ + FOOTER
