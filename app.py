@@ -37,24 +37,45 @@ if STRIPE_SK:
     stripe.api_key = STRIPE_SK
 
 # ========================================
-# BLACKLIST ANTI-SPAM (PARE-FEU)
+# BLACKLIST ANTI-SPAM (PARE-FEU) - CORRIGÉ BUG N°2
 # ========================================
+# On garde UNIQUEMENT les termes liés au SPAM pur
+# On retire les termes génériques qui causent des faux positifs
 
 BLACKLIST_SENDERS = [
-    "temu", "shein", "aliexpress", "vinted", "ionos", "dribbble", 
-    "linkedin", "pinterest", "tiktok", "newsletter", "no-reply@accounts.google.com",
-    "notifications@", "noreply@", "donotreply@", "marketing@", "promo@"
+    # Sites e-commerce low-cost / spam
+    "temu", "shein", "aliexpress", "vinted", "wish.com",
+    # Réseaux sociaux (notifications)
+    "linkedin", "pinterest", "tiktok", "facebook", "twitter", "instagram",
+    # Newsletters génériques
+    "newsletter@", "noreply@dribbble", "notifications@medium",
+    # Marketing pur
+    "marketing@", "promo@", "deals@", "offers@"
 ]
 
 BLACKLIST_SUBJECTS = [
-    "crédit", "coupon", "offer", "offre", "promo", "solde", "félicitations",
-    "gagné", "cadeau", "newsletter", "sélectionné", "mise à jour", "security",
-    "connexion", "bienvenue", "welcome", "confirmation d'inscription",
-    "verify your", "vérifiez votre", "activate", "activer"
+    # Offres commerciales pures
+    "crédit offert", "crédit gratuit", "prêt personnel",
+    "coupon exclusif", "code promo exclusif",
+    "offre spéciale limitée", "vente flash",
+    "soldes exceptionnelles",
+    "félicitations vous avez gagné", "vous êtes sélectionné",
+    "cadeau gratuit",
+    # Newsletters
+    "notre newsletter", "weekly digest", "bulletin hebdomadaire",
+    # Sécurité compte (pas des litiges)
+    "changement de mot de passe", "connexion inhabituelle",
+    "vérifiez votre identité", "activate your account"
 ]
 
 BLACKLIST_KEYWORDS = [
-    "unsubscribe", "se désabonner", "téléchargez", "download", "10% off", "réduction"
+    # Désabonnement (signe de newsletter)
+    "pour vous désabonner cliquez",
+    "unsubscribe from this list",
+    # Promos pures
+    "jusqu'à -70%", "jusqu'à -50%",
+    "-10% sur votre prochaine commande",
+    "utilisez le code promo"
 ]
 
 # ========================================
@@ -199,19 +220,22 @@ def get_refreshed_credentials(refresh_token):
     return creds
 
 def is_spam(sender, subject, body_snippet):
-    """Vérifie si un email est un spam (PARE-FEU)"""
+    """Vérifie si un email est un spam (PARE-FEU) - VERSION CORRIGÉE"""
     sender_lower = sender.lower()
     subject_lower = subject.lower()
     body_lower = body_snippet.lower()
     
+    # Check expéditeur
     for black in BLACKLIST_SENDERS:
         if black in sender_lower:
             return True, f"Sender blacklist: {black}"
     
+    # Check sujet - on cherche des correspondances plus précises
     for black in BLACKLIST_SUBJECTS:
         if black in subject_lower:
             return True, f"Subject blacklist: {black}"
     
+    # Check body - seulement si la phrase EXACTE est présente
     for black in BLACKLIST_KEYWORDS:
         if black in body_lower:
             return True, f"Body blacklist: {black}"
@@ -318,6 +342,42 @@ Exemples :
         DEBUG_LOGS.append(f"Erreur IA: {str(e)}")
         return ["REJET", "Erreur IA", "Inconnu"]
 
+def is_valid_euro_amount(amount_str):
+    """
+    FONCTION HELPER - BUG N°3 CORRIGÉ
+    Vérifie si le montant est un montant valide en euros (pas un pourcentage, pas "À déterminer")
+    Retourne True si on peut afficher un badge vert, False si on doit afficher un input
+    """
+    if not amount_str:
+        return False
+    
+    amount_clean = amount_str.strip().lower()
+    
+    # Rejeter si contient un pourcentage
+    if "%" in amount_clean:
+        return False
+    
+    # Rejeter si "à déterminer" ou similaire
+    if "déterminer" in amount_clean or "determiner" in amount_clean:
+        return False
+    
+    # Rejeter si "inconnu" ou "rejet"
+    if "inconnu" in amount_clean or "rejet" in amount_clean:
+        return False
+    
+    # Doit contenir un symbole euro ET un chiffre
+    has_euro = "€" in amount_str or "eur" in amount_clean
+    has_digit = re.search(r'\d+', amount_str) is not None
+    
+    return has_euro and has_digit
+
+def extract_numeric_amount(amount_str):
+    """Extrait le montant numérique d'une chaîne (ex: "42.99€" -> 42)"""
+    if not amount_str:
+        return 0
+    match = re.search(r'(\d+)', amount_str)
+    return int(match.group(1)) if match else 0
+
 def send_litigation_email(creds, target_email, subject, body_text):
     """Envoie un email de mise en demeure"""
     try:
@@ -380,6 +440,16 @@ body {
     font-size: 1.1rem;
     color: #ef4444;
     z-index: 10;
+}
+.amount-hint {
+    color: #f59e0b;
+    font-size: 0.75rem;
+    margin-top: 5px;
+    position: absolute;
+    top: 70px;
+    right: 30px;
+    width: 120px;
+    text-align: right;
 }
 .radar-tag {
     background: #e0f2fe;
@@ -522,12 +592,12 @@ def logout():
     return redirect("/")
 
 # ========================================
-# SCANNER INTELLIGENT
+# SCANNER INTELLIGENT - BUG N°1 CORRIGÉ
 # ========================================
 
 @app.route("/scan")
 def scan():
-    """Scanner de litiges avec pare-feu anti-spam"""
+    """Scanner de litiges avec pare-feu anti-spam - VERSION CORRIGÉE"""
     if "credentials" not in session:
         return redirect("/login")
     
@@ -557,6 +627,7 @@ def scan():
     html_cards = ""
     debug_rejected = ["<h3>🗑️ Rapport de Filtrage</h3>"]
     
+    # Charger les dossiers existants en mémoire
     existing_litigations = {}
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
         if lit.message_id:
@@ -572,43 +643,37 @@ def scan():
             snippet = msg_data.get('snippet', '')
             message_id = msg['id']
             
+            # ÉTAPE 1: Vérification spam
             spam_detected, spam_reason = is_spam(sender, subject, snippet)
             if spam_detected:
                 debug_rejected.append(f"<p>🛑 <b>SPAM BLOQUÉ :</b> {subject}<br><small>{sender}</small><br><i>Raison: {spam_reason}</i></p>")
                 continue
             
+            # ÉTAPE 2: Vérifier si le dossier existe déjà
             if message_id in existing_litigations:
                 dossier = existing_litigations[message_id]
                 
+                # Ignorer les dossiers déjà traités
                 if dossier.status in ["Envoyé", "Payé"]:
                     continue
                 
-                # LOGIQUE MONÉTAIRE STRICTE : Vérification du montant valide
-                amount_str = dossier.amount.strip()
-                is_valid_amount = (
-                    "€" in amount_str and 
-                    "%" not in amount_str and 
-                    "déterminer" not in amount_str.lower() and
-                    re.search(r'\d+', amount_str) is not None
-                )
-                
-                if is_valid_amount:
+                # LOGIQUE MONÉTAIRE - BUG N°3 CORRIGÉ
+                # Utiliser la fonction helper pour vérifier le montant
+                if is_valid_euro_amount(dossier.amount):
                     # Montant valide → Badge vert
                     amount_display = f"<div class='amount-badge'>{dossier.amount}</div>"
-                    try:
-                        total_gain += int(re.search(r'\d+', dossier.amount).group())
-                    except:
-                        pass
-            else:
-                # Montant invalide (%, "À déterminer", pas de €) → Input manuel
-                hint_text = ""
-                if "%" in amount_str:
-                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
-                elif "déterminer" in amount_str.lower():
-                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
-                
-                val = re.sub(r'[^\d]', '', amount_str)
-                amount_display = f"<input type='number' value='{val}' placeholder='Prix €' class='amount-input' onchange='saveAmount({dossier.id}, this.value)'>{hint_text}"
+                    total_gain += extract_numeric_amount(dossier.amount)
+                else:
+                    # Montant invalide → Input manuel avec hint
+                    hint_text = ""
+                    if "%" in dossier.amount:
+                        hint_text = "<div class='amount-hint'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
+                    else:
+                        hint_text = "<div class='amount-hint'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
+                    
+                    val = extract_numeric_amount(dossier.amount)
+                    val_str = str(val) if val > 0 else ""
+                    amount_display = f"<input type='number' value='{val_str}' placeholder='Prix €' class='amount-input' onchange='saveAmount({dossier.id}, this.value)'>{hint_text}"
                 
                 html_cards += f"""
                 <div class='card'>
@@ -622,16 +687,19 @@ def scan():
                 new_cases_count += 1
                 continue
             
+            # ÉTAPE 3: NOUVEAU DOSSIER - Analyser avec l'IA
             body_text = extract_email_content(msg_data)
             analysis = analyze_litigation(body_text, subject, sender)
             extracted_amount, law_final, company_detected = analysis[0], analysis[1], analysis[2]
             
-            if "REJET" in extracted_amount or "REJET" in company_detected:
+            # Vérifier si l'IA a rejeté ce mail
+            if "REJET" in extracted_amount.upper() or "REJET" in company_detected.upper():
                 debug_rejected.append(f"<p>❌ <b>IA REJET :</b> {subject}<br><small>Raison: {extracted_amount} / {company_detected}</small></p>")
                 continue
             
             company_normalized = company_detected.lower().strip()
             
+            # ÉTAPE 4: Sauvegarder le nouveau dossier en base
             new_lit = Litigation(
                 user_email=session['email'],
                 company=company_normalized,
@@ -650,29 +718,19 @@ def scan():
                 debug_rejected.append(f"<p>⚠️ Doublon ignoré : {subject}</p>")
                 continue
             
-            # LOGIQUE MONÉTAIRE STRICTE : Vérification du montant valide
-            amount_str = extracted_amount.strip()
-            is_valid_amount = (
-                "€" in amount_str and 
-                "%" not in amount_str and 
-                "déterminer" not in amount_str.lower() and
-                re.search(r'\d+', amount_str) is not None
-            )
-            
-            if is_valid_amount:
+            # ÉTAPE 5: Construire l'affichage - APRÈS avoir sauvegardé
+            # LOGIQUE MONÉTAIRE - BUG N°3 CORRIGÉ
+            if is_valid_euro_amount(extracted_amount):
                 # Montant valide → Badge vert + Calcul du total
                 amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
-                try:
-                    total_gain += int(re.search(r'\d+', extracted_amount).group())
-                except:
-                    pass
+                total_gain += extract_numeric_amount(extracted_amount)
             else:
-                # Montant invalide (%, "À déterminer", pas de €) → Input manuel
+                # Montant invalide → Input manuel avec hint
                 hint_text = ""
-                if "%" in amount_str:
-                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
-                elif "déterminer" in amount_str.lower():
-                    hint_text = "<div style='color:#f59e0b; font-size:0.75rem; margin-top:5px;'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
+                if "%" in extracted_amount:
+                    hint_text = "<div class='amount-hint'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
+                else:
+                    hint_text = "<div class='amount-hint'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
                 
                 amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' onchange='saveAmount({new_lit.id}, this.value)'>{hint_text}"
             
@@ -691,6 +749,7 @@ def scan():
             debug_rejected.append(f"<p>❌ Erreur traitement : {str(e)}</p>")
             continue
     
+    # Bouton d'action sticky
     action_btn = ""
     if new_cases_count > 0 and STRIPE_SK:
         action_btn = f"""
@@ -702,6 +761,7 @@ def scan():
         </div>
         """
     
+    # Script JS pour mise à jour AJAX des montants
     script_js = """
     <script>
     function saveAmount(id, value) {
@@ -717,6 +777,7 @@ def scan():
                 input.style.borderColor = '#10b981';
                 input.style.color = '#10b981';
                 
+                // Mettre à jour le total affiché
                 let total = parseInt(document.getElementById('total-display').textContent) || 0;
                 total += parseInt(value);
                 document.getElementById('total-display').textContent = total;
@@ -754,6 +815,7 @@ def update_amount():
     if not lit or lit.user_email != session['email']:
         return jsonify({"error": "Non autorisé"}), 403
     
+    # Formater le montant avec le symbole euro
     lit.amount = f"{amount}€"
     lit.updated_at = datetime.utcnow()
     db.session.commit()
@@ -1016,6 +1078,11 @@ def stripe_webhook():
                     user.stripe_customer_id = customer_id
                     db.session.commit()
                 
+                # Vérifier que le montant est valide avant d'envoyer
+                if not is_valid_euro_amount(lit.amount):
+                    DEBUG_LOGS.append(f"⚠️ Montant invalide pour {lit.company}: {lit.amount}")
+                    continue
+                
                 try:
                     creds = get_refreshed_credentials(user.refresh_token)
                     company_key = lit.company.lower()
@@ -1118,12 +1185,11 @@ Réponds uniquement par OUI ou NON."""
                 logs.append(f"🤖 IA Verdict : {verdict}")
                 
                 if "OUI" in verdict and user.stripe_customer_id:
-                    amount_match = re.search(r'\d+', case.amount)
-                    if not amount_match:
-                        logs.append("❌ Montant non trouvé")
+                    amount = extract_numeric_amount(case.amount)
+                    if amount <= 0:
+                        logs.append("❌ Montant non trouvé ou invalide")
                         continue
                     
-                    amount = int(amount_match.group())
                     commission = int(amount * 0.30)
                     
                     try:
