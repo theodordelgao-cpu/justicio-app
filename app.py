@@ -1346,35 +1346,64 @@ def check_refunds():
                     logs.append("❌ Pas d'API OpenAI configurée")
                     continue
                 
-                # Analyse IA pour confirmer le remboursement AVEC VÉRIFICATION DU MONTANT
+                # Analyse IA pour confirmer le remboursement AVEC TRIPLE VÉRIFICATION
                 client = OpenAI(api_key=OPENAI_API_KEY)
-                prompt = f"""Tu es un détecteur de remboursements bancaires ULTRA-STRICT.
+                prompt = f"""Tu es un AUDITEUR FINANCIER ULTRA-STRICT. Tu dois valider si cet email correspond EXACTEMENT au dossier en attente.
 
-Email de {company_clean.upper()} :
-Sujet: "{email_subject}"
-Contenu: "{snippet}"
+═══════════════════════════════════════════════════════════
+DOSSIER EN ATTENTE DE REMBOURSEMENT
+═══════════════════════════════════════════════════════════
+• Entreprise attendue : {company_clean.upper()}
+• Montant attendu : {expected_amount}€
+═══════════════════════════════════════════════════════════
 
-DOSSIER EN ATTENTE :
-- Entreprise : {company_clean.upper()}
-- Montant attendu : {expected_amount}€
+═══════════════════════════════════════════════════════════
+EMAIL À ANALYSER
+═══════════════════════════════════════════════════════════
+• Sujet : "{email_subject}"
+• Contenu : "{snippet}"
+═══════════════════════════════════════════════════════════
 
-RÈGLES STRICTES :
-1. L'email doit CONFIRMER qu'un remboursement a été EFFECTUÉ (pas "sera remboursé", mais DÉJÀ FAIT)
-2. Le montant mentionné dans l'email DOIT correspondre au montant attendu ({expected_amount}€) avec une tolérance de ±2€
-3. L'email doit provenir de {company_clean.upper()} (pas un spam, pas une pub)
+═══════════════════════════════════════════════════════════
+RÈGLE D'OR : LA TRIPLE CORRESPONDANCE (les 3 doivent être OK)
+═══════════════════════════════════════════════════════════
 
-ÉTAPES D'ANALYSE :
-1. Extrais le montant mentionné dans l'email (s'il y en a un)
-2. Compare-le au montant attendu ({expected_amount}€)
-3. Vérifie que c'est bien une confirmation de remboursement effectué
+1️⃣ CORRESPONDANCE ENTITÉ (QUI ?) 
+   L'email provient-il de {company_clean.upper()} ?
+   → Vérifie l'expéditeur, le sujet, le contenu
+   → ❌ REFUS si l'email parle d'une autre entreprise
 
-RÉPONDS AU FORMAT EXACT :
-- Si remboursement confirmé ET montant correct (±2€) : "OUI - [montant trouvé]€"
-- Si montant différent : "NON - Montant incorrect ([montant trouvé]€ vs {expected_amount}€ attendu)"
-- Si pas de remboursement confirmé : "NON - Pas de confirmation"
-- Si spam/pub : "NON - Spam"
+2️⃣ CORRESPONDANCE MONTANT (COMBIEN ?)
+   Le montant dans l'email = {expected_amount}€ (±1€ tolérance) ?
+   → Cherche un montant explicite en euros
+   → ❌ REFUS si montant différent ou absent
 
-Ta réponse :"""
+3️⃣ CORRESPONDANCE TYPE (QUOI ?)
+   C'est un VRAI REMBOURSEMENT EN ARGENT ?
+   → ✅ ACCEPTÉ : "virement effectué", "remboursement crédité", "montant viré sur votre compte"
+   → ❌ REFUS : "bon d'achat", "avoir", "crédit boutique", "coupon", "geste commercial"
+   → ❌ REFUS : "sera remboursé" (futur), "en cours de traitement" (pas encore fait)
+
+═══════════════════════════════════════════════════════════
+ANALYSE ET VERDICT
+═══════════════════════════════════════════════════════════
+
+Effectue ta triple vérification et réponds EXACTEMENT dans ce format :
+
+Si LES 3 CRITÈRES SONT OK :
+OUI - MATCH TOTAL - [montant]€ - [entreprise]
+
+Si AU MOINS 1 CRITÈRE ÉCHOUE :
+NON - [ENTITÉ|MONTANT|TYPE] INCORRECT - Raison: [explication courte]
+
+Exemples de réponses :
+• "OUI - MATCH TOTAL - 250€ - AIR FRANCE"
+• "NON - MONTANT INCORRECT - Raison: Email=110€ vs Attendu=42€"
+• "NON - ENTITÉ INCORRECTE - Raison: Email de AMAZON pour dossier SNCF"
+• "NON - TYPE INCORRECT - Raison: Bon d'achat, pas un virement"
+• "NON - TYPE INCORRECT - Raison: Remboursement futur, pas encore effectué"
+
+Ta réponse (une seule ligne) :"""
 
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
