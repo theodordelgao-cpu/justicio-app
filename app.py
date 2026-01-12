@@ -267,38 +267,55 @@ def extract_email_content(message_data):
     return message_data.get('snippet', '')
 
 def analyze_litigation(text, subject, sender):
-    """Analyse IA pour détecter un litige"""
+    """Analyse IA pour détecter un litige - VERSION LEGACY"""
+    return analyze_litigation_v2(text, subject, sender, "", None, None)
+
+def analyze_litigation_v2(text, subject, sender, to_field, detected_company, extracted_amount):
+    """Analyse IA pour détecter un litige - VERSION AMÉLIORÉE avec TO field"""
     if not OPENAI_API_KEY:
         return ["REJET", "Pas d'API", "Inconnu"]
     
     client = OpenAI(api_key=OPENAI_API_KEY)
     
+    # Préparer les infos contextuelles
+    company_hint = ""
+    if detected_company:
+        company_hint = f"\n⚠️ INDICE : L'email est envoyé À {detected_company.upper()} (champ TO: {to_field})"
+    
+    amount_hint = ""
+    if extracted_amount:
+        amount_hint = f"\n⚠️ INDICE : Montant trouvé dans le texte : {extracted_amount}"
+    
     try:
         prompt = f"""Tu es un Expert Comptable rigoureux spécialisé en litiges consommateurs.
 
 INPUT :
-- EXPÉDITEUR : {sender}
+- EXPÉDITEUR (FROM) : {sender}
+- DESTINATAIRE (TO) : {to_field}
 - SUJET : {subject}
 - CONTENU : {text[:1800]}
+{company_hint}
+{amount_hint}
 
 RÈGLES STRICTES :
 
 1. MONTANT (Le nerf de la guerre) :
-   - Cherche un montant EXPLICITE EN EUROS (ex: "42.99€", "120 EUR", "50 euros")
+   - Cherche un montant EXPLICITE EN EUROS (ex: "42.99€", "120 EUR", "50 euros", "40€")
    - ⚠️ INTERDICTION D'ESTIMER. Si aucun chiffre visible : Écris "À déterminer"
    - ⚠️ INTERDICTION DE RENVOYER DES POURCENTAGES (jamais de "25% du billet")
-   - EXCEPTION VOL ANNULÉ/RETARDÉ : Si compagnie aérienne (Air France, Ryanair, EasyJet, Lufthansa, KLM, British Airways...) 
-     ET (annulation OR retard > 3h) → Mets automatiquement "250€"
+   - Le montant peut être collé au symbole € (ex: "40€" = 40 euros)
+   - EXCEPTION VOL ANNULÉ/RETARDÉ : Si compagnie aérienne ET (annulation OR retard > 3h) → Mets "250€"
    - EXCEPTION TRAIN RETARDÉ : Si SNCF/Eurostar/Ouigo ET retard mentionné → Mets "À déterminer"
-     (L'utilisateur devra calculer lui-même le pourcentage)
 
-2. MARQUE :
-   - Extrais depuis l'adresse email (@amazon.fr → AMAZON)
-   - Si impossible, regarde le sujet/corps
-   - Si "Colis" générique sans marque → Mets "AMAZON" par défaut
+2. MARQUE (PRIORITÉ AU DESTINATAIRE) :
+   - RÈGLE N°1 : Si le champ TO contient @zalando.fr → c'est ZALANDO
+   - RÈGLE N°2 : Si le champ TO contient @sncf.fr → c'est SNCF
+   - RÈGLE N°3 : Si le champ TO contient @amazon.fr → c'est AMAZON
+   - RÈGLE N°4 : Sinon, regarde le sujet/corps pour identifier l'entreprise
+   - Ne mets JAMAIS "AMAZON" par défaut si le destinataire indique une autre entreprise !
 
 3. CRITÈRES DE REJET (réponds "REJET" si) :
-   - Email de confirmation de paiement réussi ("Virement effectué", "Remboursement validé", "Payment received")
+   - Email de confirmation de paiement réussi ("Virement effectué", "Remboursement validé")
    - Email publicitaire (promo, soldes, newsletter, offre spéciale)
    - Email de sécurité (changement mot de passe, connexion suspecte)
    - Email de bienvenue/inscription
@@ -316,9 +333,10 @@ MONTANT | LOI | MARQUE
 
 Exemples :
 - "42.99€ | la Directive UE 2011/83 | AMAZON"
+- "40€ | le Règlement (UE) 2021/782 | SNCF"
 - "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE"
 - "À déterminer | le Règlement (UE) 2021/782 | SNCF"
-- "À déterminer | l'Article L217-4 | FNAC"
+- "50€ | la Directive UE 2011/83 | ZALANDO"
 - "REJET | PAYÉ | REJET" (si déjà remboursé)
 - "REJET | PUB | REJET" (si publicité)
 """
@@ -371,12 +389,129 @@ def is_valid_euro_amount(amount_str):
     
     return has_euro and has_digit
 
+# ========================================
+# DOMAINES D'ENTREPRISES (pour filtrage anti-bot)
+# ========================================
+
+COMPANY_DOMAINS = [
+    "amazon", "fnac", "darty", "sncf", "airfrance", "air-france",
+    "zalando", "apple", "booking", "airbnb", "expedia", "ryanair",
+    "easyjet", "lufthansa", "klm", "british-airways", "eurostar",
+    "ouigo", "uber", "deliveroo", "bolt", "zara", "hm.com", "asos",
+    "shein", "aliexpress", "temu", "vinted", "ebay", "cdiscount",
+    "no-reply", "noreply", "service-client", "support", "contact",
+    "compta", "facturation", "billing", "info@", "newsletter"
+]
+
+def is_company_sender(sender):
+    """Vérifie si l'expéditeur est une entreprise (pas un particulier)"""
+    sender_lower = sender.lower()
+    for domain in COMPANY_DOMAINS:
+        if domain in sender_lower:
+            return True
+    return False
+
+def extract_company_from_recipient(to_field, subject, sender):
+    """
+    Extrait l'entreprise depuis le destinataire (TO) en priorité,
+    sinon depuis le sujet ou l'expéditeur
+    """
+    to_lower = to_field.lower() if to_field else ""
+    
+    # Liste des entreprises connues
+    companies = [
+        "amazon", "fnac", "darty", "sncf", "air france", "airfrance",
+        "zalando", "apple", "booking", "airbnb", "expedia", "ryanair",
+        "easyjet", "lufthansa", "klm", "british airways", "eurostar",
+        "ouigo", "uber", "deliveroo", "bolt", "zara", "h&m", "asos",
+        "cdiscount", "ebay", "wish"
+    ]
+    
+    # 1. Chercher dans le destinataire (TO) - PRIORITÉ
+    for company in companies:
+        company_clean = company.replace(" ", "")
+        if company in to_lower or company_clean in to_lower:
+            return company
+    
+    # 2. Chercher dans le sujet
+    subject_lower = subject.lower()
+    for company in companies:
+        if company in subject_lower:
+            return company
+    
+    # 3. Chercher dans l'expéditeur (pour les réponses)
+    sender_lower = sender.lower()
+    for company in companies:
+        company_clean = company.replace(" ", "")
+        if company in sender_lower or company_clean in sender_lower:
+            return company
+    
+    return None
+
 def extract_numeric_amount(amount_str):
-    """Extrait le montant numérique d'une chaîne (ex: "42.99€" -> 42)"""
+    """
+    Extrait le montant numérique d'une chaîne - VERSION AMÉLIORÉE
+    Gère: "42.99€", "42,99€", "42 €", "42€", "42 EUR", "42 euros"
+    """
     if not amount_str:
         return 0
-    match = re.search(r'(\d+)', amount_str)
-    return int(match.group(1)) if match else 0
+    
+    # Normaliser la chaîne
+    amount_clean = amount_str.replace(",", ".").replace(" ", "")
+    
+    # Pattern pour capturer les montants avec décimales
+    # Exemples: 42.99€, 42€, 42.99EUR, 42euros
+    patterns = [
+        r'(\d+[.,]?\d*)\s*€',           # 42.99€ ou 42€
+        r'(\d+[.,]?\d*)\s*eur',          # 42.99EUR ou 42 eur
+        r'€\s*(\d+[.,]?\d*)',            # €42.99
+        r'(\d+[.,]?\d*)\s*euros?',       # 42 euros ou 42 euro
+        r'(\d+[.,]?\d*)'                 # Fallback: juste un nombre
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, amount_str.lower())
+        if match:
+            try:
+                value = float(match.group(1).replace(",", "."))
+                return int(value)  # Arrondir à l'entier
+            except:
+                continue
+    
+    return 0
+
+def extract_amount_from_text(text):
+    """
+    Extrait un montant depuis un texte brut - VERSION AMÉLIORÉE
+    Cherche les patterns de montant dans tout le texte
+    """
+    if not text:
+        return None
+    
+    text_lower = text.lower()
+    
+    # Patterns pour trouver des montants en euros
+    patterns = [
+        r'(\d+[.,]?\d*)\s*€',
+        r'(\d+[.,]?\d*)\s*eur(?:os?)?',
+        r'€\s*(\d+[.,]?\d*)',
+        r'montant[:\s]+(\d+[.,]?\d*)',
+        r'remboursement[:\s]+(?:de\s+)?(\d+[.,]?\d*)',
+        r'prix[:\s]+(\d+[.,]?\d*)',
+        r'somme[:\s]+(?:de\s+)?(\d+[.,]?\d*)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            try:
+                value = float(match.group(1).replace(",", "."))
+                if value > 0:
+                    return f"{int(value)}€"
+            except:
+                continue
+    
+    return None
 
 def send_litigation_email(creds, target_email, subject, body_text):
     """Envoie un email de mise en demeure"""
@@ -652,6 +787,7 @@ def scan():
             
             subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
             sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
+            to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), "")
             snippet = msg_data.get('snippet', '')
             
             # ÉTAPE 1: Vérification spam
@@ -665,9 +801,23 @@ def scan():
                 debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
                 continue
             
-            # ÉTAPE 2: Analyser avec l'IA
+            # ÉTAPE 1.6: FILTRE ANTI-BOT - Ignorer les emails des entreprises
+            # On ne crée des litiges que pour les emails envoyés PAR des particuliers VERS les entreprises
+            if is_company_sender(sender):
+                debug_rejected.append(f"<p>🤖 <b>IGNORÉ (email d'entreprise) :</b> {subject}<br><small>De: {sender}</small></p>")
+                continue
+            
+            # ÉTAPE 2: Extraire le contenu complet
             body_text = extract_email_content(msg_data)
-            analysis = analyze_litigation(body_text, subject, sender)
+            
+            # ÉTAPE 2.5: Détecter l'entreprise depuis le destinataire (TO) en priorité
+            detected_company = extract_company_from_recipient(to_field, subject, sender)
+            
+            # ÉTAPE 2.6: Essayer d'extraire le montant directement du texte
+            extracted_amount_from_text = extract_amount_from_text(body_text)
+            
+            # ÉTAPE 3: Analyser avec l'IA (en passant l'info du destinataire)
+            analysis = analyze_litigation_v2(body_text, subject, sender, to_field, detected_company, extracted_amount_from_text)
             extracted_amount, law_final, company_detected = analysis[0], analysis[1], analysis[2]
             
             # Vérifier si l'IA a rejeté ce mail
@@ -675,7 +825,15 @@ def scan():
                 debug_rejected.append(f"<p>❌ <b>IA REJET :</b> {subject}<br><small>Raison: {extracted_amount} / {company_detected}</small></p>")
                 continue
             
+            # Utiliser l'entreprise détectée par TO si l'IA n'a pas trouvé mieux
+            if detected_company and (company_detected.lower() == "inconnu" or company_detected.lower() == "amazon"):
+                company_detected = detected_company
+            
             company_normalized = company_detected.lower().strip()
+            
+            # Si le montant de l'IA est "À déterminer" mais qu'on l'a trouvé dans le texte
+            if not is_valid_euro_amount(extracted_amount) and extracted_amount_from_text:
+                extracted_amount = extracted_amount_from_text
             
             # STOCKER EN MÉMOIRE (pas en base !)
             litigation_data = {
