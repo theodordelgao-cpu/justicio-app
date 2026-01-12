@@ -1277,7 +1277,10 @@ def check_refunds():
     logs.append(f"<p>📂 {len(active_cases)} dossier(s) en attente de remboursement</p>")
     
     for case in active_cases:
-        logs.append(f"<hr>📂 <b>{case.company.upper()}</b> - {case.amount}")
+        # Nettoyer le nom de l'entreprise (strip pour éviter les espaces parasites)
+        company_clean = case.company.strip().lower()
+        
+        logs.append(f"<hr>📂 <b>{company_clean.upper()}</b> - {case.amount}")
         
         user = User.query.filter_by(email=case.user_email).first()
         if not user or not user.refresh_token:
@@ -1292,22 +1295,33 @@ def check_refunds():
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
             
-            # Recherche d'emails de remboursement
-            query = f'label:INBOX "{case.company}" (remboursement OR refund OR virement OR "a]été crédité" OR "has been refunded" OR "montant remboursé")'
-            results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
+            # Recherche d'emails de remboursement - SANS label:INBOX pour chercher partout
+            query = f'"{company_clean}" (remboursement OR refund OR virement OR "a été crédité" OR "has been refunded" OR "montant remboursé" OR "votre compte a été crédité" OR "remboursement effectué" OR "refund processed")'
+            
+            # LOG DEBUG - Afficher la requête exacte
+            print(f"🔍 DEBUG QUERY pour {company_clean}: [{query}]")
+            logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🔍 Query: <code>{query[:80]}...</code></p>")
+            
+            results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
             messages = results.get('messages', [])
             
-            logs.append(f"📧 {len(messages)} email(s) trouvé(s) pour {case.company}")
+            logs.append(f"📧 <b>{len(messages)}</b> email(s) trouvé(s) pour {company_clean}")
+            
+            if len(messages) == 0:
+                logs.append("<p style='margin-left:20px; color:#f59e0b;'>⚠️ Aucun email de remboursement détecté pour l'instant</p>")
+                continue
             
             for msg in messages:
                 msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
                 snippet = msg_data.get('snippet', '')
                 
-                # Extraire la date de l'email
+                # Extraire la date et le sujet de l'email
                 headers = msg_data['payload'].get('headers', [])
                 email_date = next((h['value'] for h in headers if h['name'].lower() == 'date'), "Date inconnue")
+                email_subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
                 
-                logs.append(f"<p style='margin-left:20px;'>📩 Email du {email_date[:20]}...</p>")
+                logs.append(f"<p style='margin-left:20px;'>📩 <b>{email_subject[:50]}...</b></p>")
+                logs.append(f"<p style='margin-left:30px; color:#6b7280; font-size:0.85rem;'>Date: {email_date[:25]} | Extrait: {snippet[:80]}...</p>")
                 
                 if not OPENAI_API_KEY:
                     logs.append("❌ Pas d'API OpenAI configurée")
@@ -1317,8 +1331,9 @@ def check_refunds():
                 client = OpenAI(api_key=OPENAI_API_KEY)
                 prompt = f"""Tu es un détecteur de remboursements bancaires.
 
-Email de {case.company} :
-"{snippet}"
+Email de {company_clean} :
+Sujet: "{email_subject}"
+Contenu: "{snippet}"
 
 Montant attendu : {case.amount}
 
@@ -1366,7 +1381,7 @@ Réponds UNIQUEMENT par OUI ou NON."""
                             payment_method=payment_methods.data[0].id,
                             off_session=True,
                             confirm=True,
-                            description=f"Commission Justicio 30% - {case.company.upper()} - Dossier #{case.id}"
+                            description=f"Commission Justicio 30% - {company_clean.upper()} - Dossier #{case.id}"
                         )
                         
                         if payment_intent.status == "succeeded":
@@ -1376,7 +1391,7 @@ Réponds UNIQUEMENT par OUI ou NON."""
                             db.session.commit()
                             
                             logs.append(f"<p style='margin-left:20px; color:#10b981; font-weight:bold;'>✅ JACKPOT ! {commission}€ PRÉLEVÉS AVEC SUCCÈS !</p>")
-                            send_telegram_notif(f"💰💰💰 **JUSTICIO JACKPOT** 💰💰💰\n\n{commission}€ prélevés sur {case.company.upper()} !\nClient: {user.email}\nDossier #{case.id}")
+                            send_telegram_notif(f"💰💰💰 **JUSTICIO JACKPOT** 💰💰💰\n\n{commission}€ prélevés sur {company_clean.upper()} !\nClient: {user.email}\nDossier #{case.id}")
                             
                             # Archiver l'email (retirer de INBOX)
                             try:
@@ -1395,14 +1410,14 @@ Réponds UNIQUEMENT par OUI ou NON."""
                     
                     except stripe.error.CardError as e:
                         logs.append(f"<p style='margin-left:20px; color:red;'>❌ Erreur carte : {e.user_message}</p>")
-                        DEBUG_LOGS.append(f"Stripe CardError {case.company}: {e.user_message}")
+                        DEBUG_LOGS.append(f"Stripe CardError {company_clean}: {e.user_message}")
                     except Exception as e:
                         logs.append(f"<p style='margin-left:20px; color:red;'>❌ Erreur prélèvement : {str(e)}</p>")
-                        DEBUG_LOGS.append(f"Stripe Error {case.company}: {str(e)}")
+                        DEBUG_LOGS.append(f"Stripe Error {company_clean}: {str(e)}")
         
         except Exception as e:
             logs.append(f"<p style='color:red;'>❌ Erreur générale : {str(e)}</p>")
-            DEBUG_LOGS.append(f"CRON Error {case.company}: {str(e)}")
+            DEBUG_LOGS.append(f"CRON Error {company_clean}: {str(e)}")
     
     logs.append("<hr>")
     logs.append(f"<p>✅ Scan terminé à {datetime.utcnow().strftime('%H:%M:%S')} UTC</p>")
