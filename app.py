@@ -390,26 +390,117 @@ def is_valid_euro_amount(amount_str):
     return has_euro and has_digit
 
 # ========================================
-# DOMAINES D'ENTREPRISES (pour filtrage anti-bot)
+# MUR DE FILTRAGE - HARD FILTER EXPÉDITEURS
 # ========================================
 
-COMPANY_DOMAINS = [
-    "amazon", "fnac", "darty", "sncf", "airfrance", "air-france",
-    "zalando", "apple", "booking", "airbnb", "expedia", "ryanair",
-    "easyjet", "lufthansa", "klm", "british-airways", "eurostar",
-    "ouigo", "uber", "deliveroo", "bolt", "zara", "hm.com", "asos",
-    "shein", "aliexpress", "temu", "vinted", "ebay", "cdiscount",
-    "no-reply", "noreply", "service-client", "support", "contact",
-    "compta", "facturation", "billing", "info@", "newsletter"
+# Domaines d'entreprises à BLOQUER (emails de réponses/notifications)
+BLACKLIST_COMPANY_DOMAINS = [
+    # E-commerce
+    "amazon", "fnac", "darty", "cdiscount", "zalando", "asos", "zara",
+    "hm.com", "shein", "aliexpress", "temu", "vinted", "ebay", "wish",
+    "rakuten", "priceminister", "leboncoin", "backmarket",
+    # Transport
+    "sncf", "ouigo", "eurostar", "thalys", "trainline",
+    "airfrance", "air-france", "klm", "easyjet", "ryanair", "vueling",
+    "lufthansa", "british-airways", "transavia", "volotea",
+    "uber", "bolt", "kapten", "heetch", "blablacar",
+    # Livraison
+    "deliveroo", "ubereats", "justeat", "chronopost", "colissimo",
+    "dhl", "ups", "fedex", "mondialrelay", "relais-colis", "laposte",
+    # Tech / Services
+    "apple", "google", "microsoft", "paypal", "stripe", "booking",
+    "airbnb", "expedia", "tripadvisor", "hotels.com", "kayak",
+    # Télécom
+    "orange.fr", "sfr.fr", "bouygues", "free.fr", "sosh",
+    # Banques / Assurances  
+    "bnp", "societegenerale", "creditagricole", "lcl", "boursorama",
+    "fortuneo", "ing", "revolut", "n26", "axa", "allianz", "maif"
 ]
 
+# Préfixes d'adresses à BLOQUER (rôles automatisés)
+BLACKLIST_EMAIL_PREFIXES = [
+    "no-reply", "noreply", "ne-pas-repondre", "do-not-reply", "donotreply",
+    "contact", "service", "support", "client", "customer", "help",
+    "compta", "facture", "invoice", "billing", "payment", "paiement",
+    "notification", "notifications", "alert", "alerts", "alerte",
+    "info", "infos", "information", "news", "newsletter", "marketing",
+    "team", "equipe", "admin", "system", "mailer", "daemon", "postmaster",
+    "order", "orders", "commande", "commandes", "shipping", "livraison",
+    "confirm", "confirmation", "verification", "security", "securite",
+    "reclamation", "sav", "retour", "return", "refund", "remboursement"
+]
+
+# Domaines AUTORISÉS (particuliers uniquement)
+WHITELIST_PERSONAL_DOMAINS = [
+    "gmail.com", "googlemail.com", "yahoo.fr", "yahoo.com", "outlook.com",
+    "outlook.fr", "hotmail.com", "hotmail.fr", "live.com", "live.fr",
+    "msn.com", "icloud.com", "me.com", "mac.com", "aol.com", "aol.fr",
+    "orange.fr", "wanadoo.fr", "free.fr", "sfr.fr", "laposte.net",
+    "bbox.fr", "numericable.fr", "neuf.fr", "club-internet.fr",
+    "protonmail.com", "protonmail.ch", "pm.me", "tutanota.com",
+    "yandex.com", "gmx.com", "gmx.fr", "zoho.com", "mail.com"
+]
+
+def is_ignored_sender(sender_email):
+    """
+    MUR DE FILTRAGE STRICT
+    Retourne True si l'expéditeur doit être IGNORÉ (email d'entreprise)
+    Retourne False si c'est un particulier (à analyser)
+    """
+    if not sender_email:
+        return True, "Expéditeur vide"
+    
+    sender_lower = sender_email.lower()
+    
+    # Extraire l'adresse email si format "Nom <email@domain.com>"
+    email_match = re.search(r'<([^>]+)>', sender_lower)
+    if email_match:
+        email_address = email_match.group(1)
+    else:
+        email_address = sender_lower.strip()
+    
+    # Extraire le préfixe (avant @) et le domaine (après @)
+    if '@' in email_address:
+        prefix, domain = email_address.split('@', 1)
+    else:
+        return True, "Format email invalide"
+    
+    # CHECK 1 : Vérifier si le DOMAINE est une entreprise blacklistée
+    for blacklisted in BLACKLIST_COMPANY_DOMAINS:
+        if blacklisted in domain:
+            return True, f"Domaine entreprise: {blacklisted}"
+    
+    # CHECK 2 : Vérifier si le PRÉFIXE est un rôle automatisé
+    for blacklisted_prefix in BLACKLIST_EMAIL_PREFIXES:
+        if blacklisted_prefix in prefix:
+            return True, f"Préfixe automatisé: {blacklisted_prefix}"
+    
+    # CHECK 3 : Vérifier si c'est un domaine personnel autorisé
+    is_personal = False
+    for personal_domain in WHITELIST_PERSONAL_DOMAINS:
+        if domain.endswith(personal_domain):
+            is_personal = True
+            break
+    
+    # Si ce n'est pas un domaine personnel connu ET pas déjà blacklisté,
+    # on le laisse passer avec prudence (pourrait être un email pro perso)
+    if not is_personal:
+        # Vérifier que ce n'est pas un domaine d'entreprise évident
+        suspicious_patterns = [
+            ".fr", ".com", ".eu", ".io", ".co"
+        ]
+        # Si le domaine ressemble à une entreprise (court, pas de webmail)
+        if len(domain.split('.')[0]) > 3 and domain.split('.')[0] not in ['mail', 'email']:
+            # Potentiellement une entreprise, mais on laisse passer
+            # car ça pourrait être un email pro d'un client
+            pass
+    
+    return False, "Particulier autorisé"
+
 def is_company_sender(sender):
-    """Vérifie si l'expéditeur est une entreprise (pas un particulier)"""
-    sender_lower = sender.lower()
-    for domain in COMPANY_DOMAINS:
-        if domain in sender_lower:
-            return True
-    return False
+    """Alias pour compatibilité - utilise le nouveau filtre strict"""
+    is_ignored, reason = is_ignored_sender(sender)
+    return is_ignored
 
 def extract_company_from_recipient(to_field, subject, sender):
     """
@@ -801,10 +892,11 @@ def scan():
                 debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
                 continue
             
-            # ÉTAPE 1.6: FILTRE ANTI-BOT - Ignorer les emails des entreprises
-            # On ne crée des litiges que pour les emails envoyés PAR des particuliers VERS les entreprises
-            if is_company_sender(sender):
-                debug_rejected.append(f"<p>🤖 <b>IGNORÉ (email d'entreprise) :</b> {subject}<br><small>De: {sender}</small></p>")
+            # ÉTAPE 1.6: MUR DE FILTRAGE - HARD FILTER EXPÉDITEURS
+            # On ne crée des litiges que pour les emails envoyés PAR des particuliers
+            is_ignored, ignore_reason = is_ignored_sender(sender)
+            if is_ignored:
+                debug_rejected.append(f"<p>🚫 <b>BLOQUÉ (expéditeur entreprise) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {ignore_reason}</i></p>")
                 continue
             
             # ÉTAPE 2: Extraire le contenu complet
