@@ -1276,11 +1276,17 @@ def check_refunds():
     
     logs.append(f"<p>📂 {len(active_cases)} dossier(s) en attente de remboursement</p>")
     
+    # ANTI-DOUBLON : Tracker les emails déjà utilisés pour valider un dossier dans ce run
+    used_email_ids = set()
+    
     for case in active_cases:
         # Nettoyer le nom de l'entreprise (strip pour éviter les espaces parasites)
         company_clean = case.company.strip().lower()
         
-        logs.append(f"<hr>📂 <b>{company_clean.upper()}</b> - {case.amount}")
+        # Extraire le montant attendu pour la comparaison
+        expected_amount = extract_numeric_amount(case.amount)
+        
+        logs.append(f"<hr>📂 <b>{company_clean.upper()}</b> - {case.amount} (attendu: {expected_amount}€)")
         
         user = User.query.filter_by(email=case.user_email).first()
         if not user or not user.refresh_token:
@@ -1295,8 +1301,8 @@ def check_refunds():
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
             
-            # Recherche d'emails de remboursement - SANS label:INBOX pour chercher partout
-            query = f'"{company_clean}" (remboursement OR refund OR virement OR "a été crédité" OR "has been refunded" OR "montant remboursé" OR "votre compte a été crédité" OR "remboursement effectué" OR "refund processed")'
+            # Recherche d'emails de remboursement - EXCLURE les mises en demeure
+            query = f'"{company_clean}" (remboursement OR refund OR virement OR "a été crédité" OR "has been refunded" OR "montant remboursé" OR "votre compte a été crédité" OR "remboursement effectué" OR "refund processed") -subject:"MISE EN DEMEURE"'
             
             # LOG DEBUG - Afficher la requête exacte
             print(f"🔍 DEBUG QUERY pour {company_clean}: [{query}]")
@@ -1311,14 +1317,27 @@ def check_refunds():
                 logs.append("<p style='margin-left:20px; color:#f59e0b;'>⚠️ Aucun email de remboursement détecté pour l'instant</p>")
                 continue
             
+            found_valid_refund = False
+            
             for msg in messages:
-                msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+                msg_id = msg['id']
+                
+                # ANTI-DOUBLON : Skip si cet email a déjà validé un autre dossier
+                if msg_id in used_email_ids:
+                    logs.append(f"<p style='margin-left:20px; color:#f59e0b;'>⏭️ Email déjà utilisé pour un autre dossier - SKIP</p>")
+                    continue
+                
+                msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
                 snippet = msg_data.get('snippet', '')
                 
                 # Extraire la date et le sujet de l'email
                 headers = msg_data['payload'].get('headers', [])
                 email_date = next((h['value'] for h in headers if h['name'].lower() == 'date'), "Date inconnue")
                 email_subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
+                
+                # SKIP les mises en demeure (double vérification)
+                if "MISE EN DEMEURE" in email_subject.upper():
+                    continue
                 
                 logs.append(f"<p style='margin-left:20px;'>📩 <b>{email_subject[:50]}...</b></p>")
                 logs.append(f"<p style='margin-left:30px; color:#6b7280; font-size:0.85rem;'>Date: {email_date[:25]} | Extrait: {snippet[:80]}...</p>")
@@ -1327,34 +1346,50 @@ def check_refunds():
                     logs.append("❌ Pas d'API OpenAI configurée")
                     continue
                 
-                # Analyse IA pour confirmer le remboursement
+                # Analyse IA pour confirmer le remboursement AVEC VÉRIFICATION DU MONTANT
                 client = OpenAI(api_key=OPENAI_API_KEY)
-                prompt = f"""Tu es un détecteur de remboursements bancaires.
+                prompt = f"""Tu es un détecteur de remboursements bancaires ULTRA-STRICT.
 
-Email de {company_clean} :
+Email de {company_clean.upper()} :
 Sujet: "{email_subject}"
 Contenu: "{snippet}"
 
-Montant attendu : {case.amount}
+DOSSIER EN ATTENTE :
+- Entreprise : {company_clean.upper()}
+- Montant attendu : {expected_amount}€
 
-Question : Est-ce que cet email CONFIRME qu'un REMBOURSEMENT ou VIREMENT a été EFFECTUÉ avec succès ?
-(Pas une promesse, pas un "sera remboursé", mais bien un remboursement DÉJÀ FAIT)
+RÈGLES STRICTES :
+1. L'email doit CONFIRMER qu'un remboursement a été EFFECTUÉ (pas "sera remboursé", mais DÉJÀ FAIT)
+2. Le montant mentionné dans l'email DOIT correspondre au montant attendu ({expected_amount}€) avec une tolérance de ±2€
+3. L'email doit provenir de {company_clean.upper()} (pas un spam, pas une pub)
 
-Réponds UNIQUEMENT par OUI ou NON."""
+ÉTAPES D'ANALYSE :
+1. Extrais le montant mentionné dans l'email (s'il y en a un)
+2. Compare-le au montant attendu ({expected_amount}€)
+3. Vérifie que c'est bien une confirmation de remboursement effectué
+
+RÉPONDS AU FORMAT EXACT :
+- Si remboursement confirmé ET montant correct (±2€) : "OUI - [montant trouvé]€"
+- Si montant différent : "NON - Montant incorrect ([montant trouvé]€ vs {expected_amount}€ attendu)"
+- Si pas de remboursement confirmé : "NON - Pas de confirmation"
+- Si spam/pub : "NON - Spam"
+
+Ta réponse :"""
 
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
-                    max_tokens=10
+                    max_tokens=50
                 )
                 
-                verdict = response.choices[0].message.content.strip().upper()
+                verdict = response.choices[0].message.content.strip()
                 logs.append(f"<p style='margin-left:20px;'>🤖 IA Verdict : <b>{verdict}</b></p>")
                 
-                if "OUI" in verdict:
-                    # REMBOURSEMENT DÉTECTÉ ! On prélève la commission
-                    amount = extract_numeric_amount(case.amount)
+                # Vérifier si le verdict commence par OUI
+                if verdict.upper().startswith("OUI"):
+                    # REMBOURSEMENT DÉTECTÉ ET MONTANT VALIDÉ !
+                    amount = expected_amount
                     if amount <= 0:
                         logs.append("❌ Montant non extractible")
                         continue
@@ -1385,25 +1420,29 @@ Réponds UNIQUEMENT par OUI ou NON."""
                         )
                         
                         if payment_intent.status == "succeeded":
+                            # Marquer cet email comme utilisé
+                            used_email_ids.add(msg_id)
+                            
                             # Mettre à jour le statut
                             case.status = "Remboursé"
                             case.updated_at = datetime.utcnow()
                             db.session.commit()
                             
                             logs.append(f"<p style='margin-left:20px; color:#10b981; font-weight:bold;'>✅ JACKPOT ! {commission}€ PRÉLEVÉS AVEC SUCCÈS !</p>")
-                            send_telegram_notif(f"💰💰💰 **JUSTICIO JACKPOT** 💰💰💰\n\n{commission}€ prélevés sur {company_clean.upper()} !\nClient: {user.email}\nDossier #{case.id}")
+                            send_telegram_notif(f"💰💰💰 **JUSTICIO JACKPOT** 💰💰💰\n\n{commission}€ prélevés sur {company_clean.upper()} !\nClient: {user.email}\nDossier #{case.id}\nMontant remboursé: {amount}€")
                             
                             # Archiver l'email (retirer de INBOX)
                             try:
                                 service.users().messages().modify(
                                     userId='me',
-                                    id=msg['id'],
+                                    id=msg_id,
                                     body={'removeLabelIds': ['INBOX']}
                                 ).execute()
                                 logs.append("<p style='margin-left:20px;'>📥 Email archivé</p>")
                             except:
                                 pass
                             
+                            found_valid_refund = True
                             break  # Passer au dossier suivant
                         else:
                             logs.append(f"❌ Paiement non confirmé : {payment_intent.status}")
@@ -1414,6 +1453,9 @@ Réponds UNIQUEMENT par OUI ou NON."""
                     except Exception as e:
                         logs.append(f"<p style='margin-left:20px; color:red;'>❌ Erreur prélèvement : {str(e)}</p>")
                         DEBUG_LOGS.append(f"Stripe Error {company_clean}: {str(e)}")
+            
+            if not found_valid_refund:
+                logs.append(f"<p style='margin-left:20px; color:#6b7280;'>ℹ️ Aucun remboursement valide trouvé pour ce dossier</p>")
         
         except Exception as e:
             logs.append(f"<p style='color:red;'>❌ Erreur générale : {str(e)}</p>")
@@ -1421,6 +1463,7 @@ Réponds UNIQUEMENT par OUI ou NON."""
     
     logs.append("<hr>")
     logs.append(f"<p>✅ Scan terminé à {datetime.utcnow().strftime('%H:%M:%S')} UTC</p>")
+    logs.append(f"<p>📊 Emails utilisés dans ce run : {len(used_email_ids)}</p>")
     
     return STYLE + "<br>".join(logs) + "<br><br><a href='/' class='btn-success'>Retour</a>"
 
