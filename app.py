@@ -274,9 +274,10 @@ def analyze_litigation_v2(text, subject, sender, to_field, detected_company, ext
     """
     🕵️ AGENT 1 : LE CHASSEUR - Analyse IA des litiges
     But : Détecter les PROBLÈMES NON RÉSOLUS uniquement
+    Retourne : [MONTANT, LOI, MARQUE, PREUVE]
     """
     if not OPENAI_API_KEY:
-        return ["REJET", "Pas d'API", "Inconnu"]
+        return ["REJET", "Pas d'API", "Inconnu", ""]
     
     client = OpenAI(api_key=OPENAI_API_KEY)
     
@@ -307,9 +308,9 @@ INPUT :
 ═══════════════════════════════════════════════════════════════
 
 Si l'email contient UN SEUL de ces indices, réponds IMMÉDIATEMENT :
-"REJET | DÉJÀ PAYÉ | [MARQUE]"
+"REJET | DÉJÀ PAYÉ | [MARQUE] | Email de confirmation de paiement"
 
-MOTS-CLÉS DE RÉSOLUTION (= REJET) :
+MOTS-CLÉS DE RÉSOLUTION (= REJET DÉJÀ PAYÉ) :
 - "virement effectué", "virement réalisé", "virement envoyé"
 - "remboursement effectué", "remboursement validé", "remboursement confirmé"  
 - "crédité sur votre compte", "créditée sur votre compte"
@@ -318,10 +319,27 @@ MOTS-CLÉS DE RÉSOLUTION (= REJET) :
 - "nous avons bien procédé au remboursement"
 - "confirmation de remboursement", "avis de virement"
 - "problème résolu", "dossier clôturé", "régularisation effectuée"
-- "bon d'achat offert", "avoir crédité", "geste commercial accordé"
 
 ═══════════════════════════════════════════════════════════════
-RÈGLES D'EXTRACTION (si PAS de résolution détectée)
+🚨 RÈGLE PRIORITAIRE N°2 : DÉTECTER LES REFUS DU SERVICE CLIENT
+═══════════════════════════════════════════════════════════════
+
+Si l'email est une RÉPONSE NÉGATIVE d'une entreprise, réponds :
+"REJET | REFUS | [MARQUE] | [Citation du refus]"
+
+MOTS-CLÉS DE REFUS (= REJET REFUS) :
+- "malheureusement", "nous regrettons", "nous sommes au regret"
+- "ne pouvons pas", "ne pouvons accéder", "impossible de"
+- "votre demande ne peut être", "ne peut aboutir"
+- "refusons", "refus de", "rejet de votre demande"
+- "pas en mesure de", "dans l'impossibilité"
+- "ne sera pas possible", "ne pouvons donner suite"
+- "conditions non remplies", "hors délai", "hors garantie"
+
+⚠️ Un refus N'EST PAS un litige gagnable - c'est une réponse définitive !
+
+═══════════════════════════════════════════════════════════════
+RÈGLES D'EXTRACTION (si PAS de résolution/refus détecté)
 ═══════════════════════════════════════════════════════════════
 
 1. MONTANT (Le nerf de la guerre) :
@@ -337,15 +355,19 @@ RÈGLES D'EXTRACTION (si PAS de résolution détectée)
    - RÈGLE N°2 : Si le champ TO contient @sncf.fr → c'est SNCF
    - RÈGLE N°3 : Si le champ TO contient @amazon.fr → c'est AMAZON
    - RÈGLE N°4 : Sinon, regarde le sujet/corps pour identifier l'entreprise
-   - Ne mets JAMAIS "AMAZON" par défaut si le destinataire indique une autre entreprise !
 
-3. AUTRES CRITÈRES DE REJET :
-   - "REJET | PUB | REJET" si publicité/newsletter/promo
-   - "REJET | SÉCURITÉ | REJET" si changement mot de passe/connexion suspecte
-   - "REJET | BIENVENUE | REJET" si inscription/bienvenue
-   - "REJET | HORS SUJET | REJET" si aucun problème consommateur
+3. PREUVE (NOUVELLE RÈGLE IMPORTANTE) :
+   - Extrais la PHRASE EXACTE du texte qui mentionne le montant
+   - Cette phrase sera affichée au client comme justification
+   - Exemples : "Je demande le remboursement de 50€", "Ma commande de 89.99€ n'est jamais arrivée"
+   - Si pas de phrase avec montant, cite la phrase décrivant le problème
 
-4. LOI APPLICABLE :
+4. AUTRES CRITÈRES DE REJET :
+   - "REJET | PUB | REJET | Email publicitaire" si publicité/newsletter
+   - "REJET | SÉCURITÉ | REJET | Email de sécurité" si mot de passe/connexion
+   - "REJET | HORS SUJET | REJET | Aucun litige détecté" si pas de problème
+
+5. LOI APPLICABLE :
    - Vol aérien : "le Règlement (CE) n° 261/2004"
    - Train : "le Règlement (UE) 2021/782"
    - E-commerce : "la Directive UE 2011/83"
@@ -353,41 +375,42 @@ RÈGLES D'EXTRACTION (si PAS de résolution détectée)
    - Voyage/Hôtel : "la Directive UE 2015/2302"
 
 ═══════════════════════════════════════════════════════════════
-FORMAT DE RÉPONSE (3 éléments séparés par |)
+FORMAT DE RÉPONSE (4 éléments séparés par |)
 ═══════════════════════════════════════════════════════════════
 
-MONTANT | LOI | MARQUE
+MONTANT | LOI | MARQUE | PREUVE
 
-Exemples VALIDES (problèmes à traiter) :
-- "42.99€ | la Directive UE 2011/83 | AMAZON"
-- "40€ | le Règlement (UE) 2021/782 | SNCF"
-- "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE"
-- "À déterminer | le Règlement (UE) 2021/782 | SNCF"
+Exemples VALIDES (litiges à traiter) :
+- "42.99€ | la Directive UE 2011/83 | AMAZON | Ma commande de 42.99€ n'est jamais arrivée"
+- "50€ | la Directive UE 2011/83 | ZALANDO | Je demande le remboursement de 50€ pour cet article défectueux"
+- "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE | Mon vol AF1234 a été annulé sans préavis"
+- "À déterminer | le Règlement (UE) 2021/782 | SNCF | Mon train a eu 2h de retard"
 
-Exemples REJET (problèmes DÉJÀ RÉSOLUS - ne pas créer de litige) :
-- "REJET | DÉJÀ PAYÉ | AMAZON" (virement reçu)
-- "REJET | DÉJÀ PAYÉ | SNCF" (remboursement confirmé)
-- "REJET | PUB | REJET" (publicité)
+Exemples REJET :
+- "REJET | DÉJÀ PAYÉ | AMAZON | Votre remboursement de 42.99€ a été effectué"
+- "REJET | REFUS | AIR FRANCE | Malheureusement, nous ne pouvons accéder à votre demande"
+- "REJET | PUB | REJET | Email publicitaire"
 """
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            max_tokens=150
+            max_tokens=200
         )
         
         result = response.choices[0].message.content.strip()
         parts = [p.strip() for p in result.split("|")]
         
-        if len(parts) < 3:
-            return parts + ["Inconnu"] * (3 - len(parts))
+        # S'assurer qu'on a toujours 4 éléments
+        while len(parts) < 4:
+            parts.append("")
         
-        return parts[:3]
+        return parts[:4]
     
     except Exception as e:
         DEBUG_LOGS.append(f"Erreur IA: {str(e)}")
-        return ["REJET", "Erreur IA", "Inconnu"]
+        return ["REJET", "Erreur IA", "Inconnu", ""]
 
 def is_valid_euro_amount(amount_str):
     """
@@ -513,6 +536,28 @@ KEYWORDS_SUCCESS = [
     "bon d'achat", "code promo offert", "réduction accordée"
 ]
 
+# ════════════════════════════════════════════════════════════════════════════
+# 🕵️ AGENT 1 : LE CHASSEUR - Mots-clés de REFUS à IGNORER
+# Ces mots indiquent que l'entreprise a REFUSÉ → Pas un litige gagnable
+# ════════════════════════════════════════════════════════════════════════════
+KEYWORDS_REFUSAL = [
+    # Formules de refus polies
+    "malheureusement", "nous regrettons", "nous sommes au regret",
+    "ne pouvons pas accéder", "ne pouvons accéder", "ne pouvons pas donner suite",
+    "impossible de vous rembourser", "impossible de procéder",
+    "votre demande ne peut être acceptée", "ne peut aboutir",
+    "nous ne sommes pas en mesure", "pas en mesure de",
+    "dans l'impossibilité de", "ne sera pas possible",
+    # Refus explicites
+    "refusons votre demande", "refus de remboursement", "demande rejetée",
+    "rejet de votre réclamation", "réclamation non recevable",
+    # Conditions non remplies
+    "conditions non remplies", "hors délai", "hors garantie",
+    "délai dépassé", "garantie expirée", "non couvert",
+    # Réponses négatives fermes
+    "ne donnera pas lieu", "clôture sans suite", "sans suite favorable"
+]
+
 def is_ignored_sender(sender_email):
     """
     ÉTAPE 1A : Vérification de l'expéditeur (GRATUIT)
@@ -577,6 +622,20 @@ def has_success_keywords(subject, body_snippet):
     
     return False, None
 
+def has_refusal_keywords(subject, body_snippet):
+    """
+    🕵️ AGENT 1 (CHASSEUR) - Détection des emails de REFUS (GRATUIT)
+    Retourne True si l'email est un REFUS du service client
+    → Ces emails ne sont PAS des litiges gagnables (l'entreprise a dit NON)
+    """
+    text_to_check = (subject + " " + body_snippet).lower()
+    
+    for keyword in KEYWORDS_REFUSAL:
+        if keyword.lower() in text_to_check:
+            return True, keyword
+    
+    return False, None
+
 def pre_filter_email(sender, subject, snippet):
     """
     🕵️ AGENT 1 : LE CHASSEUR - ENTONNOIR DE FILTRAGE (Python pur - GRATUIT)
@@ -600,7 +659,13 @@ def pre_filter_email(sender, subject, snippet):
     if is_success:
         return False, f"✅ Succès détecté (pour CRON): '{success_keyword}'"
     
-    # CHECK 3 : L'email contient-il des mots-clés de PROBLÈME ?
+    # CHECK 3 : L'email contient-il des mots-clés de REFUS ?
+    # → Si oui, l'entreprise a déjà dit NON, pas un litige gagnable
+    is_refusal, refusal_keyword = has_refusal_keywords(subject, snippet)
+    if is_refusal:
+        return False, f"🚫 Refus détecté: '{refusal_keyword}'"
+    
+    # CHECK 4 : L'email contient-il des mots-clés de PROBLÈME ?
     has_keywords, found_keyword = has_required_keywords(subject, snippet)
     if not has_keywords:
         return False, "❌ Aucun mot-clé litige trouvé"
@@ -798,6 +863,16 @@ body {
     text-transform: uppercase;
     letter-spacing: 1px;
 }
+.proof-text {
+    background: #fef3c7;
+    padding: 12px 15px;
+    border-radius: 8px;
+    border-left: 4px solid #f59e0b;
+    margin: 15px 0;
+    font-size: 0.95rem;
+    color: #92400e;
+    line-height: 1.5;
+}
 .btn-success {
     background: #10b981;
     color: white;
@@ -971,6 +1046,7 @@ def scan():
     emails_scanned = 0
     emails_filtered_free = 0
     emails_success_for_cron = 0  # Emails de succès (pour l'Encaisseur)
+    emails_refusal_detected = 0  # Emails de refus (non gagnables)
     emails_sent_to_ai = 0
     
     # Charger les message_id DÉJÀ EN BASE (pour ne pas les re-scanner)
@@ -1019,9 +1095,11 @@ def scan():
             
             if not passed_filter:
                 emails_filtered_free += 1
-                # Compter spécifiquement les succès (pour stats)
+                # Compter spécifiquement les succès et refus (pour stats)
                 if "Succès détecté" in filter_result:
                     emails_success_for_cron += 1
+                elif "Refus détecté" in filter_result:
+                    emails_refusal_detected += 1
                 debug_rejected.append(f"<p>🚫 <b>FILTRÉ (pas d'appel IA) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {filter_result}</i></p>")
                 continue
             
@@ -1043,12 +1121,19 @@ def scan():
             extracted_amount_from_text = extract_amount_from_text(body_text)
             
             # ÉTAPE 3: Analyser avec l'IA (en passant l'info du destinataire)
+            # Retourne maintenant 4 valeurs : MONTANT | LOI | MARQUE | PREUVE
             analysis = analyze_litigation_v2(body_text, subject, sender, to_field, detected_company, extracted_amount_from_text)
-            extracted_amount, law_final, company_detected = analysis[0], analysis[1], analysis[2]
+            extracted_amount = analysis[0]
+            law_final = analysis[1]
+            company_detected = analysis[2]
+            proof_sentence = analysis[3] if len(analysis) > 3 else snippet  # La preuve ou le snippet par défaut
             
-            # Vérifier si l'IA a rejeté ce mail
+            # Vérifier si l'IA a rejeté ce mail (DÉJÀ PAYÉ, REFUS, PUB, etc.)
             if "REJET" in extracted_amount.upper() or "REJET" in company_detected.upper():
-                debug_rejected.append(f"<p>❌ <b>IA REJET :</b> {subject}<br><small>Raison: {extracted_amount} / {company_detected}</small></p>")
+                # Afficher la raison détaillée du rejet
+                reject_reason = law_final  # La raison est dans le 2ème champ (DÉJÀ PAYÉ, REFUS, PUB...)
+                reject_detail = proof_sentence if proof_sentence else ""
+                debug_rejected.append(f"<p>❌ <b>IA REJET ({reject_reason}) :</b> {subject}<br><small>{reject_detail}</small></p>")
                 continue
             
             # Utiliser l'entreprise détectée par TO si l'IA n'a pas trouvé mieux
@@ -1061,6 +1146,10 @@ def scan():
             if not is_valid_euro_amount(extracted_amount) and extracted_amount_from_text:
                 extracted_amount = extracted_amount_from_text
             
+            # Nettoyer la preuve si vide ou trop courte
+            if not proof_sentence or len(proof_sentence) < 10:
+                proof_sentence = snippet[:150] if snippet else subject
+            
             # STOCKER EN MÉMOIRE (pas en base !)
             litigation_data = {
                 "message_id": message_id,
@@ -1068,7 +1157,8 @@ def scan():
                 "amount": extracted_amount,
                 "law": law_final,
                 "subject": subject,
-                "snippet": snippet
+                "snippet": snippet,
+                "proof": proof_sentence  # La preuve extraite par l'IA
             }
             detected_litigations.append(litigation_data)
             
@@ -1085,12 +1175,15 @@ def scan():
                 
                 amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' data-index='{new_cases_count}' onchange='updateAmount(this)'>{hint_text}"
             
+            # Afficher la PREUVE au lieu du snippet générique
+            proof_display = proof_sentence[:200] + "..." if len(proof_sentence) > 200 else proof_sentence
+            
             html_cards += f"""
             <div class='card'>
                 {amount_display}
                 <span class='radar-tag'>{company_normalized.upper()}</span>
                 <h3>{subject}</h3>
-                <p><i>{snippet[:100]}...</i></p>
+                <p class='proof-text'><i>📝 "{proof_display}"</i></p>
                 <small>⚖️ {law_final}</small>
             </div>
             """
@@ -1152,15 +1245,15 @@ def scan():
         <div style='display:flex; justify-content:space-around; margin-bottom:10px;'>
             <div style='text-align:center;'>
                 <div style='font-size:1.5rem; font-weight:bold; color:#065f46;'>{emails_scanned}</div>
-                <div style='font-size:0.8rem; color:#047857;'>📧 Emails scannés</div>
+                <div style='font-size:0.8rem; color:#047857;'>📧 Scannés</div>
             </div>
             <div style='text-align:center;'>
                 <div style='font-size:1.5rem; font-weight:bold; color:#dc2626;'>{emails_filtered_free}</div>
-                <div style='font-size:0.8rem; color:#b91c1c;'>🚫 Filtrés (gratuit)</div>
+                <div style='font-size:0.8rem; color:#b91c1c;'>🚫 Filtrés</div>
             </div>
             <div style='text-align:center;'>
                 <div style='font-size:1.5rem; font-weight:bold; color:#2563eb;'>{emails_sent_to_ai}</div>
-                <div style='font-size:0.8rem; color:#1d4ed8;'>🤖 Envoyés à l'IA</div>
+                <div style='font-size:0.8rem; color:#1d4ed8;'>🤖 Analysés IA</div>
             </div>
         </div>
         
@@ -1168,9 +1261,12 @@ def scan():
             <span style='font-weight:bold; color:#065f46;'>✅ {savings_percent}% d'appels IA économisés !</span>
         </div>
         
-        <div style='margin-top:10px; padding:8px; background:#fef3c7; border-radius:5px; font-size:0.85rem;'>
-            <b>🕵️ Agent CHASSEUR :</b> {emails_sent_to_ai} problèmes analysés<br>
-            <b>💰 Agent ENCAISSEUR :</b> {emails_success_for_cron} emails de succès détectés (pour CRON)
+        <div style='margin-top:10px; padding:10px; background:#f8fafc; border-radius:5px; font-size:0.85rem;'>
+            <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;'>
+                <span>🕵️ <b>Chasseur</b> : {emails_sent_to_ai} litiges analysés</span>
+                <span>💰 <b>Encaisseur</b> : {emails_success_for_cron} succès (pour CRON)</span>
+                <span>🚫 <b>Refus</b> : {emails_refusal_detected} non gagnables</span>
+            </div>
         </div>
     </div>
     """
