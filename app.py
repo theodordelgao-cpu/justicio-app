@@ -400,7 +400,7 @@ BLACKLIST_COMPANY_DOMAINS = [
     "hm.com", "shein", "aliexpress", "temu", "vinted", "ebay", "wish",
     "rakuten", "priceminister", "leboncoin", "backmarket",
     # Transport
-    "sncf", "ouigo", "eurostar", "thalys", "trainline",
+    "sncf", "c-sncf", "ouigo", "eurostar", "thalys", "trainline",
     "airfrance", "air-france", "klm", "easyjet", "ryanair", "vueling",
     "lufthansa", "british-airways", "transavia", "volotea",
     "uber", "bolt", "kapten", "heetch", "blablacar",
@@ -410,8 +410,9 @@ BLACKLIST_COMPANY_DOMAINS = [
     # Tech / Services
     "apple", "google", "microsoft", "paypal", "stripe", "booking",
     "airbnb", "expedia", "tripadvisor", "hotels.com", "kayak",
+    "facebook", "instagram", "twitter", "linkedin", "tiktok",
     # Télécom
-    "orange.fr", "sfr.fr", "bouygues", "free.fr", "sosh",
+    "orange.com", "sfr.com", "bouygues", "sosh",
     # Banques / Assurances  
     "bnp", "societegenerale", "creditagricole", "lcl", "boursorama",
     "fortuneo", "ing", "revolut", "n26", "axa", "allianz", "maif"
@@ -427,7 +428,7 @@ BLACKLIST_EMAIL_PREFIXES = [
     "team", "equipe", "admin", "system", "mailer", "daemon", "postmaster",
     "order", "orders", "commande", "commandes", "shipping", "livraison",
     "confirm", "confirmation", "verification", "security", "securite",
-    "reclamation", "sav", "retour", "return", "refund", "remboursement"
+    "update", "updates", "mise-a-jour", "promo", "promotion", "pub"
 ]
 
 # Domaines AUTORISÉS (particuliers uniquement)
@@ -441,11 +442,28 @@ WHITELIST_PERSONAL_DOMAINS = [
     "yandex.com", "gmx.com", "gmx.fr", "zoho.com", "mail.com"
 ]
 
+# Mots-clés OBLIGATOIRES pour passer au filtrage IA
+REQUIRED_KEYWORDS = [
+    # Problèmes financiers
+    "remboursement", "rembourser", "remboursé", "refund",
+    "litige", "plainte", "réclamation", "reclamation",
+    "argent", "euros", "€", "eur",
+    "dédommagement", "dedommagement", "indemnisation", "indemnité",
+    # Problèmes de service
+    "retard", "retardé", "annulé", "annulation", "cancelled", "canceled",
+    "non reçu", "pas reçu", "jamais reçu", "colis perdu", "commande perdue",
+    "défectueux", "defectueux", "cassé", "abîmé", "endommagé",
+    "arnaque", "escroquerie", "fraude", "volé",
+    # Actions demandées
+    "je demande", "je réclame", "je souhaite", "je veux",
+    "mise en demeure", "avocat", "justice", "tribunal"
+]
+
 def is_ignored_sender(sender_email):
     """
-    MUR DE FILTRAGE STRICT
-    Retourne True si l'expéditeur doit être IGNORÉ (email d'entreprise)
-    Retourne False si c'est un particulier (à analyser)
+    ÉTAPE 1A : Vérification de l'expéditeur (GRATUIT)
+    Retourne (True, raison) si l'expéditeur doit être IGNORÉ
+    Retourne (False, "OK") si c'est un particulier
     """
     if not sender_email:
         return True, "Expéditeur vide"
@@ -475,27 +493,42 @@ def is_ignored_sender(sender_email):
         if blacklisted_prefix in prefix:
             return True, f"Préfixe automatisé: {blacklisted_prefix}"
     
-    # CHECK 3 : Vérifier si c'est un domaine personnel autorisé
-    is_personal = False
-    for personal_domain in WHITELIST_PERSONAL_DOMAINS:
-        if domain.endswith(personal_domain):
-            is_personal = True
-            break
+    return False, "OK"
+
+def has_required_keywords(subject, body_snippet):
+    """
+    ÉTAPE 1B : Vérification des mots-clés (GRATUIT)
+    Retourne True si l'email contient au moins un mot-clé pertinent
+    """
+    text_to_check = (subject + " " + body_snippet).lower()
     
-    # Si ce n'est pas un domaine personnel connu ET pas déjà blacklisté,
-    # on le laisse passer avec prudence (pourrait être un email pro perso)
-    if not is_personal:
-        # Vérifier que ce n'est pas un domaine d'entreprise évident
-        suspicious_patterns = [
-            ".fr", ".com", ".eu", ".io", ".co"
-        ]
-        # Si le domaine ressemble à une entreprise (court, pas de webmail)
-        if len(domain.split('.')[0]) > 3 and domain.split('.')[0] not in ['mail', 'email']:
-            # Potentiellement une entreprise, mais on laisse passer
-            # car ça pourrait être un email pro d'un client
-            pass
+    for keyword in REQUIRED_KEYWORDS:
+        if keyword.lower() in text_to_check:
+            return True, keyword
     
-    return False, "Particulier autorisé"
+    return False, None
+
+def pre_filter_email(sender, subject, snippet):
+    """
+    ENTONNOIR DE FILTRAGE - ÉTAPE 1 : LE VIDEUR (Python pur - GRATUIT)
+    
+    Vérifie si l'email mérite d'être analysé par l'IA.
+    Retourne (True, None) si l'email doit être analysé
+    Retourne (False, raison) si l'email doit être SKIP
+    """
+    
+    # CHECK 1 : L'expéditeur est-il un robot ou une entreprise ?
+    is_ignored, ignore_reason = is_ignored_sender(sender)
+    if is_ignored:
+        return False, f"Expéditeur bloqué: {ignore_reason}"
+    
+    # CHECK 2 : L'email contient-il des mots-clés pertinents ?
+    has_keywords, found_keyword = has_required_keywords(subject, snippet)
+    if not has_keywords:
+        return False, "Aucun mot-clé litige trouvé"
+    
+    # L'email a passé le videur ! Il peut aller voir l'IA
+    return True, f"Mot-clé trouvé: {found_keyword}"
 
 def is_company_sender(sender):
     """Alias pour compatibilité - utilise le nouveau filtre strict"""
@@ -856,6 +889,11 @@ def scan():
     html_cards = ""
     debug_rejected = ["<h3>🗑️ Rapport de Filtrage</h3>"]
     
+    # Compteurs pour statistiques d'économie API
+    emails_scanned = 0
+    emails_filtered_free = 0
+    emails_sent_to_ai = 0
+    
     # Charger les message_id DÉJÀ EN BASE (pour ne pas les re-scanner)
     existing_message_ids = set()
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
@@ -868,6 +906,7 @@ def scan():
     for msg in messages:
         try:
             message_id = msg['id']
+            emails_scanned += 1
             
             # SKIP si déjà en base de données
             if message_id in existing_message_ids:
@@ -881,10 +920,10 @@ def scan():
             to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), "")
             snippet = msg_data.get('snippet', '')
             
-            # ÉTAPE 1: Vérification spam
+            # ÉTAPE 1: Vérification spam basique
             spam_detected, spam_reason = is_spam(sender, subject, snippet)
             if spam_detected:
-                debug_rejected.append(f"<p>🛑 <b>SPAM BLOQUÉ :</b> {subject}<br><small>{sender}</small><br><i>Raison: {spam_reason}</i></p>")
+                debug_rejected.append(f"<p>🛑 <b>SPAM :</b> {subject}<br><small>{sender}</small><br><i>{spam_reason}</i></p>")
                 continue
             
             # ÉTAPE 1.5: Ignorer les mises en demeure (emails envoyés par nous)
@@ -892,14 +931,27 @@ def scan():
                 debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
                 continue
             
-            # ÉTAPE 1.6: MUR DE FILTRAGE - HARD FILTER EXPÉDITEURS
-            # On ne crée des litiges que pour les emails envoyés PAR des particuliers
-            is_ignored, ignore_reason = is_ignored_sender(sender)
-            if is_ignored:
-                debug_rejected.append(f"<p>🚫 <b>BLOQUÉ (expéditeur entreprise) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {ignore_reason}</i></p>")
+            # ════════════════════════════════════════════════════════════════
+            # ÉTAPE 1.6: ENTONNOIR DE FILTRAGE HYBRIDE (ÉCONOMIE API)
+            # Le "Videur" - Filtrage Python GRATUIT avant appel IA
+            # ════════════════════════════════════════════════════════════════
+            
+            passed_filter, filter_result = pre_filter_email(sender, subject, snippet)
+            
+            if not passed_filter:
+                emails_filtered_free += 1
+                debug_rejected.append(f"<p>🚫 <b>FILTRÉ (pas d'appel IA) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {filter_result}</i></p>")
                 continue
             
-            # ÉTAPE 2: Extraire le contenu complet
+            # ════════════════════════════════════════════════════════════════
+            # ÉTAPE 2: L'EXPERT - Appel IA (PAYANT)
+            # L'email a passé le videur, on l'envoie à l'IA
+            # ════════════════════════════════════════════════════════════════
+            
+            DEBUG_LOGS.append(f"💰 Appel IA pour: {subject[:50]}... ({filter_result})")
+            emails_sent_to_ai += 1
+            
+            # Extraire le contenu complet
             body_text = extract_email_content(msg_data)
             
             # ÉTAPE 2.5: Détecter l'entreprise depuis le destinataire (TO) en priorité
@@ -1009,7 +1061,23 @@ def scan():
     </script>
     """
     
-    debug_html = "<div class='debug-section'>" + "".join(debug_rejected) + "</div>"
+    # Statistiques d'économie API
+    savings_percent = round((emails_filtered_free / max(emails_scanned, 1)) * 100)
+    stats_html = f"""
+    <div style='background:#d1fae5; padding:15px; border-radius:10px; margin-bottom:20px; text-align:center;'>
+        <h4 style='margin:0 0 10px 0; color:#065f46;'>💰 Économies API ce scan</h4>
+        <p style='margin:5px 0; font-size:0.9rem;'>
+            📧 <b>{emails_scanned}</b> emails scannés |
+            🚫 <b>{emails_filtered_free}</b> filtrés gratuitement |
+            🤖 <b>{emails_sent_to_ai}</b> envoyés à l'IA
+        </p>
+        <p style='margin:5px 0; color:#065f46; font-weight:bold;'>
+            ✅ {savings_percent}% d'appels IA économisés !
+        </p>
+    </div>
+    """
+    
+    debug_html = stats_html + "<div class='debug-section'>" + "".join(debug_rejected) + "</div>"
     
     if new_cases_count > 0:
         return STYLE + f"<h1>✅ {new_cases_count} Litige(s) Détecté(s)</h1>" + html_cards + action_btn + debug_html + script_js + WA_BTN + FOOTER
