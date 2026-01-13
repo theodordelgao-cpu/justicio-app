@@ -271,7 +271,10 @@ def analyze_litigation(text, subject, sender):
     return analyze_litigation_v2(text, subject, sender, "", None, None)
 
 def analyze_litigation_v2(text, subject, sender, to_field, detected_company, extracted_amount):
-    """Analyse IA pour détecter un litige - VERSION AMÉLIORÉE avec TO field"""
+    """
+    🕵️ AGENT 1 : LE CHASSEUR - Analyse IA des litiges
+    But : Détecter les PROBLÈMES NON RÉSOLUS uniquement
+    """
     if not OPENAI_API_KEY:
         return ["REJET", "Pas d'API", "Inconnu"]
     
@@ -287,7 +290,9 @@ def analyze_litigation_v2(text, subject, sender, to_field, detected_company, ext
         amount_hint = f"\n⚠️ INDICE : Montant trouvé dans le texte : {extracted_amount}"
     
     try:
-        prompt = f"""Tu es un Expert Comptable rigoureux spécialisé en litiges consommateurs.
+        prompt = f"""🕵️ Tu es le CHASSEUR - Expert Juridique spécialisé dans les litiges consommateurs NON RÉSOLUS.
+
+⚠️ MISSION CRITIQUE : Tu cherches UNIQUEMENT les problèmes QUI N'ONT PAS ENCORE ÉTÉ RÉGLÉS.
 
 INPUT :
 - EXPÉDITEUR (FROM) : {sender}
@@ -297,15 +302,35 @@ INPUT :
 {company_hint}
 {amount_hint}
 
-RÈGLES STRICTES :
+═══════════════════════════════════════════════════════════════
+🚨 RÈGLE PRIORITAIRE N°1 : DÉTECTER LES CAS DÉJÀ RÉSOLUS
+═══════════════════════════════════════════════════════════════
+
+Si l'email contient UN SEUL de ces indices, réponds IMMÉDIATEMENT :
+"REJET | DÉJÀ PAYÉ | [MARQUE]"
+
+MOTS-CLÉS DE RÉSOLUTION (= REJET) :
+- "virement effectué", "virement réalisé", "virement envoyé"
+- "remboursement effectué", "remboursement validé", "remboursement confirmé"  
+- "crédité sur votre compte", "créditée sur votre compte"
+- "nous avons le plaisir de vous informer que votre remboursement"
+- "votre compte a été crédité", "montant remboursé"
+- "nous avons bien procédé au remboursement"
+- "confirmation de remboursement", "avis de virement"
+- "problème résolu", "dossier clôturé", "régularisation effectuée"
+- "bon d'achat offert", "avoir crédité", "geste commercial accordé"
+
+═══════════════════════════════════════════════════════════════
+RÈGLES D'EXTRACTION (si PAS de résolution détectée)
+═══════════════════════════════════════════════════════════════
 
 1. MONTANT (Le nerf de la guerre) :
    - Cherche un montant EXPLICITE EN EUROS (ex: "42.99€", "120 EUR", "50 euros", "40€")
    - ⚠️ INTERDICTION D'ESTIMER. Si aucun chiffre visible : Écris "À déterminer"
-   - ⚠️ INTERDICTION DE RENVOYER DES POURCENTAGES (jamais de "25% du billet")
+   - ⚠️ INTERDICTION DE RENVOYER DES POURCENTAGES
    - Le montant peut être collé au symbole € (ex: "40€" = 40 euros)
-   - EXCEPTION VOL ANNULÉ/RETARDÉ : Si compagnie aérienne ET (annulation OR retard > 3h) → Mets "250€"
-   - EXCEPTION TRAIN RETARDÉ : Si SNCF/Eurostar/Ouigo ET retard mentionné → Mets "À déterminer"
+   - EXCEPTION VOL ANNULÉ/RETARDÉ : Si compagnie aérienne ET (annulation OR retard > 3h) → "250€"
+   - EXCEPTION TRAIN RETARDÉ : Si SNCF/Eurostar/Ouigo ET retard mentionné → "À déterminer"
 
 2. MARQUE (PRIORITÉ AU DESTINATAIRE) :
    - RÈGLE N°1 : Si le champ TO contient @zalando.fr → c'est ZALANDO
@@ -314,12 +339,11 @@ RÈGLES STRICTES :
    - RÈGLE N°4 : Sinon, regarde le sujet/corps pour identifier l'entreprise
    - Ne mets JAMAIS "AMAZON" par défaut si le destinataire indique une autre entreprise !
 
-3. CRITÈRES DE REJET (réponds "REJET" si) :
-   - Email de confirmation de paiement réussi ("Virement effectué", "Remboursement validé")
-   - Email publicitaire (promo, soldes, newsletter, offre spéciale)
-   - Email de sécurité (changement mot de passe, connexion suspecte)
-   - Email de bienvenue/inscription
-   - Absence totale de problème consommateur
+3. AUTRES CRITÈRES DE REJET :
+   - "REJET | PUB | REJET" si publicité/newsletter/promo
+   - "REJET | SÉCURITÉ | REJET" si changement mot de passe/connexion suspecte
+   - "REJET | BIENVENUE | REJET" si inscription/bienvenue
+   - "REJET | HORS SUJET | REJET" si aucun problème consommateur
 
 4. LOI APPLICABLE :
    - Vol aérien : "le Règlement (CE) n° 261/2004"
@@ -328,17 +352,22 @@ RÈGLES STRICTES :
    - Défaut produit : "l'Article L217-4 du Code de la consommation"
    - Voyage/Hôtel : "la Directive UE 2015/2302"
 
-FORMAT DE RÉPONSE (3 éléments séparés par |) :
+═══════════════════════════════════════════════════════════════
+FORMAT DE RÉPONSE (3 éléments séparés par |)
+═══════════════════════════════════════════════════════════════
+
 MONTANT | LOI | MARQUE
 
-Exemples :
+Exemples VALIDES (problèmes à traiter) :
 - "42.99€ | la Directive UE 2011/83 | AMAZON"
 - "40€ | le Règlement (UE) 2021/782 | SNCF"
 - "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE"
 - "À déterminer | le Règlement (UE) 2021/782 | SNCF"
-- "50€ | la Directive UE 2011/83 | ZALANDO"
-- "REJET | PAYÉ | REJET" (si déjà remboursé)
-- "REJET | PUB | REJET" (si publicité)
+
+Exemples REJET (problèmes DÉJÀ RÉSOLUS - ne pas créer de litige) :
+- "REJET | DÉJÀ PAYÉ | AMAZON" (virement reçu)
+- "REJET | DÉJÀ PAYÉ | SNCF" (remboursement confirmé)
+- "REJET | PUB | REJET" (publicité)
 """
 
         response = client.chat.completions.create(
@@ -459,6 +488,31 @@ REQUIRED_KEYWORDS = [
     "mise en demeure", "avocat", "justice", "tribunal"
 ]
 
+# ════════════════════════════════════════════════════════════════════════════
+# 🕵️ AGENT 1 : LE CHASSEUR - Mots-clés de SUCCÈS à IGNORER
+# Ces mots indiquent que le problème est RÉSOLU → Pas un litige à créer
+# ════════════════════════════════════════════════════════════════════════════
+KEYWORDS_SUCCESS = [
+    # Confirmations de paiement
+    "virement effectué", "virement réalisé", "virement envoyé",
+    "remboursement effectué", "remboursement validé", "remboursement confirmé",
+    "crédité sur votre compte", "créditée sur votre compte",
+    "avis de virement", "confirmation de virement",
+    "confirmation de remboursement",
+    # Formules positives entreprises
+    "nous avons le plaisir", "nous avons bien procédé",
+    "votre remboursement a été", "le remboursement a été effectué",
+    "nous vous confirmons le remboursement",
+    "montant remboursé", "somme remboursée",
+    "votre compte a été crédité", "compte crédité",
+    # Résolutions
+    "problème résolu", "dossier clôturé", "réclamation traitée",
+    "nous avons fait le nécessaire", "régularisation effectuée",
+    "geste commercial accordé", "avoir crédité",
+    # Bons d'achat (pas du vrai argent mais résolution)
+    "bon d'achat", "code promo offert", "réduction accordée"
+]
+
 def is_ignored_sender(sender_email):
     """
     ÉTAPE 1A : Vérification de l'expéditeur (GRATUIT)
@@ -497,8 +551,8 @@ def is_ignored_sender(sender_email):
 
 def has_required_keywords(subject, body_snippet):
     """
-    ÉTAPE 1B : Vérification des mots-clés (GRATUIT)
-    Retourne True si l'email contient au moins un mot-clé pertinent
+    ÉTAPE 1B : Vérification des mots-clés PROBLÈME (GRATUIT)
+    Retourne True si l'email contient au moins un mot-clé de litige
     """
     text_to_check = (subject + " " + body_snippet).lower()
     
@@ -508,9 +562,26 @@ def has_required_keywords(subject, body_snippet):
     
     return False, None
 
+def has_success_keywords(subject, body_snippet):
+    """
+    🕵️ AGENT 1 (CHASSEUR) - Détection des emails de SUCCÈS (GRATUIT)
+    Retourne True si l'email indique que le problème est RÉSOLU
+    → Ces emails doivent être IGNORÉS par le Chasseur (pas de litige à créer)
+    → Ils seront traités par l'Encaisseur (CRON) pour valider les paiements
+    """
+    text_to_check = (subject + " " + body_snippet).lower()
+    
+    for keyword in KEYWORDS_SUCCESS:
+        if keyword.lower() in text_to_check:
+            return True, keyword
+    
+    return False, None
+
 def pre_filter_email(sender, subject, snippet):
     """
-    ENTONNOIR DE FILTRAGE - ÉTAPE 1 : LE VIDEUR (Python pur - GRATUIT)
+    🕵️ AGENT 1 : LE CHASSEUR - ENTONNOIR DE FILTRAGE (Python pur - GRATUIT)
+    
+    But : Trouver les PROBLÈMES NON RÉSOLUS uniquement
     
     Vérifie si l'email mérite d'être analysé par l'IA.
     Retourne (True, None) si l'email doit être analysé
@@ -520,15 +591,22 @@ def pre_filter_email(sender, subject, snippet):
     # CHECK 1 : L'expéditeur est-il un robot ou une entreprise ?
     is_ignored, ignore_reason = is_ignored_sender(sender)
     if is_ignored:
-        return False, f"Expéditeur bloqué: {ignore_reason}"
+        return False, f"🤖 Expéditeur bloqué: {ignore_reason}"
     
-    # CHECK 2 : L'email contient-il des mots-clés pertinents ?
+    # CHECK 2 : L'email contient-il des mots-clés de SUCCÈS ?
+    # → Si oui, le problème est RÉSOLU, pas besoin de créer un litige
+    # → L'Encaisseur (CRON) s'en occupera pour valider les paiements
+    is_success, success_keyword = has_success_keywords(subject, snippet)
+    if is_success:
+        return False, f"✅ Succès détecté (pour CRON): '{success_keyword}'"
+    
+    # CHECK 3 : L'email contient-il des mots-clés de PROBLÈME ?
     has_keywords, found_keyword = has_required_keywords(subject, snippet)
     if not has_keywords:
-        return False, "Aucun mot-clé litige trouvé"
+        return False, "❌ Aucun mot-clé litige trouvé"
     
-    # L'email a passé le videur ! Il peut aller voir l'IA
-    return True, f"Mot-clé trouvé: {found_keyword}"
+    # L'email a passé le videur ! C'est un PROBLÈME NON RÉSOLU
+    return True, f"🎯 Mot-clé litige: '{found_keyword}'"
 
 def is_company_sender(sender):
     """Alias pour compatibilité - utilise le nouveau filtre strict"""
@@ -892,6 +970,7 @@ def scan():
     # Compteurs pour statistiques d'économie API
     emails_scanned = 0
     emails_filtered_free = 0
+    emails_success_for_cron = 0  # Emails de succès (pour l'Encaisseur)
     emails_sent_to_ai = 0
     
     # Charger les message_id DÉJÀ EN BASE (pour ne pas les re-scanner)
@@ -940,6 +1019,9 @@ def scan():
             
             if not passed_filter:
                 emails_filtered_free += 1
+                # Compter spécifiquement les succès (pour stats)
+                if "Succès détecté" in filter_result:
+                    emails_success_for_cron += 1
                 debug_rejected.append(f"<p>🚫 <b>FILTRÉ (pas d'appel IA) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {filter_result}</i></p>")
                 continue
             
@@ -1064,16 +1146,32 @@ def scan():
     # Statistiques d'économie API
     savings_percent = round((emails_filtered_free / max(emails_scanned, 1)) * 100)
     stats_html = f"""
-    <div style='background:#d1fae5; padding:15px; border-radius:10px; margin-bottom:20px; text-align:center;'>
-        <h4 style='margin:0 0 10px 0; color:#065f46;'>💰 Économies API ce scan</h4>
-        <p style='margin:5px 0; font-size:0.9rem;'>
-            📧 <b>{emails_scanned}</b> emails scannés |
-            🚫 <b>{emails_filtered_free}</b> filtrés gratuitement |
-            🤖 <b>{emails_sent_to_ai}</b> envoyés à l'IA
-        </p>
-        <p style='margin:5px 0; color:#065f46; font-weight:bold;'>
-            ✅ {savings_percent}% d'appels IA économisés !
-        </p>
+    <div style='background:#d1fae5; padding:15px; border-radius:10px; margin-bottom:20px;'>
+        <h4 style='margin:0 0 10px 0; color:#065f46; text-align:center;'>💰 Économies API - Architecture Multi-Agents</h4>
+        
+        <div style='display:flex; justify-content:space-around; margin-bottom:10px;'>
+            <div style='text-align:center;'>
+                <div style='font-size:1.5rem; font-weight:bold; color:#065f46;'>{emails_scanned}</div>
+                <div style='font-size:0.8rem; color:#047857;'>📧 Emails scannés</div>
+            </div>
+            <div style='text-align:center;'>
+                <div style='font-size:1.5rem; font-weight:bold; color:#dc2626;'>{emails_filtered_free}</div>
+                <div style='font-size:0.8rem; color:#b91c1c;'>🚫 Filtrés (gratuit)</div>
+            </div>
+            <div style='text-align:center;'>
+                <div style='font-size:1.5rem; font-weight:bold; color:#2563eb;'>{emails_sent_to_ai}</div>
+                <div style='font-size:0.8rem; color:#1d4ed8;'>🤖 Envoyés à l'IA</div>
+            </div>
+        </div>
+        
+        <div style='background:#a7f3d0; padding:8px; border-radius:5px; text-align:center;'>
+            <span style='font-weight:bold; color:#065f46;'>✅ {savings_percent}% d'appels IA économisés !</span>
+        </div>
+        
+        <div style='margin-top:10px; padding:8px; background:#fef3c7; border-radius:5px; font-size:0.85rem;'>
+            <b>🕵️ Agent CHASSEUR :</b> {emails_sent_to_ai} problèmes analysés<br>
+            <b>💰 Agent ENCAISSEUR :</b> {emails_success_for_cron} emails de succès détectés (pour CRON)
+        </div>
     </div>
     """
     
