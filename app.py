@@ -1049,11 +1049,26 @@ def scan():
     emails_refusal_detected = 0  # Emails de refus (non gagnables)
     emails_sent_to_ai = 0
     
-    # Charger les message_id DÉJÀ EN BASE (pour ne pas les re-scanner)
+    # ════════════════════════════════════════════════════════════════
+    # LOGIQUE ANTI-DOUBLON AMÉLIORÉE
+    # On autorise plusieurs dossiers du même marchand si montants différents
+    # ════════════════════════════════════════════════════════════════
+    
+    # Charger les message_id DÉJÀ EN BASE (pour ne pas re-scanner le même email)
     existing_message_ids = set()
+    
+    # Charger les combinaisons company + amount existantes (pour détecter les vrais doublons)
+    existing_company_amounts = set()
+    
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
         if lit.message_id:
             existing_message_ids.add(lit.message_id)
+        # Créer une clé unique : company_normalized + amount_normalized
+        company_key = lit.company.lower().strip() if lit.company else ""
+        amount_key = extract_numeric_amount(lit.amount) if lit.amount else 0
+        existing_company_amounts.add((company_key, amount_key))
+    
+    DEBUG_LOGS.append(f"📊 Dossiers existants : {len(existing_message_ids)} emails, {len(existing_company_amounts)} combinaisons company+montant")
     
     # Liste temporaire des litiges détectés (stockée en session)
     detected_litigations = []
@@ -1145,6 +1160,31 @@ def scan():
             # Si le montant de l'IA est "À déterminer" mais qu'on l'a trouvé dans le texte
             if not is_valid_euro_amount(extracted_amount) and extracted_amount_from_text:
                 extracted_amount = extracted_amount_from_text
+            
+            # ════════════════════════════════════════════════════════════════
+            # VÉRIFICATION DOUBLON PAR COMPANY + MONTANT
+            # Permet plusieurs dossiers du même marchand si montants différents
+            # ════════════════════════════════════════════════════════════════
+            amount_numeric = extract_numeric_amount(extracted_amount)
+            company_amount_key = (company_normalized, amount_numeric)
+            
+            # Vérifier si cette combinaison existe déjà EN BASE
+            if company_amount_key in existing_company_amounts:
+                debug_rejected.append(f"<p>🔄 <b>DOUBLON IGNORÉ :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Un dossier identique (même marchand + même montant) existe déjà.</small></p>")
+                continue
+            
+            # Vérifier aussi dans les litiges détectés DANS CE SCAN (éviter doublons dans la session)
+            already_in_session = False
+            for existing_lit in detected_litigations:
+                existing_company = existing_lit['company'].lower().strip()
+                existing_amount = extract_numeric_amount(existing_lit['amount'])
+                if existing_company == company_normalized and existing_amount == amount_numeric:
+                    already_in_session = True
+                    break
+            
+            if already_in_session:
+                debug_rejected.append(f"<p>🔄 <b>DOUBLON SCAN :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Déjà détecté dans ce scan.</small></p>")
+                continue
             
             # Nettoyer la preuve si vide ou trop courte
             if not proof_sentence or len(proof_sentence) < 10:
@@ -1629,6 +1669,31 @@ def success_page():
         # Vérifier que le montant est valide avant d'enregistrer
         if not is_valid_euro_amount(lit_data['amount']):
             errors.append(f"⚠️ {lit_data['company']}: montant invalide ({lit_data['amount']}) - non enregistré")
+            continue
+        
+        # ════════════════════════════════════════════════════════════════
+        # VÉRIFICATION DOUBLON PAR COMPANY + MONTANT
+        # Permet plusieurs dossiers du même marchand si montants différents
+        # ════════════════════════════════════════════════════════════════
+        company_normalized = lit_data['company'].lower().strip()
+        amount_numeric = extract_numeric_amount(lit_data['amount'])
+        
+        # Vérifier si un dossier avec MÊME company ET MÊME montant existe déjà
+        existing_duplicate = Litigation.query.filter_by(
+            user_email=session['email'],
+            company=company_normalized
+        ).all()
+        
+        is_real_duplicate = False
+        for existing in existing_duplicate:
+            existing_amount = extract_numeric_amount(existing.amount)
+            # Tolérance de 1€ pour considérer comme doublon
+            if abs(existing_amount - amount_numeric) <= 1:
+                is_real_duplicate = True
+                break
+        
+        if is_real_duplicate:
+            errors.append(f"🔄 {lit_data['company'].upper()} ({lit_data['amount']}): doublon ignoré (même marchand + même montant)")
             continue
         
         # ÉTAPE 1: Enregistrer en base de données
