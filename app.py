@@ -1367,14 +1367,51 @@ def dashboard():
     
     html_rows = ""
     for case in cases:
+        # ════════════════════════════════════════════════════════════════
+        # GESTION DES STATUTS - Incluant Partiels et Bons d'achat
+        # ════════════════════════════════════════════════════════════════
+        
         if case.status == "Remboursé":
-            color, status_text = "#10b981", "✅ REMBOURSÉ - Commission prélevée"
+            # Remboursement CASH complet
+            color = "#10b981"  # Vert
+            status_text = "✅ REMBOURSÉ - Commission prélevée"
+            status_icon = "✅"
+        
+        elif case.status.startswith("Remboursé (Partiel:"):
+            # Remboursement PARTIEL - Extraire les montants pour affichage
+            color = "#f97316"  # Orange
+            status_text = "⚠️ REMBOURSÉ PARTIELLEMENT - Com. ajustée"
+            status_icon = "⚠️"
+        
+        elif case.status.startswith("Résolu (Bon d'achat:"):
+            # BON D'ACHAT / VOUCHER - Pas de commission
+            color = "#3b82f6"  # Bleu
+            status_text = "🎫 BON D'ACHAT - Dossier fermé"
+            status_icon = "🎫"
+        
         elif case.status == "En attente de remboursement":
-            color, status_text = "#f59e0b", "⏳ En attente de remboursement"
+            color = "#f59e0b"  # Jaune/Orange
+            status_text = "⏳ En attente de remboursement"
+            status_icon = "⏳"
+        
         elif case.status in ["Envoyé", "En cours"]:
-            color, status_text = "#3b82f6", "📧 Mise en demeure envoyée"
+            color = "#8b5cf6"  # Violet
+            status_text = "📧 Mise en demeure envoyée"
+            status_icon = "📧"
+        
         else:
-            color, status_text = "#94a3b8", "🔍 Détecté - En attente d'action"
+            color = "#94a3b8"  # Gris
+            status_text = "🔍 Détecté - En attente d'action"
+            status_icon = "🔍"
+        
+        # Afficher le statut brut pour les partiels/vouchers (avec le montant)
+        detail_text = ""
+        if "Partiel:" in case.status or "Bon d'achat:" in case.status:
+            # Extraire la partie entre parenthèses
+            import re
+            match = re.search(r'\((.*?)\)', case.status)
+            if match:
+                detail_text = f"<div style='font-size:0.75rem; color:{color}; margin-top:3px;'>({match.group(1)})</div>"
         
         html_rows += f"""
         <div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; 
@@ -1399,6 +1436,7 @@ def dashboard():
                             padding:3px 8px; border-radius:5px; display:inline-block; margin-top:5px;'>
                     {status_text}
                 </div>
+                {detail_text}
             </div>
         </div>
         """
