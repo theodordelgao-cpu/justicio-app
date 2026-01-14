@@ -1078,6 +1078,13 @@ def scan():
     # Liste temporaire des litiges détectés (stockée en session)
     detected_litigations = []
     
+    print("\n" + "="*60)
+    print("🔍 DÉBUT DU SCAN - LOGS DE DÉBOGAGE")
+    print("="*60)
+    print(f"📧 Nombre total d'emails à analyser : {len(messages)}")
+    print(f"📂 Dossiers existants : {existing_company_amounts_dict}")
+    print("="*60 + "\n")
+    
     for msg in messages:
         try:
             message_id = msg['id']
@@ -1085,6 +1092,7 @@ def scan():
             
             # SKIP si déjà en base de données
             if message_id in existing_message_ids:
+                print(f"⏭️ SKIP (déjà en base) : message_id={message_id[:20]}...")
                 continue
             
             msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
@@ -1095,14 +1103,22 @@ def scan():
             to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), "")
             snippet = msg_data.get('snippet', '')
             
+            print(f"\n{'─'*50}")
+            print(f"📩 EMAIL TROUVÉ : {subject[:60]}")
+            print(f"   De: {sender[:50]}")
+            print(f"   Snippet: {snippet[:80]}...")
+            print(f"{'─'*50}")
+            
             # ÉTAPE 1: Vérification spam basique
             spam_detected, spam_reason = is_spam(sender, subject, snippet)
             if spam_detected:
+                print(f"   ❌ REJETÉ (SPAM) : {spam_reason}")
                 debug_rejected.append(f"<p>🛑 <b>SPAM :</b> {subject}<br><small>{sender}</small><br><i>{spam_reason}</i></p>")
                 continue
             
             # ÉTAPE 1.5: Ignorer les mises en demeure (emails envoyés par nous)
             if "MISE EN DEMEURE" in subject.upper():
+                print(f"   ❌ REJETÉ (notre mise en demeure)")
                 debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
                 continue
             
@@ -1112,8 +1128,10 @@ def scan():
             # ════════════════════════════════════════════════════════════════
             
             passed_filter, filter_result = pre_filter_email(sender, subject, snippet)
+            print(f"   🚦 PRE-FILTRE : passed={passed_filter}, raison={filter_result}")
             
             if not passed_filter:
+                print(f"   ❌ REJETÉ (pré-filtre) : {filter_result}")
                 emails_filtered_free += 1
                 # Compter spécifiquement les succès et refus (pour stats)
                 if "Succès détecté" in filter_result:
@@ -1122,6 +1140,8 @@ def scan():
                     emails_refusal_detected += 1
                 debug_rejected.append(f"<p>🚫 <b>FILTRÉ (pas d'appel IA) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {filter_result}</i></p>")
                 continue
+            
+            print(f"   ✅ PASSÉ le pré-filtre → Envoi à l'IA")
             
             # ════════════════════════════════════════════════════════════════
             # ÉTAPE 2: L'EXPERT - Appel IA (PAYANT)
@@ -1136,9 +1156,11 @@ def scan():
             
             # ÉTAPE 2.5: Détecter l'entreprise depuis le destinataire (TO) en priorité
             detected_company = extract_company_from_recipient(to_field, subject, sender)
+            print(f"   🏢 Entreprise détectée (TO/sujet): {detected_company or 'Aucune'}")
             
             # ÉTAPE 2.6: Essayer d'extraire le montant directement du texte
             extracted_amount_from_text = extract_amount_from_text(body_text)
+            print(f"   💶 Montant extrait (regex): {extracted_amount_from_text or 'Aucun'}")
             
             # ÉTAPE 3: Analyser avec l'IA (en passant l'info du destinataire)
             # Retourne maintenant 4 valeurs : MONTANT | LOI | MARQUE | PREUVE
@@ -1148,8 +1170,15 @@ def scan():
             company_detected = analysis[2]
             proof_sentence = analysis[3] if len(analysis) > 3 else snippet  # La preuve ou le snippet par défaut
             
+            print(f"   🤖 EXTRACTION IA:")
+            print(f"      → Marchand: {company_detected}")
+            print(f"      → Montant: {extracted_amount}")
+            print(f"      → Loi: {law_final}")
+            print(f"      → Preuve: {proof_sentence[:50] if proof_sentence else 'Aucune'}...")
+            
             # Vérifier si l'IA a rejeté ce mail (DÉJÀ PAYÉ, REFUS, PUB, etc.)
             if "REJET" in extracted_amount.upper() or "REJET" in company_detected.upper():
+                print(f"   ❌ REJETÉ PAR L'IA: {law_final}")
                 # Afficher la raison détaillée du rejet
                 reject_reason = law_final  # La raison est dans le 2ème champ (DÉJÀ PAYÉ, REFUS, PUB...)
                 reject_detail = proof_sentence if proof_sentence else ""
@@ -1159,12 +1188,14 @@ def scan():
             # Utiliser l'entreprise détectée par TO si l'IA n'a pas trouvé mieux
             if detected_company and (company_detected.lower() == "inconnu" or company_detected.lower() == "amazon"):
                 company_detected = detected_company
+                print(f"   🔄 Entreprise corrigée: {company_detected}")
             
             company_normalized = company_detected.lower().strip()
             
             # Si le montant de l'IA est "À déterminer" mais qu'on l'a trouvé dans le texte
             if not is_valid_euro_amount(extracted_amount) and extracted_amount_from_text:
                 extracted_amount = extracted_amount_from_text
+                print(f"   🔄 Montant corrigé (depuis texte): {extracted_amount}")
             
             # ════════════════════════════════════════════════════════════════
             # VÉRIFICATION DOUBLON PAR COMPANY + MONTANT
@@ -1172,24 +1203,34 @@ def scan():
             # ════════════════════════════════════════════════════════════════
             amount_numeric = extract_numeric_amount(extracted_amount)
             
+            print(f"\n   🔍 COMPARAISON DOUBLON:")
+            print(f"      → Nouveau: {company_normalized.upper()} = {amount_numeric}€")
+            
             # Vérifier si cette combinaison existe déjà EN BASE
             is_duplicate = False
             if company_normalized in existing_company_amounts_dict:
                 existing_amounts = existing_company_amounts_dict[company_normalized]
+                print(f"      → Existants en base pour {company_normalized.upper()}: {existing_amounts}€")
                 for existing_amt in existing_amounts:
+                    print(f"         Comparaison: |{amount_numeric} - {existing_amt}| = {abs(existing_amt - amount_numeric)} (tolérance: 1€)")
                     # Tolérance de 1€ pour considérer comme doublon
                     if abs(existing_amt - amount_numeric) <= 1:
                         is_duplicate = True
+                        print(f"         ⚠️ DOUBLON DÉTECTÉ ! ({amount_numeric}€ ≈ {existing_amt}€)")
                         DEBUG_LOGS.append(f"🔄 Doublon détecté: {company_normalized} {amount_numeric}€ ≈ {existing_amt}€ en base")
                         break
+            else:
+                print(f"      → Aucun dossier existant pour {company_normalized.upper()}")
             
             if is_duplicate:
+                print(f"   ❌ REJETÉ (DOUBLON)")
                 debug_rejected.append(f"<p>🔄 <b>DOUBLON IGNORÉ :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Un dossier identique (même marchand + montant similaire) existe déjà.</small></p>")
                 continue
             
             # Log si même marchand mais montant différent (nouveau dossier autorisé)
             if company_normalized in existing_company_amounts_dict:
                 existing_amounts = existing_company_amounts_dict[company_normalized]
+                print(f"   ✅ NOUVEAU DOSSIER AUTORISÉ (montant différent)")
                 DEBUG_LOGS.append(f"✅ Nouveau dossier autorisé: {company_normalized.upper()} {amount_numeric}€ (existants: {existing_amounts}€)")
             
             # Vérifier aussi dans les litiges détectés DANS CE SCAN (éviter doublons dans la session)
@@ -1227,6 +1268,10 @@ def scan():
             }
             detected_litigations.append(litigation_data)
             
+            print(f"\n   ✅✅✅ LITIGE DÉTECTÉ ET STOCKÉ ✅✅✅")
+            print(f"      → {company_normalized.upper()} - {extracted_amount}")
+            print(f"      → Total litiges détectés jusqu'ici: {len(detected_litigations)}")
+            
             # Construire l'affichage
             if is_valid_euro_amount(extracted_amount):
                 amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
@@ -1257,6 +1302,20 @@ def scan():
         except Exception as e:
             debug_rejected.append(f"<p>❌ Erreur traitement : {str(e)}</p>")
             continue
+    
+    # ═══════════════════════════════════════════════════════════════
+    # FIN DU SCAN - RÉSUMÉ
+    # ═══════════════════════════════════════════════════════════════
+    print("\n" + "="*60)
+    print("📊 RÉSUMÉ DU SCAN")
+    print("="*60)
+    print(f"📧 Emails scannés: {emails_scanned}")
+    print(f"🚫 Filtrés (gratuit): {emails_filtered_free}")
+    print(f"🤖 Envoyés à l'IA: {emails_sent_to_ai}")
+    print(f"✅ LITIGES DÉTECTÉS: {len(detected_litigations)}")
+    for lit in detected_litigations:
+        print(f"   → {lit['company'].upper()} - {lit['amount']}")
+    print("="*60 + "\n")
     
     # Stocker les litiges détectés en session (pour les enregistrer après paiement)
     session['detected_litigations'] = detected_litigations
