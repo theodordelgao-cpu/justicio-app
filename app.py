@@ -1058,17 +1058,22 @@ def scan():
     existing_message_ids = set()
     
     # Charger les combinaisons company + amount existantes (pour détecter les vrais doublons)
-    existing_company_amounts = set()
+    # Format: {company: [liste de montants]}
+    existing_company_amounts_dict = {}
     
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
         if lit.message_id:
             existing_message_ids.add(lit.message_id)
-        # Créer une clé unique : company_normalized + amount_normalized
+        # Stocker les montants par company
         company_key = lit.company.lower().strip() if lit.company else ""
-        amount_key = extract_numeric_amount(lit.amount) if lit.amount else 0
-        existing_company_amounts.add((company_key, amount_key))
+        amount_value = extract_numeric_amount(lit.amount) if lit.amount else 0
+        if company_key not in existing_company_amounts_dict:
+            existing_company_amounts_dict[company_key] = []
+        existing_company_amounts_dict[company_key].append(amount_value)
     
-    DEBUG_LOGS.append(f"📊 Dossiers existants : {len(existing_message_ids)} emails, {len(existing_company_amounts)} combinaisons company+montant")
+    DEBUG_LOGS.append(f"📊 Dossiers existants : {len(existing_message_ids)} emails")
+    for comp, amounts in existing_company_amounts_dict.items():
+        DEBUG_LOGS.append(f"   → {comp.upper()}: {amounts}")
     
     # Liste temporaire des litiges détectés (stockée en session)
     detected_litigations = []
@@ -1166,19 +1171,34 @@ def scan():
             # Permet plusieurs dossiers du même marchand si montants différents
             # ════════════════════════════════════════════════════════════════
             amount_numeric = extract_numeric_amount(extracted_amount)
-            company_amount_key = (company_normalized, amount_numeric)
             
             # Vérifier si cette combinaison existe déjà EN BASE
-            if company_amount_key in existing_company_amounts:
-                debug_rejected.append(f"<p>🔄 <b>DOUBLON IGNORÉ :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Un dossier identique (même marchand + même montant) existe déjà.</small></p>")
+            is_duplicate = False
+            if company_normalized in existing_company_amounts_dict:
+                existing_amounts = existing_company_amounts_dict[company_normalized]
+                for existing_amt in existing_amounts:
+                    # Tolérance de 1€ pour considérer comme doublon
+                    if abs(existing_amt - amount_numeric) <= 1:
+                        is_duplicate = True
+                        DEBUG_LOGS.append(f"🔄 Doublon détecté: {company_normalized} {amount_numeric}€ ≈ {existing_amt}€ en base")
+                        break
+            
+            if is_duplicate:
+                debug_rejected.append(f"<p>🔄 <b>DOUBLON IGNORÉ :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Un dossier identique (même marchand + montant similaire) existe déjà.</small></p>")
                 continue
+            
+            # Log si même marchand mais montant différent (nouveau dossier autorisé)
+            if company_normalized in existing_company_amounts_dict:
+                existing_amounts = existing_company_amounts_dict[company_normalized]
+                DEBUG_LOGS.append(f"✅ Nouveau dossier autorisé: {company_normalized.upper()} {amount_numeric}€ (existants: {existing_amounts}€)")
             
             # Vérifier aussi dans les litiges détectés DANS CE SCAN (éviter doublons dans la session)
             already_in_session = False
             for existing_lit in detected_litigations:
                 existing_company = existing_lit['company'].lower().strip()
                 existing_amount = extract_numeric_amount(existing_lit['amount'])
-                if existing_company == company_normalized and existing_amount == amount_numeric:
+                # Tolérance de 1€
+                if existing_company == company_normalized and abs(existing_amount - amount_numeric) <= 1:
                     already_in_session = True
                     break
             
@@ -1189,6 +1209,11 @@ def scan():
             # Nettoyer la preuve si vide ou trop courte
             if not proof_sentence or len(proof_sentence) < 10:
                 proof_sentence = snippet[:150] if snippet else subject
+            
+            # Ajouter au dict pour éviter les doublons dans ce scan
+            if company_normalized not in existing_company_amounts_dict:
+                existing_company_amounts_dict[company_normalized] = []
+            existing_company_amounts_dict[company_normalized].append(amount_numeric)
             
             # STOCKER EN MÉMOIRE (pas en base !)
             litigation_data = {
@@ -1313,8 +1338,16 @@ def scan():
     
     debug_html = stats_html + "<div class='debug-section'>" + "".join(debug_rejected) + "</div>"
     
+    # Ajouter info sur les dossiers existants pour debug
+    existing_info = ""
+    if existing_company_amounts_dict:
+        existing_info = "<div style='background:#f1f5f9; padding:10px; border-radius:8px; margin-top:10px;'><b>📂 Dossiers existants :</b><ul style='margin:5px 0;'>"
+        for comp, amounts in existing_company_amounts_dict.items():
+            existing_info += f"<li>{comp.upper()}: {amounts}€</li>"
+        existing_info += "</ul></div>"
+    
     if new_cases_count > 0:
-        return STYLE + f"<h1>✅ {new_cases_count} Litige(s) Détecté(s)</h1>" + html_cards + action_btn + debug_html + script_js + WA_BTN + FOOTER
+        return STYLE + f"<h1>✅ {new_cases_count} Litige(s) Détecté(s)</h1>" + html_cards + action_btn + debug_html + existing_info + script_js + WA_BTN + FOOTER
     else:
         # Vérifier s'il y a des dossiers en cours
         existing_count = Litigation.query.filter_by(user_email=session['email']).count()
@@ -1323,6 +1356,7 @@ def scan():
             <div style='text-align:center; padding:50px;'>
                 <h1>✅ Aucun nouveau litige</h1>
                 <p>Vous avez déjà <b>{existing_count} dossier(s)</b> en cours de traitement.</p>
+                {existing_info}
                 <br>
                 <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
             </div>
