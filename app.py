@@ -1040,17 +1040,15 @@ def scan():
     total_gain = 0
     new_cases_count = 0
     html_cards = ""
-    debug_rejected = ["<h3>🗑️ Rapport de Filtrage</h3>"]
+    debug_rejected = ["<h3>📋 Rapport d'Analyse</h3>"]
     
-    # Compteurs pour statistiques d'économie API
+    # Compteurs pour statistiques
     emails_scanned = 0
-    emails_filtered_free = 0
-    emails_success_for_cron = 0  # Emails de succès (pour l'Encaisseur)
-    emails_refusal_detected = 0  # Emails de refus (non gagnables)
+    emails_filtered_free = 0  # Spam évidents seulement
     emails_sent_to_ai = 0
     
     # ════════════════════════════════════════════════════════════════
-    # LOGIQUE ANTI-DOUBLON AMÉLIORÉE
+    # LOGIQUE ANTI-DOUBLON : Company + Montant
     # On autorise plusieurs dossiers du même marchand si montants différents
     # ════════════════════════════════════════════════════════════════
     
@@ -1092,9 +1090,12 @@ def scan():
             message_id = msg['id']
             emails_scanned += 1
             
-            # SKIP si déjà en base de données
+            # ════════════════════════════════════════════════════════════════
+            # SEUL CHECK PRÉALABLE : Ne pas re-scanner un email déjà traité
+            # (basé sur message_id, PAS sur le marchand)
+            # ════════════════════════════════════════════════════════════════
             if message_id in existing_message_ids:
-                print(f"⏭️ SKIP (déjà en base) : message_id={message_id[:20]}...")
+                print(f"⏭️ SKIP (email déjà traité) : message_id={message_id[:20]}...")
                 continue
             
             msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
@@ -1108,64 +1109,48 @@ def scan():
             print(f"\n{'─'*50}")
             print(f"📩 EMAIL TROUVÉ : {subject[:60]}")
             print(f"   De: {sender[:50]}")
+            print(f"   To: {to_field[:50]}")
             print(f"   Snippet: {snippet[:80]}...")
             print(f"{'─'*50}")
             
-            # ÉTAPE 1: Vérification spam basique
-            spam_detected, spam_reason = is_spam(sender, subject, snippet)
-            if spam_detected:
-                print(f"   ❌ REJETÉ (SPAM) : {spam_reason}")
-                debug_rejected.append(f"<p>🛑 <b>SPAM :</b> {subject}<br><small>{sender}</small><br><i>{spam_reason}</i></p>")
-                continue
+            # ════════════════════════════════════════════════════════════════
+            # SEULS FILTRES CONSERVÉS (absolument nécessaires)
+            # ════════════════════════════════════════════════════════════════
             
-            # ÉTAPE 1.5: Ignorer les mises en demeure (emails envoyés par nous)
+            # 1. Ignorer nos propres mises en demeure
             if "MISE EN DEMEURE" in subject.upper():
-                print(f"   ❌ REJETÉ (notre mise en demeure)")
+                print(f"   ⏭️ SKIP (notre mise en demeure)")
                 debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
                 continue
             
-            # ════════════════════════════════════════════════════════════════
-            # ÉTAPE 1.6: ENTONNOIR DE FILTRAGE HYBRIDE (ÉCONOMIE API)
-            # Le "Videur" - Filtrage Python GRATUIT avant appel IA
-            # ════════════════════════════════════════════════════════════════
-            
-            passed_filter, filter_result = pre_filter_email(sender, subject, snippet)
-            print(f"   🚦 PRE-FILTRE : passed={passed_filter}, raison={filter_result}")
-            
-            if not passed_filter:
-                print(f"   ❌ REJETÉ (pré-filtre) : {filter_result}")
+            # 2. Ignorer les spams évidents (mots de passe, newsletters)
+            subject_lower = subject.lower()
+            if any(spam_word in subject_lower for spam_word in ["mot de passe", "password", "newsletter", "unsubscribe", "désabonner"]):
+                print(f"   ⏭️ SKIP (spam évident)")
                 emails_filtered_free += 1
-                # Compter spécifiquement les succès et refus (pour stats)
-                if "Succès détecté" in filter_result:
-                    emails_success_for_cron += 1
-                elif "Refus détecté" in filter_result:
-                    emails_refusal_detected += 1
-                debug_rejected.append(f"<p>🚫 <b>FILTRÉ (pas d'appel IA) :</b> {subject}<br><small>De: {sender}</small><br><i>Raison: {filter_result}</i></p>")
+                debug_rejected.append(f"<p>🛑 <b>SPAM évident :</b> {subject}</p>")
                 continue
             
-            print(f"   ✅ PASSÉ le pré-filtre → Envoi à l'IA")
-            
             # ════════════════════════════════════════════════════════════════
-            # ÉTAPE 2: L'EXPERT - Appel IA (PAYANT)
-            # L'email a passé le videur, on l'envoie à l'IA
+            # ANALYSE IA SYSTÉMATIQUE - Plus de filtre économique !
+            # On envoie TOUT à l'IA pour extraire marchand + montant précis
             # ════════════════════════════════════════════════════════════════
             
-            DEBUG_LOGS.append(f"💰 Appel IA pour: {subject[:50]}... ({filter_result})")
+            print(f"   🤖 ENVOI À L'IA (analyse systématique)...")
             emails_sent_to_ai += 1
             
             # Extraire le contenu complet
             body_text = extract_email_content(msg_data)
             
-            # ÉTAPE 2.5: Détecter l'entreprise depuis le destinataire (TO) en priorité
+            # Détecter l'entreprise depuis le destinataire (TO) en priorité
             detected_company = extract_company_from_recipient(to_field, subject, sender)
             print(f"   🏢 Entreprise détectée (TO/sujet): {detected_company or 'Aucune'}")
             
-            # ÉTAPE 2.6: Essayer d'extraire le montant directement du texte
+            # Essayer d'extraire le montant directement du texte
             extracted_amount_from_text = extract_amount_from_text(body_text)
             print(f"   💶 Montant extrait (regex): {extracted_amount_from_text or 'Aucun'}")
             
-            # ÉTAPE 3: Analyser avec l'IA (en passant l'info du destinataire)
-            # Retourne maintenant 4 valeurs : MONTANT | LOI | MARQUE | PREUVE
+            # APPEL IA - Retourne 4 valeurs : MONTANT | LOI | MARQUE | PREUVE
             analysis = analyze_litigation_v2(body_text, subject, sender, to_field, detected_company, extracted_amount_from_text)
             extracted_amount = analysis[0]
             law_final = analysis[1]
@@ -1383,37 +1368,28 @@ def scan():
     </script>
     """
     
-    # Statistiques d'économie API
-    savings_percent = round((emails_filtered_free / max(emails_scanned, 1)) * 100)
+    # Statistiques - Mode Analyse Systématique
     stats_html = f"""
-    <div style='background:#d1fae5; padding:15px; border-radius:10px; margin-bottom:20px;'>
-        <h4 style='margin:0 0 10px 0; color:#065f46; text-align:center;'>💰 Économies API - Architecture Multi-Agents</h4>
+    <div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px;'>
+        <h4 style='margin:0 0 10px 0; color:#1e40af; text-align:center;'>🔬 Mode Analyse Systématique (Précision Max)</h4>
         
         <div style='display:flex; justify-content:space-around; margin-bottom:10px;'>
             <div style='text-align:center;'>
-                <div style='font-size:1.5rem; font-weight:bold; color:#065f46;'>{emails_scanned}</div>
-                <div style='font-size:0.8rem; color:#047857;'>📧 Scannés</div>
+                <div style='font-size:1.5rem; font-weight:bold; color:#1e40af;'>{emails_scanned}</div>
+                <div style='font-size:0.8rem; color:#3b82f6;'>📧 Emails scannés</div>
             </div>
             <div style='text-align:center;'>
-                <div style='font-size:1.5rem; font-weight:bold; color:#dc2626;'>{emails_filtered_free}</div>
-                <div style='font-size:0.8rem; color:#b91c1c;'>🚫 Filtrés</div>
+                <div style='font-size:1.5rem; font-weight:bold; color:#7c3aed;'>{emails_sent_to_ai}</div>
+                <div style='font-size:0.8rem; color:#8b5cf6;'>🤖 Analysés par IA</div>
             </div>
             <div style='text-align:center;'>
-                <div style='font-size:1.5rem; font-weight:bold; color:#2563eb;'>{emails_sent_to_ai}</div>
-                <div style='font-size:0.8rem; color:#1d4ed8;'>🤖 Analysés IA</div>
+                <div style='font-size:1.5rem; font-weight:bold; color:#10b981;'>{new_cases_count}</div>
+                <div style='font-size:0.8rem; color:#059669;'>✅ Litiges détectés</div>
             </div>
         </div>
         
-        <div style='background:#a7f3d0; padding:8px; border-radius:5px; text-align:center;'>
-            <span style='font-weight:bold; color:#065f46;'>✅ {savings_percent}% d'appels IA économisés !</span>
-        </div>
-        
-        <div style='margin-top:10px; padding:10px; background:#f8fafc; border-radius:5px; font-size:0.85rem;'>
-            <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;'>
-                <span>🕵️ <b>Chasseur</b> : {emails_sent_to_ai} litiges analysés</span>
-                <span>💰 <b>Encaisseur</b> : {emails_success_for_cron} succès (pour CRON)</span>
-                <span>🚫 <b>Refus</b> : {emails_refusal_detected} non gagnables</span>
-            </div>
+        <div style='background:#bfdbfe; padding:8px; border-radius:5px; text-align:center;'>
+            <span style='font-weight:bold; color:#1e40af;'>🎯 Chaque email est analysé par l'IA pour ne rater aucun litige</span>
         </div>
     </div>
     """
