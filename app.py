@@ -293,7 +293,7 @@ def analyze_litigation_v2(text, subject, sender, to_field, detected_company, ext
     try:
         prompt = f"""🕵️ Tu es le CHASSEUR - Expert Juridique spécialisé dans les litiges consommateurs NON RÉSOLUS.
 
-⚠️ MISSION CRITIQUE : Tu cherches UNIQUEMENT les problèmes QUI N'ONT PAS ENCORE ÉTÉ RÉGLÉS.
+⚠️ MISSION CRITIQUE : Tu cherches UNIQUEMENT les VRAIS problèmes transactionnels QUI N'ONT PAS ENCORE ÉTÉ RÉGLÉS.
 
 INPUT :
 - EXPÉDITEUR (FROM) : {sender}
@@ -302,6 +302,34 @@ INPUT :
 - CONTENU : {text[:1800]}
 {company_hint}
 {amount_hint}
+
+═══════════════════════════════════════════════════════════════
+🚨 RÈGLE PRIORITAIRE N°0 : CLASSIFICATION TRANSACTION vs MARKETING
+═══════════════════════════════════════════════════════════════
+
+AVANT TOUTE AUTRE ANALYSE, détermine si cet email est :
+
+📦 TRANSACTION (à analyser) :
+- Confirmation de commande avec numéro de commande
+- Problème de livraison avec référence précise
+- Facture ou reçu avec montant payé
+- Réclamation client envoyée à une entreprise
+- Réponse à une réclamation existante
+- Email avec numéro de suivi, numéro de dossier, référence client
+
+📢 MARKETING (à REJETER IMMÉDIATEMENT) :
+- Offres promotionnelles ("Profitez de -50%", "Offre spéciale")
+- "Vous avez gagné", "Félicitations", "Crédit offert", "Cadeau"
+- Newsletter, actualités, nouveautés
+- "Le PDG vous offre", "Réduction exclusive"
+- Emails sans numéro de commande ni référence précise
+- Langage promotionnel excessif, emojis commerciaux
+- Temu, Shein, Wish et autres sites de promo agressifs
+- "Cliquez ici pour réclamer", "Dernière chance"
+- Emails de bienvenue, programmes de fidélité
+
+Si c'est du MARKETING → Réponds IMMÉDIATEMENT :
+"REJET | MARKETING | REJET | Email publicitaire/promotionnel"
 
 ═══════════════════════════════════════════════════════════════
 🚨 RÈGLE PRIORITAIRE N°1 : DÉTECTER LES CAS DÉJÀ RÉSOLUS
@@ -339,7 +367,7 @@ MOTS-CLÉS DE REFUS (= REJET REFUS) :
 ⚠️ Un refus N'EST PAS un litige gagnable - c'est une réponse définitive !
 
 ═══════════════════════════════════════════════════════════════
-RÈGLES D'EXTRACTION (si PAS de résolution/refus détecté)
+RÈGLES D'EXTRACTION (si PAS de marketing/résolution/refus)
 ═══════════════════════════════════════════════════════════════
 
 1. MONTANT (Le nerf de la guerre) :
@@ -357,13 +385,12 @@ RÈGLES D'EXTRACTION (si PAS de résolution/refus détecté)
    - RÈGLE N°4 : Sinon, regarde le sujet/corps pour identifier l'entreprise
 
 3. PREUVE (NOUVELLE RÈGLE IMPORTANTE) :
-   - Extrais la PHRASE EXACTE du texte qui mentionne le montant
+   - Extrais la PHRASE EXACTE du texte qui mentionne le montant OU le numéro de commande
    - Cette phrase sera affichée au client comme justification
-   - Exemples : "Je demande le remboursement de 50€", "Ma commande de 89.99€ n'est jamais arrivée"
+   - Exemples : "Commande #12345 de 50€", "Ma commande de 89.99€ n'est jamais arrivée"
    - Si pas de phrase avec montant, cite la phrase décrivant le problème
 
 4. AUTRES CRITÈRES DE REJET :
-   - "REJET | PUB | REJET | Email publicitaire" si publicité/newsletter
    - "REJET | SÉCURITÉ | REJET | Email de sécurité" si mot de passe/connexion
    - "REJET | HORS SUJET | REJET | Aucun litige détecté" si pas de problème
 
@@ -381,15 +408,15 @@ FORMAT DE RÉPONSE (4 éléments séparés par |)
 MONTANT | LOI | MARQUE | PREUVE
 
 Exemples VALIDES (litiges à traiter) :
-- "42.99€ | la Directive UE 2011/83 | AMAZON | Ma commande de 42.99€ n'est jamais arrivée"
+- "42.99€ | la Directive UE 2011/83 | AMAZON | Commande #123456 de 42.99€ jamais reçue"
 - "50€ | la Directive UE 2011/83 | ZALANDO | Je demande le remboursement de 50€ pour cet article défectueux"
 - "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE | Mon vol AF1234 a été annulé sans préavis"
 - "À déterminer | le Règlement (UE) 2021/782 | SNCF | Mon train a eu 2h de retard"
 
 Exemples REJET :
+- "REJET | MARKETING | REJET | Email publicitaire/promotionnel"
 - "REJET | DÉJÀ PAYÉ | AMAZON | Votre remboursement de 42.99€ a été effectué"
 - "REJET | REFUS | AIR FRANCE | Malheureusement, nous ne pouvons accéder à votre demande"
-- "REJET | PUB | REJET | Email publicitaire"
 """
 
         response = client.chat.completions.create(
@@ -1131,6 +1158,31 @@ def scan():
                 debug_rejected.append(f"<p>🛑 <b>SPAM évident :</b> {subject}</p>")
                 continue
             
+            # 3. PRÉ-FILTRE MARKETING - Expéditeurs connus comme publicitaires
+            sender_lower = sender.lower()
+            MARKETING_SENDERS = [
+                "temu", "shein", "wish", "aliexpress", "banggood", "gearbest",
+                "groupon", "veepee", "showroomprive", "vente-privee",
+                "newsletter", "promo@", "marketing@", "noreply@", "no-reply@",
+                "info@", "news@", "deals@", "offers@", "sale@"
+            ]
+            is_marketing_sender = any(ms in sender_lower for ms in MARKETING_SENDERS)
+            
+            # Aussi vérifier le sujet pour les patterns marketing
+            MARKETING_SUBJECTS = [
+                "offre", "promo", "solde", "réduction", "-50%", "-70%", "gratuit",
+                "gagnez", "félicitations", "cadeau", "offert", "exclusif",
+                "dernière chance", "expire", "limité", "flash", "black friday",
+                "le pdg", "ceo", "founder"
+            ]
+            is_marketing_subject = any(ms in subject_lower for ms in MARKETING_SUBJECTS)
+            
+            if is_marketing_sender and is_marketing_subject:
+                print(f"   📢 SKIP (marketing évident): {sender[:30]} + sujet promo")
+                emails_filtered_free += 1
+                debug_rejected.append(f"<p>📢 <b>MARKETING (pré-filtre) :</b> {subject}<br><small>De: {sender[:40]}</small></p>")
+                continue
+            
             # ════════════════════════════════════════════════════════════════
             # ANALYSE IA SYSTÉMATIQUE - Plus de filtre économique !
             # On envoie TOUT à l'IA pour extraire marchand + montant précis
@@ -1163,13 +1215,27 @@ def scan():
             print(f"      → Loi: {law_final}")
             print(f"      → Preuve: {proof_sentence[:50] if proof_sentence else 'Aucune'}...")
             
-            # Vérifier si l'IA a rejeté ce mail (DÉJÀ PAYÉ, REFUS, PUB, etc.)
+            # ════════════════════════════════════════════════════════════════
+            # GESTION DES REJETS IA (MARKETING, DÉJÀ PAYÉ, REFUS, etc.)
+            # ════════════════════════════════════════════════════════════════
             if "REJET" in extracted_amount.upper() or "REJET" in company_detected.upper():
-                print(f"   ❌ REJETÉ PAR L'IA: {law_final}")
-                # Afficher la raison détaillée du rejet
-                reject_reason = law_final  # La raison est dans le 2ème champ (DÉJÀ PAYÉ, REFUS, PUB...)
+                reject_reason = law_final.upper() if law_final else "INCONNU"
                 reject_detail = proof_sentence if proof_sentence else ""
-                debug_rejected.append(f"<p>❌ <b>IA REJET ({reject_reason}) :</b> {subject}<br><small>{reject_detail}</small></p>")
+                
+                # Catégoriser le type de rejet pour les logs
+                if "MARKETING" in reject_reason:
+                    print(f"   📢 REJETÉ (MARKETING/PUB): {subject[:40]}")
+                    debug_rejected.append(f"<p>📢 <b>MARKETING :</b> {subject}<br><small style='color:#f59e0b;'>Email publicitaire ignoré</small></p>")
+                elif "DÉJÀ PAYÉ" in reject_reason or "DEJA PAYE" in reject_reason:
+                    print(f"   ✅ REJETÉ (DÉJÀ PAYÉ): Succès pour le CRON")
+                    debug_rejected.append(f"<p>✅ <b>DÉJÀ REMBOURSÉ :</b> {subject}<br><small style='color:#10b981;'>{reject_detail[:80]}</small></p>")
+                elif "REFUS" in reject_reason:
+                    print(f"   🚫 REJETÉ (REFUS): Non gagnable")
+                    debug_rejected.append(f"<p>🚫 <b>REFUS ENTREPRISE :</b> {subject}<br><small style='color:#dc2626;'>{reject_detail[:80]}</small></p>")
+                else:
+                    print(f"   ❌ REJETÉ PAR L'IA: {reject_reason}")
+                    debug_rejected.append(f"<p>❌ <b>REJET ({reject_reason}) :</b> {subject}<br><small>{reject_detail[:80]}</small></p>")
+                
                 continue
             
             # Utiliser l'entreprise détectée par TO si l'IA n'a pas trouvé mieux
