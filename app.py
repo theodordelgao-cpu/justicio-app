@@ -1061,12 +1061,14 @@ def scan():
     # Format: {company: [liste de montants]}
     existing_company_amounts_dict = {}
     
+    print("\n📂 CHARGEMENT DES DOSSIERS EXISTANTS:")
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
         if lit.message_id:
             existing_message_ids.add(lit.message_id)
         # Stocker les montants par company
         company_key = lit.company.lower().strip() if lit.company else ""
         amount_value = extract_numeric_amount(lit.amount) if lit.amount else 0
+        print(f"   → {company_key.upper()}: '{lit.amount}' → {amount_value}€")
         if company_key not in existing_company_amounts_dict:
             existing_company_amounts_dict[company_key] = []
         existing_company_amounts_dict[company_key].append(amount_value)
@@ -1082,7 +1084,7 @@ def scan():
     print("🔍 DÉBUT DU SCAN - LOGS DE DÉBOGAGE")
     print("="*60)
     print(f"📧 Nombre total d'emails à analyser : {len(messages)}")
-    print(f"📂 Dossiers existants : {existing_company_amounts_dict}")
+    print(f"📂 Dossiers existants (company → [montants]) : {existing_company_amounts_dict}")
     print("="*60 + "\n")
     
     for msg in messages:
@@ -1204,46 +1206,67 @@ def scan():
             amount_numeric = extract_numeric_amount(extracted_amount)
             
             print(f"\n   🔍 COMPARAISON DOUBLON:")
-            print(f"      → Nouveau: {company_normalized.upper()} = {amount_numeric}€")
+            print(f"      → Nouveau: {company_normalized.upper()} = {amount_numeric}€ (brut: '{extracted_amount}')")
             
-            # Vérifier si cette combinaison existe déjà EN BASE
-            is_duplicate = False
-            if company_normalized in existing_company_amounts_dict:
-                existing_amounts = existing_company_amounts_dict[company_normalized]
-                print(f"      → Existants en base pour {company_normalized.upper()}: {existing_amounts}€")
-                for existing_amt in existing_amounts:
-                    print(f"         Comparaison: |{amount_numeric} - {existing_amt}| = {abs(existing_amt - amount_numeric)} (tolérance: 1€)")
-                    # Tolérance de 1€ pour considérer comme doublon
-                    if abs(existing_amt - amount_numeric) <= 1:
-                        is_duplicate = True
-                        print(f"         ⚠️ DOUBLON DÉTECTÉ ! ({amount_numeric}€ ≈ {existing_amt}€)")
-                        DEBUG_LOGS.append(f"🔄 Doublon détecté: {company_normalized} {amount_numeric}€ ≈ {existing_amt}€ en base")
-                        break
+            # RÈGLE IMPORTANTE : Si le montant est 0 ou invalide, ce n'est JAMAIS un doublon
+            # On laisse passer pour que l'utilisateur puisse saisir le montant manuellement
+            if amount_numeric == 0:
+                print(f"      → Montant = 0, pas de vérification de doublon (montant à saisir manuellement)")
+                is_duplicate = False
             else:
-                print(f"      → Aucun dossier existant pour {company_normalized.upper()}")
+                # Vérifier si cette combinaison existe déjà EN BASE
+                is_duplicate = False
+                if company_normalized in existing_company_amounts_dict:
+                    existing_amounts = existing_company_amounts_dict[company_normalized]
+                    print(f"      → Existants en base pour {company_normalized.upper()}: {existing_amounts}€")
+                    for existing_amt in existing_amounts:
+                        # IGNORER les montants existants à 0 (non valides)
+                        if existing_amt == 0:
+                            print(f"         Skip montant existant = 0 (invalide)")
+                            continue
+                        diff = abs(existing_amt - amount_numeric)
+                        print(f"         Comparaison: |{amount_numeric} - {existing_amt}| = {diff} (tolérance: 1€)")
+                        # Tolérance de 1€ pour considérer comme doublon
+                        if diff <= 1:
+                            is_duplicate = True
+                            print(f"         ⚠️ DOUBLON DÉTECTÉ ! ({amount_numeric}€ ≈ {existing_amt}€)")
+                            DEBUG_LOGS.append(f"🔄 Doublon détecté: {company_normalized} {amount_numeric}€ ≈ {existing_amt}€ en base")
+                            break
+                        else:
+                            print(f"         ✅ Montants différents ({diff}€ > 1€) → PAS un doublon")
+                else:
+                    print(f"      → Aucun dossier existant pour {company_normalized.upper()} → PAS un doublon")
             
             if is_duplicate:
                 print(f"   ❌ REJETÉ (DOUBLON)")
                 debug_rejected.append(f"<p>🔄 <b>DOUBLON IGNORÉ :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Un dossier identique (même marchand + montant similaire) existe déjà.</small></p>")
                 continue
+            else:
+                print(f"   ✅ PAS UN DOUBLON → Création autorisée")
             
             # Log si même marchand mais montant différent (nouveau dossier autorisé)
             if company_normalized in existing_company_amounts_dict:
                 existing_amounts = existing_company_amounts_dict[company_normalized]
-                print(f"   ✅ NOUVEAU DOSSIER AUTORISÉ (montant différent)")
+                print(f"   ✅ NOUVEAU DOSSIER AUTORISÉ pour {company_normalized.upper()} : {amount_numeric}€ (existants: {existing_amounts}€)")
                 DEBUG_LOGS.append(f"✅ Nouveau dossier autorisé: {company_normalized.upper()} {amount_numeric}€ (existants: {existing_amounts}€)")
             
             # Vérifier aussi dans les litiges détectés DANS CE SCAN (éviter doublons dans la session)
             already_in_session = False
-            for existing_lit in detected_litigations:
-                existing_company = existing_lit['company'].lower().strip()
-                existing_amount = extract_numeric_amount(existing_lit['amount'])
-                # Tolérance de 1€
-                if existing_company == company_normalized and abs(existing_amount - amount_numeric) <= 1:
-                    already_in_session = True
-                    break
+            if amount_numeric > 0:  # Ne vérifier que si on a un montant valide
+                for existing_lit in detected_litigations:
+                    existing_company = existing_lit['company'].lower().strip()
+                    existing_amount = extract_numeric_amount(existing_lit['amount'])
+                    # Ignorer les montants à 0
+                    if existing_amount == 0:
+                        continue
+                    # Tolérance de 1€
+                    if existing_company == company_normalized and abs(existing_amount - amount_numeric) <= 1:
+                        already_in_session = True
+                        print(f"   ⚠️ Doublon détecté dans ce scan: {company_normalized} {amount_numeric}€ ≈ {existing_amount}€")
+                        break
             
             if already_in_session:
+                print(f"   ❌ REJETÉ (doublon dans ce scan)")
                 debug_rejected.append(f"<p>🔄 <b>DOUBLON SCAN :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Déjà détecté dans ce scan.</small></p>")
                 continue
             
@@ -1771,23 +1794,37 @@ def success_page():
         company_normalized = lit_data['company'].lower().strip()
         amount_numeric = extract_numeric_amount(lit_data['amount'])
         
-        # Vérifier si un dossier avec MÊME company ET MÊME montant existe déjà
-        existing_duplicate = Litigation.query.filter_by(
-            user_email=session['email'],
-            company=company_normalized
-        ).all()
+        print(f"\n📝 Création dossier: {company_normalized.upper()} - {amount_numeric}€")
         
+        # RÈGLE : Si montant = 0, on ne vérifie pas les doublons
         is_real_duplicate = False
-        for existing in existing_duplicate:
-            existing_amount = extract_numeric_amount(existing.amount)
-            # Tolérance de 1€ pour considérer comme doublon
-            if abs(existing_amount - amount_numeric) <= 1:
-                is_real_duplicate = True
-                break
+        if amount_numeric > 0:
+            # Vérifier si un dossier avec MÊME company ET MÊME montant existe déjà
+            existing_duplicate = Litigation.query.filter_by(
+                user_email=session['email'],
+                company=company_normalized
+            ).all()
+            
+            for existing in existing_duplicate:
+                existing_amount = extract_numeric_amount(existing.amount)
+                # Ignorer les montants à 0
+                if existing_amount == 0:
+                    continue
+                diff = abs(existing_amount - amount_numeric)
+                print(f"   Comparaison: |{amount_numeric} - {existing_amount}| = {diff}")
+                # Tolérance de 1€ pour considérer comme doublon
+                if diff <= 1:
+                    is_real_duplicate = True
+                    print(f"   ⚠️ DOUBLON ! Montants identiques")
+                    break
+                else:
+                    print(f"   ✅ Montants différents → PAS un doublon")
         
         if is_real_duplicate:
             errors.append(f"🔄 {lit_data['company'].upper()} ({lit_data['amount']}): doublon ignoré (même marchand + même montant)")
             continue
+        
+        print(f"   ✅ Création autorisée")
         
         # ÉTAPE 1: Enregistrer en base de données
         new_lit = Litigation(
