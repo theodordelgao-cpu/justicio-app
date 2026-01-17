@@ -1674,6 +1674,14 @@ def dashboard():
                     {status_text}
                 </div>
                 {detail_text}
+                <div style='margin-top:8px;'>
+                    <a href='/delete-case/{case.id}' 
+                       onclick="return confirm('🗑️ Supprimer ce dossier {case.company.upper()} ?\\n\\nCette action est irréversible.');"
+                       style='font-size:0.75rem; color:#dc2626; text-decoration:none; opacity:0.6;'
+                       onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">
+                        🗑️ Supprimer
+                    </a>
+                </div>
             </div>
         </div>
         """
@@ -1695,6 +1703,58 @@ def dashboard():
         </div>
     </div>
     """ + FOOTER
+
+# ========================================
+# SUPPRESSION D'UN DOSSIER
+# ========================================
+
+@app.route("/delete-case/<int:case_id>")
+def delete_case(case_id):
+    """Supprime un dossier spécifique"""
+    if "email" not in session:
+        return redirect("/login")
+    
+    try:
+        # Récupérer le dossier en vérifiant qu'il appartient à l'utilisateur
+        case = Litigation.query.filter_by(id=case_id, user_email=session['email']).first()
+        
+        if not case:
+            return STYLE + """
+            <div style='text-align:center; padding:50px;'>
+                <h1>❌ Dossier Introuvable</h1>
+                <p>Ce dossier n'existe pas ou ne vous appartient pas.</p>
+                <br>
+                <a href='/dashboard' class='btn-success'>Retour au Dashboard</a>
+            </div>
+            """ + FOOTER
+        
+        company_name = case.company.upper()
+        amount = case.amount
+        
+        # Supprimer le dossier
+        db.session.delete(case)
+        db.session.commit()
+        
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>🗑️ Dossier Supprimé</h1>
+            <p>Le dossier <b>{company_name}</b> ({amount}) a été supprimé.</p>
+            <br>
+            <a href='/dashboard' class='btn-success'>Retour au Dashboard</a>
+            <br><br>
+            <a href='/scan' class='btn-logout'>Nouveau Scan</a>
+        </div>
+        """ + FOOTER
+        
+    except Exception as e:
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Erreur</h1>
+            <p>Impossible de supprimer le dossier : {str(e)}</p>
+            <br>
+            <a href='/dashboard' class='btn-success'>Retour</a>
+        </div>
+        """ + FOOTER
 
 # ========================================
 # RESET BASE DE DONNÉES
