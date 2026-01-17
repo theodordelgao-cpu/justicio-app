@@ -309,20 +309,11 @@ INPUT :
 
 AVANT TOUTE AUTRE ANALYSE, détermine si cet email est :
 
-📦 TRANSACTION (à analyser) :
-- Confirmation de commande avec numéro de commande
-- Problème de livraison avec référence précise
-- Facture ou reçu avec montant payé
-- Réclamation client envoyée à une entreprise
-- Réponse à une réclamation existante
-- Email avec numéro de suivi, numéro de dossier, référence client
-
 📢 MARKETING (à REJETER IMMÉDIATEMENT) :
 - Offres promotionnelles ("Profitez de -50%", "Offre spéciale")
 - "Vous avez gagné", "Félicitations", "Crédit offert", "Cadeau"
 - Newsletter, actualités, nouveautés
 - "Le PDG vous offre", "Réduction exclusive"
-- Emails sans numéro de commande ni référence précise
 - Langage promotionnel excessif, emojis commerciaux
 - Temu, Shein, Wish et autres sites de promo agressifs
 - "Cliquez ici pour réclamer", "Dernière chance"
@@ -330,6 +321,45 @@ AVANT TOUTE AUTRE ANALYSE, détermine si cet email est :
 
 Si c'est du MARKETING → Réponds IMMÉDIATEMENT :
 "REJET | MARKETING | REJET | Email publicitaire/promotionnel"
+
+═══════════════════════════════════════════════════════════════
+🚨 RÈGLE PRIORITAIRE N°0.5 : REJETER LES FACTURES NORMALES
+═══════════════════════════════════════════════════════════════
+
+⚠️ UNE FACTURE N'EST PAS UN LITIGE ! Rejette immédiatement si c'est :
+
+📄 FACTURE/NOTIFICATION DE PAIEMENT (à REJETER) :
+- "Votre facture est disponible", "Facture N°..."
+- "Prélèvement effectué", "Paiement accepté", "Paiement réussi"
+- "Renouvellement automatique", "Abonnement renouvelé"
+- "Confirmation de paiement", "Reçu de paiement"
+- "Échéance prélevée", "Montant débité"
+- Factures d'abonnement : IONOS, OVH, Netflix, Spotify, EDF, Free, Orange, SFR
+- Notifications de prélèvement SEPA
+- "Merci pour votre paiement", "Paiement bien reçu"
+
+Si c'est une simple facture/notification de paiement SANS PROBLÈME mentionné :
+"REJET | FACTURE | REJET | Notification de facturation normale"
+
+═══════════════════════════════════════════════════════════════
+🚨 RÈGLE PRIORITAIRE N°0.6 : EXIGER UN DÉCLENCHEUR DE LITIGE
+═══════════════════════════════════════════════════════════════
+
+⚠️ Un litige DOIT contenir au moins UN déclencheur. Sans déclencheur = PAS DE LITIGE.
+
+🔥 DÉCLENCHEURS DE LITIGE (au moins UN requis) :
+- RETARD : "retard", "en retard", "pas reçu", "jamais reçu", "non livré", "toujours pas"
+- ANNULATION : "annulé", "annulation", "vol annulé", "train annulé", "commande annulée"
+- PROBLÈME : "problème", "défectueux", "cassé", "abîmé", "endommagé", "ne fonctionne pas"
+- REMBOURSEMENT : "remboursement", "rembourser", "je demande le remboursement"
+- RETOUR : "retour", "retourner", "renvoyer", "colis retourné"
+- AVOIR : "avoir", "geste commercial", "dédommagement", "compensation"
+- RÉCLAMATION : "réclamation", "litige", "plainte", "contestation"
+- ERREUR : "erreur", "facturé à tort", "double facturation", "montant incorrect"
+- PERTE : "perdu", "égaré", "disparu", "volé"
+
+Si AUCUN déclencheur n'est présent → L'argent n'est PAS dû au client :
+"REJET | HORS SUJET | REJET | Aucun problème ou litige détecté"
 
 ═══════════════════════════════════════════════════════════════
 🚨 RÈGLE PRIORITAIRE N°1 : DÉTECTER LES CAS DÉJÀ RÉSOLUS
@@ -407,7 +437,7 @@ FORMAT DE RÉPONSE (4 éléments séparés par |)
 
 MONTANT | LOI | MARQUE | PREUVE
 
-Exemples VALIDES (litiges à traiter) :
+Exemples VALIDES (litiges à traiter - DÉCLENCHEUR PRÉSENT) :
 - "42.99€ | la Directive UE 2011/83 | AMAZON | Commande #123456 de 42.99€ jamais reçue"
 - "50€ | la Directive UE 2011/83 | ZALANDO | Je demande le remboursement de 50€ pour cet article défectueux"
 - "250€ | le Règlement (CE) n° 261/2004 | AIR FRANCE | Mon vol AF1234 a été annulé sans préavis"
@@ -415,6 +445,9 @@ Exemples VALIDES (litiges à traiter) :
 
 Exemples REJET :
 - "REJET | MARKETING | REJET | Email publicitaire/promotionnel"
+- "REJET | FACTURE | REJET | Notification de facturation normale"
+- "REJET | FACTURE | IONOS | Simple facture d'abonnement sans problème"
+- "REJET | HORS SUJET | REJET | Aucun problème ou litige détecté"
 - "REJET | DÉJÀ PAYÉ | AMAZON | Votre remboursement de 42.99€ a été effectué"
 - "REJET | REFUS | AIR FRANCE | Malheureusement, nous ne pouvons accéder à votre demande"
 """
@@ -1216,7 +1249,7 @@ def scan():
             print(f"      → Preuve: {proof_sentence[:50] if proof_sentence else 'Aucune'}...")
             
             # ════════════════════════════════════════════════════════════════
-            # GESTION DES REJETS IA (MARKETING, DÉJÀ PAYÉ, REFUS, etc.)
+            # GESTION DES REJETS IA (MARKETING, FACTURE, DÉJÀ PAYÉ, REFUS, etc.)
             # ════════════════════════════════════════════════════════════════
             if "REJET" in extracted_amount.upper() or "REJET" in company_detected.upper():
                 reject_reason = law_final.upper() if law_final else "INCONNU"
@@ -1226,6 +1259,12 @@ def scan():
                 if "MARKETING" in reject_reason:
                     print(f"   📢 REJETÉ (MARKETING/PUB): {subject[:40]}")
                     debug_rejected.append(f"<p>📢 <b>MARKETING :</b> {subject}<br><small style='color:#f59e0b;'>Email publicitaire ignoré</small></p>")
+                elif "FACTURE" in reject_reason:
+                    print(f"   📄 REJETÉ (FACTURE): Simple notification de paiement")
+                    debug_rejected.append(f"<p>📄 <b>FACTURE :</b> {subject}<br><small style='color:#6b7280;'>Notification de facturation (pas de litige)</small></p>")
+                elif "HORS SUJET" in reject_reason:
+                    print(f"   ⏭️ REJETÉ (HORS SUJET): Aucun déclencheur de litige")
+                    debug_rejected.append(f"<p>⏭️ <b>HORS SUJET :</b> {subject}<br><small style='color:#6b7280;'>Aucun problème détecté</small></p>")
                 elif "DÉJÀ PAYÉ" in reject_reason or "DEJA PAYE" in reject_reason:
                     print(f"   ✅ REJETÉ (DÉJÀ PAYÉ): Succès pour le CRON")
                     debug_rejected.append(f"<p>✅ <b>DÉJÀ REMBOURSÉ :</b> {subject}<br><small style='color:#10b981;'>{reject_detail[:80]}</small></p>")
