@@ -2111,7 +2111,8 @@ def check_refunds():
         "remboursements_voucher": 0,
         "remboursements_partiels": 0,
         "commissions_prelevees": 0,
-        "total_commission": 0
+        "total_commission": 0,
+        "rejets_securite": 0  # Nouveaux rejets de sécurité
     }
     
     # Chercher les litiges en attente de remboursement
@@ -2186,19 +2187,87 @@ def check_refunds():
                     logs.append("<p style='margin-left:30px; color:#dc2626;'>❌ Pas d'API OpenAI</p>")
                     continue
                 
-                # ANALYSE IA AMÉLIORÉE
-                verdict_result = analyze_refund_email(company_clean, expected_amount, email_subject, snippet, email_from)
+                # ANALYSE IA SÉCURISÉE - Extrait maintenant numéro de commande et confiance
+                verdict_result = analyze_refund_email(
+                    company_clean, 
+                    expected_amount, 
+                    email_subject, 
+                    snippet, 
+                    email_from,
+                    case_order_id=getattr(case, 'order_id', None)  # Numéro de commande du dossier si disponible
+                )
                 
                 verdict = verdict_result.get("verdict", "NON")
                 montant_reel = verdict_result.get("montant_reel", 0)
                 type_remboursement = verdict_result.get("type", "UNKNOWN")
+                order_id_found = verdict_result.get("order_id", None)
+                is_credit = verdict_result.get("is_credit", True)
+                confidence = verdict_result.get("confidence", "LOW")
                 raison = verdict_result.get("raison", "")
                 
-                logs.append(f"<p style='margin-left:30px;'>🤖 Verdict: <b>{verdict}</b> | Montant: <b>{montant_reel}€</b> | Type: <b>{type_remboursement}</b></p>")
+                logs.append(f"<p style='margin-left:30px;'>🤖 Verdict: <b>{verdict}</b> | Montant: <b>{montant_reel}€</b> | Type: <b>{type_remboursement}</b> | Confiance: <b>{confidence}</b></p>")
+                if order_id_found:
+                    logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>📦 N° Commande trouvé: {order_id_found}</p>")
                 if raison:
-                    logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {raison[:80]}</p>")
+                    logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {raison[:100]}</p>")
+                
+                # ═══════════════════════════════════════════════════════════
+                # 🔒 VALIDATIONS DE SÉCURITÉ - ANTI FAUX-POSITIFS
+                # ═══════════════════════════════════════════════════════════
                 
                 if verdict == "OUI":
+                    
+                    # SÉCURITÉ 1 : Vérifier que c'est un CRÉDIT (pas une facture)
+                    if not is_credit:
+                        logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET : C'est une FACTURE (débit), pas un remboursement (crédit)</p>")
+                        stats["rejets_securite"] += 1
+                        continue
+                    
+                    # SÉCURITÉ 2 : Vérifier le montant (règle des 90%)
+                    if montant_reel > 0 and expected_amount > 0:
+                        ratio = montant_reel / expected_amount
+                        
+                        # Si le montant trouvé est < 90% du montant attendu
+                        if ratio < 0.90:
+                            # Vérifier si c'est explicitement un partiel/acompte
+                            partial_keywords = ["acompte", "partiel", "partie de", "en partie", "premier versement"]
+                            is_explicit_partial = any(kw in snippet.lower() or kw in email_subject.lower() for kw in partial_keywords)
+                            
+                            if is_explicit_partial:
+                                logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ PARTIEL EXPLICITE : {montant_reel}€ sur {expected_amount}€ ({ratio*100:.0f}%)</p>")
+                                # Accepter le partiel explicite
+                            else:
+                                # REJET : Montant trop différent, probablement une autre commande
+                                logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET SÉCURITÉ : Montant trouvé ({montant_reel}€) ≠ Montant dossier ({expected_amount}€)</p>")
+                                logs.append(f"<p style='margin-left:40px; color:#dc2626; font-size:0.85rem;'>→ Ratio: {ratio*100:.0f}% < 90% - Probablement une AUTRE commande !</p>")
+                                stats["rejets_securite"] += 1
+                                continue
+                        else:
+                            logs.append(f"<p style='margin-left:30px; color:#10b981;'>✅ Montant validé : {montant_reel}€ ≈ {expected_amount}€ ({ratio*100:.0f}%)</p>")
+                    
+                    # SÉCURITÉ 3 : Comparer les numéros de commande (si disponibles)
+                    case_order_id = getattr(case, 'order_id', None)
+                    if case_order_id and order_id_found:
+                        # Normaliser les deux IDs pour comparaison
+                        case_id_clean = str(case_order_id).strip().lower().replace("#", "").replace("-", "")
+                        found_id_clean = str(order_id_found).strip().lower().replace("#", "").replace("-", "")
+                        
+                        if case_id_clean != found_id_clean:
+                            logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET : Numéros de commande DIFFÉRENTS !</p>")
+                            logs.append(f"<p style='margin-left:40px; color:#dc2626; font-size:0.85rem;'>→ Dossier: {case_order_id} | Email: {order_id_found}</p>")
+                            stats["rejets_securite"] += 1
+                            continue
+                        else:
+                            logs.append(f"<p style='margin-left:30px; color:#10b981;'>✅ Numéro de commande validé : {order_id_found}</p>")
+                    
+                    # SÉCURITÉ 4 : Niveau de confiance minimum
+                    if confidence == "LOW":
+                        logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ Confiance faible - Vérification manuelle recommandée</p>")
+                    
+                    # ═══════════════════════════════════════════════════════════
+                    # ✅ TOUTES LES SÉCURITÉS PASSÉES - TRAITEMENT DU REMBOURSEMENT
+                    # ═══════════════════════════════════════════════════════════
+                    
                     used_email_ids.add(msg_id)
                     
                     is_partial = montant_reel < expected_amount
@@ -2301,108 +2370,185 @@ def check_refunds():
         <p>💵 Remboursements CASH : <b>{stats['remboursements_cash']}</b></p>
         <p>🎫 Remboursements VOUCHER : <b>{stats['remboursements_voucher']}</b> (sans commission)</p>
         <p>📉 Remboursements PARTIELS : <b>{stats['remboursements_partiels']}</b></p>
+        <p style='color:#dc2626;'>🚫 Rejets SÉCURITÉ : <b>{stats['rejets_securite']}</b> (faux positifs évités)</p>
         <p style='color:#10b981; font-weight:bold;'>💰 Commissions prélevées : <b>{stats['commissions_prelevees']}</b> = <b>{stats['total_commission']}€</b></p>
     </div>
     """)
+    
+    if stats['rejets_securite'] > 0:
+        logs.append(f"<p style='color:#f59e0b;'>⚠️ {stats['rejets_securite']} faux positif(s) évité(s) grâce aux validations de sécurité</p>")
+    
     logs.append(f"<p>✅ Scan terminé à {datetime.utcnow().strftime('%H:%M:%S')} UTC</p>")
     
     return STYLE + "<br>".join(logs) + "<br><br><a href='/' class='btn-success'>Retour</a>"
 
 
-def analyze_refund_email(company, expected_amount, subject, snippet, email_from):
+def analyze_refund_email(company, expected_amount, subject, snippet, email_from, case_order_id=None):
     """
-    💰 ANALYSEUR DE REMBOURSEMENT - Version commerciale
+    💰 ANALYSEUR DE REMBOURSEMENT - Version SÉCURISÉE
     
-    Retourne : {verdict, montant_reel, type, raison}
+    Retourne : {
+        verdict: OUI/NON,
+        montant_reel: float,
+        type: CASH/VOUCHER/NONE,
+        order_id: str ou None,
+        is_credit: bool (True = remboursement, False = facture/débit),
+        confidence: HIGH/MEDIUM/LOW,
+        raison: str
+    }
     
-    GÈRE :
-    1. Remboursement PARTIEL → Accepte avec montant réel
-    2. Bon d'achat → TYPE = VOUCHER
-    3. Remboursement IMPLICITE → Utilise expected_amount
+    SÉCURITÉS :
+    1. Vérifie que c'est un CRÉDIT (remboursement) pas un DÉBIT (facture)
+    2. Extrait le numéro de commande pour comparaison
+    3. Détecte les partiels explicites
     """
     
     if not OPENAI_API_KEY:
-        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "raison": "Pas d'API"}
+        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "confidence": "LOW", "raison": "Pas d'API"}
     
     client = OpenAI(api_key=OPENAI_API_KEY)
     
-    prompt = f"""Tu es un AUDITEUR FINANCIER COMMERCIAL. Analyse si cet email confirme un remboursement.
+    prompt = f"""Tu es un AUDITEUR FINANCIER. Analyse cet email pour déterminer s'il confirme un REMBOURSEMENT EFFECTUÉ.
 
-DOSSIER : {company.upper()} - Montant initial : {expected_amount}€
+DOSSIER EN ATTENTE :
+- Entreprise : {company.upper()}
+- Montant attendu : {expected_amount}€
+- Numéro de commande connu : {case_order_id or "NON RENSEIGNÉ"}
 
-EMAIL :
-- De : {email_from}
+EMAIL À ANALYSER :
+- Expéditeur : {email_from}
 - Sujet : "{subject}"
 - Contenu : "{snippet}"
 
-RÈGLES :
+═══════════════════════════════════════════════════════════════
+🚨 RÈGLES DE SÉCURITÉ CRITIQUES
+═══════════════════════════════════════════════════════════════
 
-1. CORRESPONDANCE ENTITÉ : L'email concerne-t-il {company.upper()} ?
+1. CRÉDIT vs DÉBIT (OBLIGATOIRE) :
+   ✅ CRÉDIT (remboursement) = argent VERS le client : "remboursé", "crédité", "virement effectué"
+   ❌ DÉBIT (facture) = argent DU client : "facture", "prélèvement", "paiement effectué"
+   → Si c'est un DÉBIT, réponds NON immédiatement !
 
-2. TYPE DE REMBOURSEMENT :
-   TYPE = "CASH" si : virement, CB remboursée, crédité sur compte bancaire
-   TYPE = "VOUCHER" si : bon d'achat, avoir, voucher, carte cadeau, crédit boutique, code promo
+2. CORRESPONDANCE ENTREPRISE :
+   → L'email DOIT concerner {company.upper()} (pas une autre entreprise)
 
-3. MONTANT RÉEL :
-   - Si montant EXPLICITE (ex: "20€") → Utilise ce montant
-   - Si "remboursement total/intégral" confirmé SANS montant → Utilise {expected_amount}
-   - Si remboursement partiel → Utilise le montant partiel
-   
-   ⚠️ ACCEPTE LES PARTIELS ! 20€ sur 100€ = VALIDE
+3. NUMÉRO DE COMMANDE (si présent) :
+   → Extrais tout numéro de commande/référence du mail (ex: #12345, N°ABC123, Réf: XYZ)
+   → Format: Juste le numéro sans préfixe
 
-4. REJET si : autre entreprise, promesse future, refus, aucun remboursement
+4. MONTANT :
+   → Extrais le montant EXACT mentionné (pas d'estimation)
+   → Si "remboursement intégral" sans montant → utilise {expected_amount}
+   → Si montant DIFFÉRENT de {expected_amount}€ → c'est peut-être une AUTRE commande !
 
-FORMAT : VERDICT | MONTANT | TYPE
+5. NIVEAU DE CONFIANCE :
+   HIGH = Montant exact ({expected_amount}€) + Entreprise confirmée
+   MEDIUM = Remboursement confirmé mais montant différent
+   LOW = Promesse future ou incertitude
 
-Exemples :
-- "OUI | 100 | CASH" (virement 100€)
-- "OUI | 20 | CASH" (partiel 20€)
-- "OUI | {expected_amount} | CASH" (total implicite)
-- "OUI | 50 | VOUCHER" (bon d'achat)
-- "NON | 0 | NONE" (pas valide)
+═══════════════════════════════════════════════════════════════
+FORMAT DE RÉPONSE (5 éléments séparés par |)
+═══════════════════════════════════════════════════════════════
 
-Ta réponse (une seule ligne) :"""
+VERDICT | MONTANT | TYPE | ORDER_ID | CONFIANCE
+
+VERDICT : OUI (remboursement confirmé) ou NON (pas de remboursement)
+MONTANT : Le montant en euros (nombre uniquement, ex: 42.99)
+TYPE : CASH (virement/CB) ou VOUCHER (bon d'achat) ou NONE
+ORDER_ID : Le numéro de commande extrait ou NONE
+CONFIANCE : HIGH, MEDIUM, ou LOW
+
+═══════════════════════════════════════════════════════════════
+EXEMPLES
+═══════════════════════════════════════════════════════════════
+
+Email de remboursement Amazon 50€, commande #123456 :
+→ "OUI | 50 | CASH | 123456 | HIGH"
+
+Email de remboursement 20€ mais dossier attend 500€ :
+→ "OUI | 20 | CASH | 789012 | MEDIUM" (montant différent !)
+
+Email de FACTURE (pas remboursement) :
+→ "NON | 0 | NONE | NONE | LOW" (c'est un débit, pas un crédit)
+
+Bon d'achat Zalando 30€ :
+→ "OUI | 30 | VOUCHER | 456789 | HIGH"
+
+Promesse future de remboursement :
+→ "NON | 0 | NONE | NONE | LOW" (pas encore effectué)
+
+Ta réponse (UNE SEULE LIGNE) :"""
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            max_tokens=50
+            max_tokens=100
         )
         
         result = response.choices[0].message.content.strip()
         parts = [p.strip() for p in result.split("|")]
         
-        if len(parts) >= 3:
+        if len(parts) >= 5:
             verdict = "OUI" if parts[0].upper().startswith("OUI") else "NON"
             
+            # Montant
             try:
                 montant_str = parts[1].replace("€", "").replace(",", ".").strip()
                 montant_reel = float(montant_str)
             except:
-                montant_reel = expected_amount if verdict == "OUI" else 0
+                montant_reel = 0
             
+            # Type
             type_raw = parts[2].upper().strip()
             if "VOUCHER" in type_raw or "BON" in type_raw or "AVOIR" in type_raw:
                 type_remboursement = "VOUCHER"
             elif "CASH" in type_raw or "VIREMENT" in type_raw:
                 type_remboursement = "CASH"
             else:
-                type_remboursement = "CASH" if verdict == "OUI" else "NONE"
+                type_remboursement = "NONE"
+            
+            # Order ID
+            order_id_raw = parts[3].strip()
+            order_id = None if order_id_raw.upper() == "NONE" or order_id_raw == "" else order_id_raw
+            
+            # Confiance
+            confidence_raw = parts[4].upper().strip()
+            if "HIGH" in confidence_raw:
+                confidence = "HIGH"
+            elif "MEDIUM" in confidence_raw:
+                confidence = "MEDIUM"
+            else:
+                confidence = "LOW"
+            
+            # Déterminer si c'est un crédit (remboursement) vs débit (facture)
+            debit_keywords = ["facture", "prélèvement", "paiement effectué", "montant débité", "a été prélevé"]
+            is_credit = not any(kw in snippet.lower() or kw in subject.lower() for kw in debit_keywords)
             
             return {
                 "verdict": verdict,
                 "montant_reel": montant_reel,
                 "type": type_remboursement,
+                "order_id": order_id,
+                "is_credit": is_credit,
+                "confidence": confidence,
                 "raison": result
             }
         else:
-            return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "raison": f"Format invalide: {result}"}
+            return {
+                "verdict": "NON",
+                "montant_reel": 0,
+                "type": "NONE",
+                "order_id": None,
+                "is_credit": False,
+                "confidence": "LOW",
+                "raison": f"Format invalide: {result}"
+            }
     
     except Exception as e:
         DEBUG_LOGS.append(f"Erreur analyze_refund: {str(e)}")
-        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "raison": str(e)}
+        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "confidence": "LOW", "raison": str(e)}
 
 # ========================================
 # PAGES LÉGALES
