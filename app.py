@@ -2262,10 +2262,11 @@ def check_refunds():
                 type_remboursement = verdict_result.get("type", "UNKNOWN")
                 order_id_found = verdict_result.get("order_id", None)
                 is_credit = verdict_result.get("is_credit", True)
+                is_partial = verdict_result.get("is_partial", False)  # Nouveau champ
                 confidence = verdict_result.get("confidence", "LOW")
                 raison = verdict_result.get("raison", "")
                 
-                logs.append(f"<p style='margin-left:30px;'>🤖 Verdict: <b>{verdict}</b> | Montant: <b>{montant_reel}€</b> | Type: <b>{type_remboursement}</b> | Confiance: <b>{confidence}</b></p>")
+                logs.append(f"<p style='margin-left:30px;'>🤖 Verdict: <b>{verdict}</b> | Montant: <b>{montant_reel}€</b> | Type: <b>{type_remboursement}</b> | Partiel: <b>{'OUI' if is_partial else 'NON'}</b> | Confiance: <b>{confidence}</b></p>")
                 if order_id_found:
                     logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>📦 N° Commande trouvé: {order_id_found}</p>")
                 if raison:
@@ -2284,22 +2285,21 @@ def check_refunds():
                         continue
                     
                     # SÉCURITÉ 2 : Vérifier le montant (règle des 90%)
+                    # EXCEPTION : Si is_partial=True, accepter même si < 90%
                     if montant_reel > 0 and expected_amount > 0:
                         ratio = montant_reel / expected_amount
                         
                         # Si le montant trouvé est < 90% du montant attendu
                         if ratio < 0.90:
-                            # Vérifier si c'est explicitement un partiel/acompte
-                            partial_keywords = ["acompte", "partiel", "partie de", "en partie", "premier versement"]
-                            is_explicit_partial = any(kw in snippet.lower() or kw in email_subject.lower() for kw in partial_keywords)
-                            
-                            if is_explicit_partial:
-                                logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ PARTIEL EXPLICITE : {montant_reel}€ sur {expected_amount}€ ({ratio*100:.0f}%)</p>")
-                                # Accepter le partiel explicite
+                            # L'IA ou Python a détecté un PARTIEL → ACCEPTER
+                            if is_partial:
+                                logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>✅ PARTIEL DÉTECTÉ : {montant_reel}€ sur {expected_amount}€ ({ratio*100:.0f}%)</p>")
+                                logs.append(f"<p style='margin-left:40px; color:#f59e0b; font-size:0.85rem;'>→ Contexte partiel identifié (geste commercial, frais déduits, etc.)</p>")
+                                # CONTINUER - ne pas rejeter
                             else:
-                                # REJET : Montant trop différent, probablement une autre commande
+                                # Pas de contexte partiel → REJET (probablement autre commande)
                                 logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET SÉCURITÉ : Montant trouvé ({montant_reel}€) ≠ Montant dossier ({expected_amount}€)</p>")
-                                logs.append(f"<p style='margin-left:40px; color:#dc2626; font-size:0.85rem;'>→ Ratio: {ratio*100:.0f}% < 90% - Probablement une AUTRE commande !</p>")
+                                logs.append(f"<p style='margin-left:40px; color:#dc2626; font-size:0.85rem;'>→ Ratio: {ratio*100:.0f}% < 90% et aucun contexte partiel - Probablement une AUTRE commande !</p>")
                                 stats["rejets_securite"] += 1
                                 continue
                         else:
@@ -2330,10 +2330,11 @@ def check_refunds():
                     
                     used_email_ids.add(msg_id)
                     
-                    is_partial = montant_reel < expected_amount
-                    if is_partial:
+                    # Utiliser is_partial de l'IA OU comparer les montants
+                    is_partial_final = is_partial or (montant_reel < expected_amount * 0.99)  # 1% de tolérance
+                    if is_partial_final:
                         stats["remboursements_partiels"] += 1
-                        logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ PARTIEL : {montant_reel}€ sur {expected_amount}€</p>")
+                        logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ PARTIEL CONFIRMÉ : {montant_reel}€ sur {expected_amount}€</p>")
                     
                     # CAS 1 : CASH → DÉBITER STRIPE
                     if type_remboursement == "CASH":
@@ -2364,7 +2365,7 @@ def check_refunds():
                             )
                             
                             if payment_intent.status == "succeeded":
-                                if is_partial:
+                                if is_partial_final:
                                     case.status = f"Remboursé (Partiel: {montant_reel}€/{expected_amount}€)"
                                 else:
                                     case.status = "Remboursé"
@@ -2376,7 +2377,7 @@ def check_refunds():
                                 
                                 logs.append(f"<p style='margin-left:30px; color:#10b981; font-weight:bold;'>✅ JACKPOT ! {commission}€ PRÉLEVÉS !</p>")
                                 
-                                partial_info = f" (PARTIEL: {montant_reel}€/{expected_amount}€)" if is_partial else ""
+                                partial_info = f" (PARTIEL: {montant_reel}€/{expected_amount}€)" if is_partial_final else ""
                                 send_telegram_notif(f"💰💰💰 JUSTICIO JACKPOT 💰💰💰\n\n{commission}€ prélevés sur {company_clean.upper()}{partial_info}\nClient: {user.email}\nDossier #{case.id}\nType: CASH")
                                 
                                 try:
@@ -2453,6 +2454,7 @@ def analyze_refund_email(company, expected_amount, subject, snippet, email_from,
         type: CASH/VOUCHER/NONE,
         order_id: str ou None,
         is_credit: bool (True = remboursement, False = facture/débit),
+        is_partial: bool (True = remboursement partiel détecté),
         confidence: HIGH/MEDIUM/LOW,
         raison: str
     }
@@ -2460,15 +2462,15 @@ def analyze_refund_email(company, expected_amount, subject, snippet, email_from,
     SÉCURITÉS :
     1. Vérifie que c'est un CRÉDIT (remboursement) pas un DÉBIT (facture)
     2. Extrait le numéro de commande pour comparaison
-    3. Détecte les partiels explicites
+    3. Détecte les partiels explicites ET implicites
     """
     
     if not OPENAI_API_KEY:
-        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "confidence": "LOW", "raison": "Pas d'API"}
+        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "is_partial": False, "confidence": "LOW", "raison": "Pas d'API"}
     
     client = OpenAI(api_key=OPENAI_API_KEY)
     
-    prompt = f"""Tu es un AUDITEUR FINANCIER. Analyse cet email pour déterminer s'il confirme un REMBOURSEMENT EFFECTUÉ.
+    prompt = f"""Tu es un AUDITEUR FINANCIER EXPERT. Analyse cet email pour déterminer s'il confirme un REMBOURSEMENT EFFECTUÉ.
 
 DOSSIER EN ATTENTE :
 - Entreprise : {company.upper()}
@@ -2496,48 +2498,112 @@ EMAIL À ANALYSER :
    → Extrais tout numéro de commande/référence du mail (ex: #12345, N°ABC123, Réf: XYZ)
    → Format: Juste le numéro sans préfixe
 
-4. MONTANT :
-   → Extrais le montant EXACT mentionné (pas d'estimation)
-   → Si "remboursement intégral" sans montant → utilise {expected_amount}
-   → Si montant DIFFÉRENT de {expected_amount}€ → c'est peut-être une AUTRE commande !
-
-5. NIVEAU DE CONFIANCE :
-   HIGH = Montant exact ({expected_amount}€) + Entreprise confirmée
-   MEDIUM = Remboursement confirmé mais montant différent
-   LOW = Promesse future ou incertitude
-
 ═══════════════════════════════════════════════════════════════
-FORMAT DE RÉPONSE (5 éléments séparés par |)
+💡 DÉTECTION DES REMBOURSEMENTS PARTIELS (CRUCIAL)
 ═══════════════════════════════════════════════════════════════
 
-VERDICT | MONTANT | TYPE | ORDER_ID | CONFIANCE
+Un remboursement PARTIEL est VALIDE même si le montant < {expected_amount}€ !
+Détecte un PARTIEL si tu trouves UN de ces indices :
+
+📝 VOCABULAIRE EXPLICITE :
+- "remboursement partiel", "partiel", "acompte"
+- "premier versement", "versement partiel"
+- "en partie", "partie de", "une partie"
+
+💼 VOCABULAIRE CONTEXTUEL (pas besoin du mot "partiel") :
+- "ajustement en votre faveur"
+- "remboursement de la différence"
+- "remboursement des articles manquants"
+- "remboursement des frais de port uniquement"
+- "geste commercial", "dédommagement"
+- "déduction faite des frais de retour"
+- "frais retenus", "frais déduits"
+- "solde restant", "reste à rembourser"
+- "nous avons retenu X%", "retenue de X€"
+- "remboursement pour l'article X" (si commande multi-articles)
+
+🔢 ANALYSE MATHÉMATIQUE :
+- Si montant trouvé < montant attendu ({expected_amount}€)
+- ET que le contexte EXPLIQUE la différence (frais, articles spécifiques, retenue)
+- ALORS c'est un PARTIEL VALIDE (pas un rejet !)
+
+⚠️ EXEMPLES PARTIELS VALIDES :
+- "Remboursement de 250€ après déduction de 50% de frais" sur dossier 500€ → PARTIEL OK
+- "Remboursement des frais de port (15€)" sur dossier 89€ → PARTIEL OK
+- "Geste commercial de 30€" sur dossier 120€ → PARTIEL OK
+- "Remboursement article A (45€)" si commande contenait A+B → PARTIEL OK
+
+═══════════════════════════════════════════════════════════════
+📊 MONTANT & CONFIANCE
+═══════════════════════════════════════════════════════════════
+
+MONTANT :
+- Extrais le montant EXACT mentionné (pas d'estimation)
+- Si "remboursement intégral/total" sans montant → utilise {expected_amount}
+- Si montant différent SANS explication → MEDIUM confidence
+
+CONFIANCE :
+- HIGH = Montant exact ({expected_amount}€) OU Partiel explicitement justifié
+- MEDIUM = Montant différent avec explication partielle
+- LOW = Promesse future, incertitude, ou montant inexpliqué
+
+═══════════════════════════════════════════════════════════════
+FORMAT DE RÉPONSE (6 éléments séparés par |)
+═══════════════════════════════════════════════════════════════
+
+VERDICT | MONTANT | TYPE | ORDER_ID | IS_PARTIAL | CONFIANCE
 
 VERDICT : OUI (remboursement confirmé) ou NON (pas de remboursement)
 MONTANT : Le montant en euros (nombre uniquement, ex: 42.99)
 TYPE : CASH (virement/CB) ou VOUCHER (bon d'achat) ou NONE
 ORDER_ID : Le numéro de commande extrait ou NONE
+IS_PARTIAL : TRUE si c'est un remboursement partiel, FALSE sinon
 CONFIANCE : HIGH, MEDIUM, ou LOW
 
 ═══════════════════════════════════════════════════════════════
 EXEMPLES
 ═══════════════════════════════════════════════════════════════
 
-Email de remboursement Amazon 50€, commande #123456 :
-→ "OUI | 50 | CASH | 123456 | HIGH"
+Remboursement total Amazon 50€ :
+→ "OUI | 50 | CASH | 123456 | FALSE | HIGH"
 
-Email de remboursement 20€ mais dossier attend 500€ :
-→ "OUI | 20 | CASH | 789012 | MEDIUM" (montant différent !)
+Remboursement partiel explicite 20€ sur 100€ :
+→ "OUI | 20 | CASH | 789012 | TRUE | HIGH"
+
+Geste commercial 30€ sur dossier 150€ :
+→ "OUI | 30 | CASH | NONE | TRUE | HIGH"
+
+Remboursement frais de port uniquement 8€ sur dossier 89€ :
+→ "OUI | 8 | CASH | 456789 | TRUE | HIGH"
+
+Remboursement 250€ avec "50% retenus" sur dossier 500€ :
+→ "OUI | 250 | CASH | 111222 | TRUE | HIGH"
 
 Email de FACTURE (pas remboursement) :
-→ "NON | 0 | NONE | NONE | LOW" (c'est un débit, pas un crédit)
+→ "NON | 0 | NONE | NONE | FALSE | LOW"
 
 Bon d'achat Zalando 30€ :
-→ "OUI | 30 | VOUCHER | 456789 | HIGH"
+→ "OUI | 30 | VOUCHER | 456789 | FALSE | HIGH"
 
 Promesse future de remboursement :
-→ "NON | 0 | NONE | NONE | LOW" (pas encore effectué)
+→ "NON | 0 | NONE | NONE | FALSE | LOW"
 
 Ta réponse (UNE SEULE LIGNE) :"""
+
+    # Vocabulaire élargi pour détection Python des partiels
+    PARTIAL_KEYWORDS = [
+        # Explicites
+        "partiel", "acompte", "premier versement", "versement partiel",
+        "en partie", "partie de", "une partie",
+        # Contextuels
+        "ajustement", "différence", "articles manquants",
+        "frais de port uniquement", "frais de retour",
+        "geste commercial", "dédommagement", "compensation",
+        "déduction", "déduit", "retenu", "retenue",
+        "solde restant", "reste à", "frais retenus",
+        "remboursement pour l'article", "remboursement de l'article",
+        "50%", "pourcentage", "prorata"
+    ]
 
     try:
         response = client.chat.completions.create(
@@ -2573,8 +2639,18 @@ Ta réponse (UNE SEULE LIGNE) :"""
             order_id_raw = parts[3].strip()
             order_id = None if order_id_raw.upper() == "NONE" or order_id_raw == "" else order_id_raw
             
-            # Confiance
-            confidence_raw = parts[4].upper().strip()
+            # IS_PARTIAL (nouveau - index 4)
+            is_partial_from_ia = False
+            if len(parts) >= 5:
+                is_partial_raw = parts[4].upper().strip()
+                is_partial_from_ia = "TRUE" in is_partial_raw or "VRAI" in is_partial_raw or "OUI" in is_partial_raw
+            
+            # Confiance (index 5, ou index 4 si ancien format)
+            if len(parts) >= 6:
+                confidence_raw = parts[5].upper().strip()
+            else:
+                confidence_raw = parts[4].upper().strip()  # Fallback ancien format
+            
             if "HIGH" in confidence_raw:
                 confidence = "HIGH"
             elif "MEDIUM" in confidence_raw:
@@ -2582,9 +2658,23 @@ Ta réponse (UNE SEULE LIGNE) :"""
             else:
                 confidence = "LOW"
             
+            # Détection Python des partiels (en complément de l'IA)
+            text_to_check = (snippet + " " + subject).lower()
+            is_partial_from_keywords = any(kw in text_to_check for kw in PARTIAL_KEYWORDS)
+            
+            # Détection mathématique : si montant < 90% du attendu, potentiellement partiel
+            is_partial_from_math = False
+            if montant_reel > 0 and expected_amount > 0:
+                ratio = montant_reel / expected_amount
+                if ratio < 0.90 and ratio > 0.01:  # Entre 1% et 90%
+                    is_partial_from_math = True
+            
+            # Fusion : partiel si l'IA dit TRUE OU si keywords détectés OU si math + contexte
+            is_partial = is_partial_from_ia or is_partial_from_keywords or (is_partial_from_math and is_partial_from_keywords)
+            
             # Déterminer si c'est un crédit (remboursement) vs débit (facture)
             debit_keywords = ["facture", "prélèvement", "paiement effectué", "montant débité", "a été prélevé"]
-            is_credit = not any(kw in snippet.lower() or kw in subject.lower() for kw in debit_keywords)
+            is_credit = not any(kw in text_to_check for kw in debit_keywords)
             
             return {
                 "verdict": verdict,
@@ -2592,6 +2682,7 @@ Ta réponse (UNE SEULE LIGNE) :"""
                 "type": type_remboursement,
                 "order_id": order_id,
                 "is_credit": is_credit,
+                "is_partial": is_partial,
                 "confidence": confidence,
                 "raison": result
             }
@@ -2602,13 +2693,14 @@ Ta réponse (UNE SEULE LIGNE) :"""
                 "type": "NONE",
                 "order_id": None,
                 "is_credit": False,
+                "is_partial": False,
                 "confidence": "LOW",
                 "raison": f"Format invalide: {result}"
             }
     
     except Exception as e:
         DEBUG_LOGS.append(f"Erreur analyze_refund: {str(e)}")
-        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "confidence": "LOW", "raison": str(e)}
+        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "is_partial": False, "confidence": "LOW", "raison": str(e)}
 
 # ========================================
 # PAGES LÉGALES
