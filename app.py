@@ -1605,7 +1605,7 @@ def dashboard():
     html_rows = ""
     for case in cases:
         # ════════════════════════════════════════════════════════════════
-        # GESTION DES STATUTS - Incluant Partiels et Bons d'achat
+        # GESTION DES STATUTS - Incluant Partiels, Bons d'achat et Annulations
         # ════════════════════════════════════════════════════════════════
         
         if case.status == "Remboursé":
@@ -1625,6 +1625,12 @@ def dashboard():
             color = "#3b82f6"  # Bleu
             status_text = "🎫 BON D'ACHAT - Dossier fermé"
             status_icon = "🎫"
+        
+        elif case.status == "Annulé (sans débit)":
+            # ANNULATION sans transaction financière - Pas de commission
+            color = "#8b5cf6"  # Violet
+            status_text = "🚫 ANNULÉ - Aucun débit"
+            status_icon = "🚫"
         
         elif case.status == "En attente de remboursement":
             color = "#f59e0b"  # Jaune/Orange
@@ -2170,9 +2176,10 @@ def check_refunds():
         "remboursements_cash": 0,
         "remboursements_voucher": 0,
         "remboursements_partiels": 0,
+        "annulations": 0,  # Annulations sans débit
         "commissions_prelevees": 0,
         "total_commission": 0,
-        "rejets_securite": 0  # Nouveaux rejets de sécurité
+        "rejets_securite": 0
     }
     
     # Chercher les litiges en attente de remboursement
@@ -2206,8 +2213,8 @@ def check_refunds():
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
             
-            # QUERY AMÉLIORÉE - Inclut bons d'achat, avoirs, vouchers
-            query = f'"{company_clean}" (remboursement OR refund OR virement OR "a été crédité" OR "has been refunded" OR "montant remboursé" OR "votre compte a été crédité" OR "remboursement effectué" OR "refund processed" OR "bon d\'achat" OR "avoir" OR "voucher" OR "carte cadeau" OR "gift card" OR "crédit boutique" OR "store credit" OR "code promo" OR "geste commercial") -subject:"MISE EN DEMEURE"'
+            # QUERY COMPLÈTE - Remboursements, bons d'achat, ET annulations
+            query = f'"{company_clean}" (remboursement OR refund OR virement OR "a été crédité" OR "has been refunded" OR "montant remboursé" OR "votre compte a été crédité" OR "remboursement effectué" OR "refund processed" OR "bon d\'achat" OR "avoir" OR "voucher" OR "carte cadeau" OR "gift card" OR "crédit boutique" OR "store credit" OR "code promo" OR "geste commercial" OR annulation OR annulée OR cancelled OR canceled OR voided OR "commande annulée" OR "order cancelled" OR "ne sera pas débité" OR "will not be charged") -subject:"MISE EN DEMEURE"'
             
             logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🔍 Query: <code>{query[:100]}...</code></p>")
             
@@ -2262,7 +2269,8 @@ def check_refunds():
                 type_remboursement = verdict_result.get("type", "UNKNOWN")
                 order_id_found = verdict_result.get("order_id", None)
                 is_credit = verdict_result.get("is_credit", True)
-                is_partial = verdict_result.get("is_partial", False)  # Nouveau champ
+                is_partial = verdict_result.get("is_partial", False)
+                is_cancelled = verdict_result.get("is_cancelled", False)  # Nouveau champ
                 confidence = verdict_result.get("confidence", "LOW")
                 raison = verdict_result.get("raison", "")
                 
@@ -2271,6 +2279,31 @@ def check_refunds():
                     logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>📦 N° Commande trouvé: {order_id_found}</p>")
                 if raison:
                     logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {raison[:100]}</p>")
+                
+                # ═══════════════════════════════════════════════════════════
+                # 🚫 CAS SPÉCIAL : ANNULATION SANS DÉBIT
+                # ═══════════════════════════════════════════════════════════
+                
+                if verdict == "ANNULE" or is_cancelled or type_remboursement == "CANCELLED":
+                    logs.append(f"<p style='margin-left:30px; color:#8b5cf6;'>🚫 ANNULATION DÉTECTÉE : Commande annulée sans débit</p>")
+                    logs.append(f"<p style='margin-left:40px; color:#8b5cf6; font-size:0.85rem;'>→ Aucune transaction financière - Pas de commission à prélever</p>")
+                    
+                    # Marquer l'email comme utilisé pour ne pas le retraiter
+                    used_email_ids.add(msg_id)
+                    stats["annulations"] += 1
+                    
+                    # Fermer le dossier sans commission
+                    case.status = "Annulé (sans débit)"
+                    case.updated_at = datetime.utcnow()
+                    db.session.commit()
+                    
+                    logs.append(f"<p style='margin-left:30px; color:#8b5cf6; font-weight:bold;'>✅ Dossier fermé - Annulation confirmée</p>")
+                    
+                    # Notification Telegram
+                    send_telegram_notif(f"🚫 ANNULATION DÉTECTÉE 🚫\n\n{company_clean.upper()} : Commande annulée sans débit\nClient: {user.email}\nDossier #{case.id}\n⚠️ PAS DE COMMISSION (0€)")
+                    
+                    found_valid_refund = True
+                    break
                 
                 # ═══════════════════════════════════════════════════════════
                 # 🔒 VALIDATIONS DE SÉCURITÉ - ANTI FAUX-POSITIFS
@@ -2431,7 +2464,8 @@ def check_refunds():
         <p>💵 Remboursements CASH : <b>{stats['remboursements_cash']}</b></p>
         <p>🎫 Remboursements VOUCHER : <b>{stats['remboursements_voucher']}</b> (sans commission)</p>
         <p>📉 Remboursements PARTIELS : <b>{stats['remboursements_partiels']}</b></p>
-        <p style='color:#dc2626;'>🚫 Rejets SÉCURITÉ : <b>{stats['rejets_securite']}</b> (faux positifs évités)</p>
+        <p style='color:#8b5cf6;'>🚫 Annulations (sans débit) : <b>{stats['annulations']}</b> (pas de commission)</p>
+        <p style='color:#dc2626;'>⚠️ Rejets SÉCURITÉ : <b>{stats['rejets_securite']}</b> (faux positifs évités)</p>
         <p style='color:#10b981; font-weight:bold;'>💰 Commissions prélevées : <b>{stats['commissions_prelevees']}</b> = <b>{stats['total_commission']}€</b></p>
     </div>
     """)
@@ -2449,12 +2483,13 @@ def analyze_refund_email(company, expected_amount, subject, snippet, email_from,
     💰 ANALYSEUR DE REMBOURSEMENT - Version SÉCURISÉE
     
     Retourne : {
-        verdict: OUI/NON,
+        verdict: OUI/NON/ANNULE,
         montant_reel: float,
-        type: CASH/VOUCHER/NONE,
+        type: CASH/VOUCHER/CANCELLED/NONE,
         order_id: str ou None,
         is_credit: bool (True = remboursement, False = facture/débit),
         is_partial: bool (True = remboursement partiel détecté),
+        is_cancelled: bool (True = annulation sans débit),
         confidence: HIGH/MEDIUM/LOW,
         raison: str
     }
@@ -2463,10 +2498,11 @@ def analyze_refund_email(company, expected_amount, subject, snippet, email_from,
     1. Vérifie que c'est un CRÉDIT (remboursement) pas un DÉBIT (facture)
     2. Extrait le numéro de commande pour comparaison
     3. Détecte les partiels explicites ET implicites
+    4. Détecte les annulations sans débit
     """
     
     if not OPENAI_API_KEY:
-        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "is_partial": False, "confidence": "LOW", "raison": "Pas d'API"}
+        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "is_partial": False, "is_cancelled": False, "confidence": "LOW", "raison": "Pas d'API"}
     
     client = OpenAI(api_key=OPENAI_API_KEY)
     
@@ -2481,6 +2517,29 @@ EMAIL À ANALYSER :
 - Expéditeur : {email_from}
 - Sujet : "{subject}"
 - Contenu : "{snippet}"
+
+═══════════════════════════════════════════════════════════════
+🚨 RÈGLE PRIORITAIRE : ANNULATIONS SANS DÉBIT (CRUCIAL)
+═══════════════════════════════════════════════════════════════
+
+⚠️ Une ANNULATION avant expédition N'EST PAS un remboursement !
+Si l'email indique qu'il n'y a AUCUN flux financier :
+
+🚫 MOTS-CLÉS D'ANNULATION SANS DÉBIT :
+- "ne sera pas débité", "will not be charged"
+- "aucune transaction", "no transaction"
+- "empreinte bancaire relâchée", "authorization released"
+- "commande annulée avant expédition"
+- "annulée sans frais", "cancelled without charge"
+- "aucun prélèvement", "aucun montant prélevé"
+- "votre carte ne sera pas débitée"
+- "pas de facturation", "not billed"
+
+→ Si tu détectes une ANNULATION SANS DÉBIT :
+   Réponds : "ANNULE | 0 | CANCELLED | [ORDER_ID] | FALSE | HIGH"
+   
+⚠️ IMPORTANT : Récupérer 0€ sur une annulation est NORMAL !
+   Ne force PAS un match avec le montant du dossier.
 
 ═══════════════════════════════════════════════════════════════
 🚨 RÈGLES DE SÉCURITÉ CRITIQUES
@@ -2588,6 +2647,12 @@ Bon d'achat Zalando 30€ :
 Promesse future de remboursement :
 → "NON | 0 | NONE | NONE | FALSE | LOW"
 
+ANNULATION sans débit ("ne sera pas débité") :
+→ "ANNULE | 0 | CANCELLED | 123456 | FALSE | HIGH"
+
+Commande annulée avant expédition :
+→ "ANNULE | 0 | CANCELLED | 789012 | FALSE | HIGH"
+
 Ta réponse (UNE SEULE LIGNE) :"""
 
     # Vocabulaire élargi pour détection Python des partiels
@@ -2604,6 +2669,19 @@ Ta réponse (UNE SEULE LIGNE) :"""
         "remboursement pour l'article", "remboursement de l'article",
         "50%", "pourcentage", "prorata"
     ]
+    
+    # Vocabulaire pour détection des annulations sans débit
+    CANCELLED_NO_CHARGE_KEYWORDS = [
+        "ne sera pas débité", "will not be charged",
+        "aucune transaction", "no transaction",
+        "empreinte bancaire relâchée", "authorization released",
+        "annulée avant expédition", "cancelled before shipping",
+        "annulée sans frais", "cancelled without charge",
+        "aucun prélèvement", "aucun montant prélevé",
+        "votre carte ne sera pas débitée", "carte non débitée",
+        "pas de facturation", "not billed", "won't be charged",
+        "commande annulée", "order cancelled", "order canceled"
+    ]
 
     try:
         response = client.chat.completions.create(
@@ -2617,7 +2695,14 @@ Ta réponse (UNE SEULE LIGNE) :"""
         parts = [p.strip() for p in result.split("|")]
         
         if len(parts) >= 5:
-            verdict = "OUI" if parts[0].upper().startswith("OUI") else "NON"
+            # Gérer les 3 verdicts possibles : OUI, NON, ANNULE
+            verdict_raw = parts[0].upper().strip()
+            if verdict_raw.startswith("OUI"):
+                verdict = "OUI"
+            elif verdict_raw.startswith("ANNUL"):
+                verdict = "ANNULE"
+            else:
+                verdict = "NON"
             
             # Montant
             try:
@@ -2626,10 +2711,12 @@ Ta réponse (UNE SEULE LIGNE) :"""
             except:
                 montant_reel = 0
             
-            # Type
+            # Type - Inclut maintenant CANCELLED
             type_raw = parts[2].upper().strip()
             if "VOUCHER" in type_raw or "BON" in type_raw or "AVOIR" in type_raw:
                 type_remboursement = "VOUCHER"
+            elif "CANCEL" in type_raw:
+                type_remboursement = "CANCELLED"
             elif "CASH" in type_raw or "VIREMENT" in type_raw:
                 type_remboursement = "CASH"
             else:
@@ -2676,6 +2763,16 @@ Ta réponse (UNE SEULE LIGNE) :"""
             debit_keywords = ["facture", "prélèvement", "paiement effectué", "montant débité", "a été prélevé"]
             is_credit = not any(kw in text_to_check for kw in debit_keywords)
             
+            # Détection Python des annulations sans débit (en complément de l'IA)
+            is_cancelled_from_keywords = any(kw in text_to_check for kw in CANCELLED_NO_CHARGE_KEYWORDS)
+            is_cancelled = (verdict == "ANNULE") or (type_remboursement == "CANCELLED") or is_cancelled_from_keywords
+            
+            # Si annulation détectée, forcer le montant à 0 et le type à CANCELLED
+            if is_cancelled:
+                montant_reel = 0
+                type_remboursement = "CANCELLED"
+                verdict = "ANNULE"
+            
             return {
                 "verdict": verdict,
                 "montant_reel": montant_reel,
@@ -2683,6 +2780,7 @@ Ta réponse (UNE SEULE LIGNE) :"""
                 "order_id": order_id,
                 "is_credit": is_credit,
                 "is_partial": is_partial,
+                "is_cancelled": is_cancelled,
                 "confidence": confidence,
                 "raison": result
             }
@@ -2694,13 +2792,14 @@ Ta réponse (UNE SEULE LIGNE) :"""
                 "order_id": None,
                 "is_credit": False,
                 "is_partial": False,
+                "is_cancelled": False,
                 "confidence": "LOW",
                 "raison": f"Format invalide: {result}"
             }
     
     except Exception as e:
         DEBUG_LOGS.append(f"Erreur analyze_refund: {str(e)}")
-        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "is_partial": False, "confidence": "LOW", "raison": str(e)}
+        return {"verdict": "NON", "montant_reel": 0, "type": "NONE", "order_id": None, "is_credit": False, "is_partial": False, "is_cancelled": False, "confidence": "LOW", "raison": str(e)}
 
 # ========================================
 # PAGES LÉGALES
