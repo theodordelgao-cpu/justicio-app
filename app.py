@@ -5,6 +5,7 @@ import stripe
 import json
 import re
 import traceback
+from urllib.parse import urljoin, urlparse
 from flask import Flask, session, redirect, request, url_for, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
@@ -15,6 +16,7 @@ from openai import OpenAI
 from datetime import datetime
 from email.mime.text import MIMEText
 from sqlalchemy.exc import IntegrityError
+from bs4 import BeautifulSoup
 
 # ========================================
 # CONFIGURATION & INITIALISATION
@@ -156,6 +158,12 @@ class Litigation(db.Model):
     amount_float = db.Column(db.Float)  # Montant en float pour calculs
     problem_type = db.Column(db.String(50))  # Type de problème
     description = db.Column(db.Text)  # Description détaillée du litige
+    
+    # ════════════════════════════════════════════════════════════════
+    # CHAMPS AGENT DÉTECTIVE (V3)
+    # ════════════════════════════════════════════════════════════════
+    merchant_email = db.Column(db.String(200))  # Email trouvé par le détective
+    merchant_email_source = db.Column(db.String(100))  # Page où l'email a été trouvé
 
 with app.app_context():
     try:
@@ -200,8 +208,25 @@ with app.app_context():
                     conn.commit()
                 print(f"✅ Colonne {col_name} ajoutée")
         
+        # ════════════════════════════════════════════════════════════════
+        # MIGRATIONS V3 - Agent Détective
+        # ════════════════════════════════════════════════════════════════
+        
+        new_columns_v3 = {
+            'merchant_email': 'VARCHAR(200)',
+            'merchant_email_source': 'VARCHAR(100)'
+        }
+        
+        for col_name, col_type in new_columns_v3.items():
+            if col_name not in columns:
+                print(f"🔄 Migration V3 : Ajout de {col_name}...")
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE litigation ADD COLUMN {col_name} {col_type}'))
+                    conn.commit()
+                print(f"✅ Colonne {col_name} ajoutée")
+        
         db.create_all()
-        print("✅ Base de données synchronisée (V2).")
+        print("✅ Base de données synchronisée (V3 - Agent Détective).")
     except Exception as e:
         print(f"❌ Erreur DB : {e}")
 
@@ -274,6 +299,225 @@ def is_spam(sender, subject, body_snippet):
             return True, f"Body blacklist: {black}"
     
     return False, None
+
+# ========================================
+# 🕵️ AGENT DÉTECTIVE - Scraping Email Marchand
+# ========================================
+
+def find_merchant_email(url):
+    """
+    🕵️ AGENT DÉTECTIVE - Trouve l'email de contact d'un site marchand
+    
+    Stratégie :
+    1. Visite la page d'accueil
+    2. Cherche les liens vers Contact, Mentions Légales, CGV, Support
+    3. Scrape ces pages pour extraire les emails
+    4. Priorise les emails "contact", "support", "sav", "legal"
+    
+    Retourne : {"email": str|None, "source": str, "all_emails": list}
+    """
+    
+    if not url:
+        return {"email": None, "source": None, "all_emails": []}
+    
+    # Headers pour éviter le blocage
+    HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+    }
+    
+    # Regex pour extraire les emails
+    EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    
+    # Emails à ignorer (parasites)
+    BLACKLIST_EMAILS = [
+        'example.com', 'domain.com', 'email.com', 'test.com',
+        'wixpress.com', 'sentry.io', 'schema.org',
+        'noreply@', 'no-reply@', 'mailer-daemon@',
+        'postmaster@', 'webmaster@', 'hostmaster@',
+        'abuse@', 'spam@', 'unsubscribe@',
+        '.png', '.jpg', '.gif', '.svg', '.css', '.js'
+    ]
+    
+    # Mots-clés de liens à visiter
+    CONTACT_KEYWORDS = [
+        'contact', 'nous-contacter', 'contactez', 'contactez-nous',
+        'mentions-legales', 'mentions_legales', 'legal', 'legales',
+        'cgv', 'cgu', 'conditions', 'terms',
+        'support', 'aide', 'help', 'faq',
+        'a-propos', 'about', 'qui-sommes-nous',
+        'service-client', 'sav', 'reclamation'
+    ]
+    
+    # Priorité des emails (plus le score est élevé, mieux c'est)
+    EMAIL_PRIORITY = {
+        'contact': 100,
+        'support': 90,
+        'sav': 90,
+        'service-client': 85,
+        'serviceclient': 85,
+        'client': 80,
+        'info': 70,
+        'information': 70,
+        'legal': 65,
+        'juridique': 65,
+        'reclamation': 60,
+        'hello': 50,
+        'bonjour': 50,
+        'commercial': 40,
+        'vente': 40,
+        'sales': 40
+    }
+    
+    def clean_url(raw_url):
+        """Nettoie et normalise une URL"""
+        raw_url = raw_url.strip()
+        if not raw_url:
+            return None
+        if not raw_url.startswith(('http://', 'https://')):
+            raw_url = 'https://' + raw_url
+        return raw_url
+    
+    def is_valid_email(email):
+        """Vérifie si un email est valide et pas dans la blacklist"""
+        email_lower = email.lower()
+        for blacklisted in BLACKLIST_EMAILS:
+            if blacklisted in email_lower:
+                return False
+        # Vérifier que ce n'est pas juste un domaine
+        if email.count('@') != 1:
+            return False
+        local, domain = email.split('@')
+        if len(local) < 2 or len(domain) < 4:
+            return False
+        return True
+    
+    def extract_emails_from_text(text):
+        """Extrait tous les emails valides d'un texte"""
+        found = re.findall(EMAIL_REGEX, text)
+        return [e for e in found if is_valid_email(e)]
+    
+    def score_email(email):
+        """Calcule un score de priorité pour un email"""
+        email_lower = email.lower()
+        local_part = email_lower.split('@')[0]
+        
+        score = 0
+        for keyword, priority in EMAIL_PRIORITY.items():
+            if keyword in local_part:
+                score = max(score, priority)
+        
+        # Bonus si le domaine correspond au site
+        return score if score > 0 else 10  # Score minimum de 10
+    
+    def get_page_content(page_url):
+        """Récupère le contenu d'une page avec gestion des erreurs"""
+        try:
+            response = requests.get(page_url, headers=HEADERS, timeout=10, allow_redirects=True)
+            if response.status_code == 200:
+                return response.text
+        except Exception as e:
+            DEBUG_LOGS.append(f"🕵️ Erreur fetch {page_url[:50]}: {str(e)[:50]}")
+        return None
+    
+    def find_contact_links(soup, base_url):
+        """Trouve les liens vers les pages de contact"""
+        links = []
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag.get('href', '').lower()
+            text = a_tag.get_text().lower()
+            
+            # Vérifier si le lien ou le texte contient un mot-clé
+            for keyword in CONTACT_KEYWORDS:
+                if keyword in href or keyword in text:
+                    full_url = urljoin(base_url, a_tag['href'])
+                    if full_url not in links:
+                        links.append(full_url)
+                    break
+        
+        return links[:10]  # Limiter à 10 liens
+    
+    # ═══════════════════════════════════════════════════════════════
+    # EXÉCUTION DU SCRAPING
+    # ═══════════════════════════════════════════════════════════════
+    
+    all_emails = {}  # {email: {"score": int, "source": str}}
+    
+    try:
+        # 1. Nettoyer l'URL
+        base_url = clean_url(url)
+        if not base_url:
+            return {"email": None, "source": None, "all_emails": []}
+        
+        DEBUG_LOGS.append(f"🕵️ Agent Détective: Analyse de {base_url}")
+        
+        # 2. Récupérer la page d'accueil
+        homepage_content = get_page_content(base_url)
+        if not homepage_content:
+            return {"email": None, "source": "Erreur: Site inaccessible", "all_emails": []}
+        
+        soup = BeautifulSoup(homepage_content, 'html.parser')
+        
+        # 3. Extraire les emails de la page d'accueil
+        homepage_emails = extract_emails_from_text(homepage_content)
+        for email in homepage_emails:
+            if email not in all_emails:
+                all_emails[email] = {"score": score_email(email), "source": "Page d'accueil"}
+        
+        # 4. Trouver les liens vers les pages de contact
+        contact_links = find_contact_links(soup, base_url)
+        DEBUG_LOGS.append(f"🕵️ {len(contact_links)} pages de contact trouvées")
+        
+        # 5. Visiter chaque page de contact
+        for link in contact_links:
+            page_content = get_page_content(link)
+            if page_content:
+                page_emails = extract_emails_from_text(page_content)
+                # Identifier le type de page pour le log
+                page_type = "Contact"
+                for kw in ['legal', 'mention', 'cgv', 'cgu']:
+                    if kw in link.lower():
+                        page_type = "Mentions Légales"
+                        break
+                for kw in ['support', 'aide', 'faq']:
+                    if kw in link.lower():
+                        page_type = "Support"
+                        break
+                
+                for email in page_emails:
+                    current_score = score_email(email)
+                    # Bonus pour les pages spécialisées
+                    if 'contact' in link.lower():
+                        current_score += 20
+                    if 'legal' in link.lower() or 'mention' in link.lower():
+                        current_score += 15
+                    
+                    if email not in all_emails or all_emails[email]["score"] < current_score:
+                        all_emails[email] = {"score": current_score, "source": page_type}
+        
+        # 6. Trier par score et sélectionner le meilleur
+        if all_emails:
+            sorted_emails = sorted(all_emails.items(), key=lambda x: x[1]["score"], reverse=True)
+            best_email = sorted_emails[0][0]
+            best_source = sorted_emails[0][1]["source"]
+            
+            DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé: {best_email} (source: {best_source})")
+            
+            return {
+                "email": best_email,
+                "source": best_source,
+                "all_emails": [e[0] for e in sorted_emails[:5]]  # Top 5 emails
+            }
+        
+        DEBUG_LOGS.append(f"🕵️ ❌ Aucun email trouvé sur {base_url}")
+        return {"email": None, "source": "Aucun email trouvé", "all_emails": []}
+        
+    except Exception as e:
+        DEBUG_LOGS.append(f"🕵️ Erreur Agent Détective: {str(e)}")
+        return {"email": None, "source": f"Erreur: {str(e)[:50]}", "all_emails": []}
 
 def extract_email_content(message_data):
     """Extrait le contenu textuel d'un email Gmail"""
@@ -1732,6 +1976,12 @@ def dashboard():
         if source == "MANUAL":
             source_badge = "<span style='font-size:0.65rem; background:#dbeafe; color:#1d4ed8; padding:2px 6px; border-radius:4px; margin-left:8px;'>✍️ Manuel</span>"
         
+        # Afficher merchant_email si trouvé (Agent Détective)
+        merchant_email = getattr(case, 'merchant_email', None)
+        merchant_badge = ""
+        if merchant_email:
+            merchant_badge = f"<div style='font-size:0.75rem; color:#059669; margin-top:3px;'>📧 {merchant_email}</div>"
+        
         html_rows += f"""
         <div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; 
                     border-left:5px solid {color}; box-shadow:0 2px 5px rgba(0,0,0,0.05); 
@@ -1746,6 +1996,7 @@ def dashboard():
                 <div style='font-size:0.8rem; color:#94a3b8; margin-top:5px;'>
                     ⚖️ {case.law}
                 </div>
+                {merchant_badge}
             </div>
             <div style='text-align:right;'>
                 <div style='font-size:1.2rem; font-weight:bold; color:{color}'>
@@ -2065,27 +2316,75 @@ def submit_litige():
         db.session.commit()
         
         # ════════════════════════════════════════════════════════════════
-        # 🤖 TODO: AGENT DÉTECTIVE (V3)
+        # 🕵️ AGENT DÉTECTIVE - Recherche automatique de l'email marchand
+        # ════════════════════════════════════════════════════════════════
+        
+        merchant_result = {"email": None, "source": None}
+        detective_status = "non_lance"
+        
+        if url_site:
+            DEBUG_LOGS.append(f"🕵️ Lancement Agent Détective pour {url_site}")
+            merchant_result = find_merchant_email(url_site)
+            
+            if merchant_result["email"]:
+                # Email trouvé ! Mettre à jour le dossier
+                new_case.merchant_email = merchant_result["email"]
+                new_case.merchant_email_source = merchant_result["source"]
+                db.session.commit()
+                detective_status = "succes"
+                DEBUG_LOGS.append(f"🕵️ ✅ Email sauvegardé: {merchant_result['email']}")
+            else:
+                detective_status = "echec"
+                DEBUG_LOGS.append(f"🕵️ ❌ Aucun email trouvé")
+        
+        # Préparer l'affichage du résultat détective
+        detective_html = ""
+        if detective_status == "succes":
+            detective_html = f"""
+            <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                        padding:15px; border-radius:10px; margin-bottom:15px;
+                        border-left:4px solid #10b981;'>
+                <p style='margin:0; color:#065f46;'>
+                    <b>🕵️ Agent Détective :</b> Email trouvé !<br>
+                    <span style='font-family:monospace; background:#ecfdf5; padding:3px 8px; border-radius:4px;'>
+                        {merchant_result['email']}
+                    </span>
+                    <span style='font-size:0.8rem; color:#047857;'> (via {merchant_result['source']})</span>
+                </p>
+            </div>
+            """
+        elif detective_status == "echec":
+            detective_html = f"""
+            <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:15px;
+                        border-left:4px solid #f59e0b;'>
+                <p style='margin:0; color:#92400e; font-size:0.9rem;'>
+                    <b>🕵️ Agent Détective :</b> Aucun email trouvé automatiquement.<br>
+                    <span style='font-size:0.85rem;'>Nous rechercherons manuellement le contact.</span>
+                </p>
+            </div>
+            """
+        
+        # ════════════════════════════════════════════════════════════════
+        # TODO: PROCHAINES ÉTAPES (V4)
         # ════════════════════════════════════════════════════════════════
         # 
-        # Prochaine étape : Lancer l'Agent IA pour :
-        # 1. find_merchant_contact(url_site) → Trouver l'email juridique
-        # 2. generate_mise_en_demeure(case) → Générer le courrier personnalisé
-        # 3. send_legal_email(case, merchant_email) → Envoyer automatiquement
-        #
-        # merchant_email = find_merchant_contact(url_site) if url_site else None
-        # if merchant_email:
-        #     new_case.merchant_email = merchant_email
-        #     db.session.commit()
-        #     # Lancer la génération de mise en demeure
-        #     launch_detective_agent(new_case.id)
+        # Si merchant_email trouvé :
+        #   1. generate_mise_en_demeure(new_case) → Générer le courrier IA
+        #   2. send_legal_email(new_case) → Envoyer depuis Gmail de l'utilisateur
+        #   3. Mettre à jour status = "Mise en demeure envoyée"
         #
         # ════════════════════════════════════════════════════════════════
         
-        # Notification Telegram
-        send_telegram_notif(f"📝 NOUVEAU LITIGE MANUEL 📝\n\n🏪 {company.upper()}\n💰 {amount_float:.2f}€\n📋 N° {order_id}\n⚠️ {problem_label}\n👤 {session['email']}\n\n📄 Description:\n{description[:200]}...")
+        # Notification Telegram avec résultat détective
+        detective_notif = ""
+        if merchant_result["email"]:
+            detective_notif = f"\n\n🕵️ EMAIL TROUVÉ: {merchant_result['email']}"
+        else:
+            detective_notif = "\n\n🕵️ Email non trouvé (recherche manuelle requise)"
         
-        # Page de succès avec wording impactant
+        send_telegram_notif(f"📝 NOUVEAU LITIGE MANUEL 📝\n\n🏪 {company.upper()}\n💰 {amount_float:.2f}€\n📋 N° {order_id}\n⚠️ {problem_label}\n👤 {session['email']}{detective_notif}\n\n📄 Description:\n{description[:150]}...")
+        
+        # Page de succès avec résultat du détective
         return STYLE + f"""
         <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
             <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
@@ -2094,6 +2393,8 @@ def submit_litige():
                 <h1 style='color:#065f46; margin:0 0 10px 0;'>Procédure lancée !</h1>
                 <p style='color:#047857; margin:0;'>Notre IA prend le relais.</p>
             </div>
+            
+            {detective_html}
             
             <div style='background:white; padding:25px; border-radius:15px; text-align:left;
                         box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
@@ -2109,7 +2410,7 @@ def submit_litige():
                         border-left:4px solid #3b82f6;'>
                 <h4 style='margin:0 0 10px 0; color:#1e40af;'>🤖 Que va faire notre IA ?</h4>
                 <div style='text-align:left; color:#1e40af; font-size:0.9rem;'>
-                    <p style='margin:5px 0;'>1️⃣ <b>Recherche</b> du contact juridique de l'entreprise</p>
+                    <p style='margin:5px 0;'>1️⃣ <b>Recherche</b> du contact juridique {'✅' if merchant_result['email'] else '⏳'}</p>
                     <p style='margin:5px 0;'>2️⃣ <b>Rédaction</b> d'une mise en demeure personnalisée</p>
                     <p style='margin:5px 0;'>3️⃣ <b>Envoi</b> depuis votre adresse email</p>
                 </div>
@@ -3321,6 +3622,76 @@ def verif_user():
         html.append(f"<p><b>{u.name}</b> ({u.email}) - {carte_status}</p>")
     
     return STYLE + "".join(html) + "<br><a href='/' class='btn-logout'>Retour</a>"
+
+@app.route("/test-detective")
+def test_detective():
+    """Page de test pour l'Agent Détective"""
+    url = request.args.get("url", "")
+    
+    if not url:
+        return STYLE + """
+        <div style='max-width:500px; margin:0 auto; padding:30px;'>
+            <h1>🕵️ Test Agent Détective</h1>
+            <form method='GET' style='background:white; padding:25px; border-radius:15px;'>
+                <label style='display:block; margin-bottom:10px; font-weight:600;'>URL du site à analyser :</label>
+                <input type='url' name='url' required placeholder='https://www.exemple.com' 
+                       style='width:100%; padding:12px; border:2px solid #e2e8f0; border-radius:8px; margin-bottom:15px;'>
+                <button type='submit' class='btn-success' style='width:100%;'>🔍 Lancer l'analyse</button>
+            </form>
+            <br>
+            <a href='/' style='color:#64748b;'>← Retour</a>
+        </div>
+        """ + FOOTER
+    
+    # Lancer l'analyse
+    result = find_merchant_email(url)
+    
+    # Afficher les résultats
+    email_found = result.get("email")
+    source = result.get("source", "N/A")
+    all_emails = result.get("all_emails", [])
+    
+    status_html = ""
+    if email_found:
+        status_html = f"""
+        <div style='background:#d1fae5; padding:20px; border-radius:10px; margin:20px 0;'>
+            <h3 style='color:#065f46; margin:0;'>✅ Email trouvé !</h3>
+            <p style='font-size:1.3rem; font-family:monospace; margin:10px 0;'>{email_found}</p>
+            <p style='color:#047857; font-size:0.9rem;'>Source : {source}</p>
+        </div>
+        """
+    else:
+        status_html = f"""
+        <div style='background:#fef3c7; padding:20px; border-radius:10px; margin:20px 0;'>
+            <h3 style='color:#92400e; margin:0;'>❌ Aucun email trouvé</h3>
+            <p style='color:#92400e; font-size:0.9rem;'>{source}</p>
+        </div>
+        """
+    
+    all_emails_html = ""
+    if all_emails:
+        all_emails_html = "<h4>📧 Tous les emails trouvés :</h4><ul>"
+        for e in all_emails:
+            all_emails_html += f"<li><code>{e}</code></li>"
+        all_emails_html += "</ul>"
+    
+    return STYLE + f"""
+    <div style='max-width:600px; margin:0 auto; padding:30px;'>
+        <h1>🕵️ Résultats Agent Détective</h1>
+        <p style='color:#64748b;'>URL analysée : <code>{url}</code></p>
+        
+        {status_html}
+        
+        <div style='background:white; padding:20px; border-radius:10px;'>
+            {all_emails_html if all_emails_html else "<p>Aucun email trouvé sur ce site.</p>"}
+        </div>
+        
+        <div style='margin-top:20px;'>
+            <a href='/test-detective' class='btn-success' style='margin-right:10px;'>🔄 Nouveau test</a>
+            <a href='/' class='btn-logout'>Retour</a>
+        </div>
+    </div>
+    """ + FOOTER
 
 # ========================================
 # LANCEMENT
