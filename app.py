@@ -1007,11 +1007,34 @@ body {
     align-items: center;
     z-index: 100;
 }
+/* BOUTON SUPPORT FLOTTANT */
+.support-float {
+    position: fixed;
+    bottom: 100px;
+    right: 20px;
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: #FFF;
+    border-radius: 50px;
+    padding: 12px 20px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
+    z-index: 100;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s;
+}
+.support-float:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.5);
+}
 .whatsapp-float {
     position: fixed;
     width: 60px;
     height: 60px;
-    bottom: 100px;
+    bottom: 160px;
     right: 20px;
     background-color: #25d366;
     color: #FFF;
@@ -1047,12 +1070,20 @@ footer a {
 }
 </style>"""
 
+# Email de support
+SUPPORT_EMAIL = "support@justicio.fr"
+
 FOOTER = """<footer>
     <a href='/cgu'>CGU</a> | 
     <a href='/confidentialite'>Confidentialité</a> | 
     <a href='/mentions-legales'>Mentions Légales</a>
     <p>© 2026 Justicio.fr</p>
-</footer>"""
+</footer>
+<!-- BOUTON SUPPORT FLOTTANT -->
+<a href='mailto:""" + SUPPORT_EMAIL + """?subject=Demande%20d%27aide%20Justicio' class='support-float'>
+    🆘 Aide
+</a>
+"""
 
 WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" target="_blank">💬</a>"""
 
@@ -1787,15 +1818,19 @@ def declare_litige():
     
     return STYLE + f"""
     <div style='max-width:600px; margin:0 auto;'>
-        <h1>✍️ Déclarer un Litige</h1>
+        <h1>⚡ Déclarer un Litige & Lancer la Procédure</h1>
         
-        <div style='background:linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); 
-                    padding:20px; border-radius:15px; margin-bottom:25px;
-                    border-left:4px solid #3b82f6;'>
-            <p style='margin:0; color:#1e40af; font-size:0.95rem;'>
-                <b>💡 Vous avez un problème avec un achat ?</b><br>
-                Remplissez ce formulaire et notre IA juridique analysera votre dossier 
-                pour générer automatiquement une mise en demeure conforme au droit européen.
+        <div style='background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); 
+                    padding:25px; border-radius:15px; margin-bottom:25px;
+                    border-left:4px solid #f59e0b; box-shadow:0 4px 15px rgba(245,158,11,0.2);'>
+            <p style='margin:0; color:#92400e; font-size:1rem; line-height:1.6;'>
+                <b style='font-size:1.1rem;'>🎯 Ne perdez plus de temps à chercher l'email du SAV.</b><br><br>
+                Remplissez ce formulaire : <b>notre IA trouve le contact juridique</b> de l'entreprise, 
+                <b>rédige la mise en demeure</b> (Code de la Consommation) et <b>l'envoie directement</b> 
+                depuis votre adresse mail.<br><br>
+                <span style='background:#fef3c7; padding:3px 8px; border-radius:5px; font-weight:600;'>
+                    💪 On s'occupe de la pression juridique, vous récupérez votre argent.
+                </span>
             </p>
         </div>
         
@@ -1817,10 +1852,10 @@ def declare_litige():
             <!-- URL DU SITE -->
             <div style='margin-bottom:20px;'>
                 <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
-                    🌐 URL du site (optionnel)
+                    🌐 URL du site <span style='color:#94a3b8; font-weight:normal;'>(aide notre IA à trouver le contact)</span>
                 </label>
                 <input type='url' name='url_site'
-                       placeholder='Ex: https://www.site-arnaque.com'
+                       placeholder='Ex: https://www.boutique-en-ligne.com'
                        style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
                               font-size:1rem; transition:border-color 0.2s;'
                        onfocus="this.style.borderColor='#3b82f6'" 
@@ -1906,9 +1941,28 @@ def declare_litige():
                            box-shadow:0 4px 15px rgba(16,185,129,0.3);'
                     onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(16,185,129,0.4)';"
                     onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 15px rgba(16,185,129,0.3)';">
-                🚀 Ouvrir mon dossier
+                ⚡ Lancer la procédure
             </button>
+            
+            <!-- Badge de réassurance -->
+            <div style='display:flex; justify-content:center; gap:20px; margin-top:15px; flex-wrap:wrap;'>
+                <span style='font-size:0.75rem; color:#64748b;'>🔒 Données sécurisées</span>
+                <span style='font-size:0.75rem; color:#64748b;'>⚖️ Conforme RGPD</span>
+                <span style='font-size:0.75rem; color:#64748b;'>🚀 Envoi automatique</span>
+            </div>
         </form>
+        
+        <!-- LIEN SUPPORT -->
+        <div style='background:#f1f5f9; padding:15px; border-radius:12px; margin-top:20px; text-align:center;'>
+            <p style='margin:0; color:#64748b; font-size:0.9rem;'>
+                🤔 <b>Vous ne savez pas quoi remplir ?</b><br>
+                <a href='mailto:{SUPPORT_EMAIL}?subject=Aide%20pour%20déclarer%20un%20litige' 
+                   style='color:#4f46e5; text-decoration:none; font-weight:600;'>
+                    Contactez notre expert litige →
+                </a>
+                <span style='display:block; font-size:0.8rem; color:#94a3b8; margin-top:5px;'>Réponse sous 24h</span>
+            </p>
+        </div>
         
         <div style='text-align:center; margin-top:20px;'>
             <a href='/dashboard' style='color:#64748b; text-decoration:none;'>← Retour au Dashboard</a>
@@ -2010,40 +2064,67 @@ def submit_litige():
         db.session.add(new_case)
         db.session.commit()
         
+        # ════════════════════════════════════════════════════════════════
+        # 🤖 TODO: AGENT DÉTECTIVE (V3)
+        # ════════════════════════════════════════════════════════════════
+        # 
+        # Prochaine étape : Lancer l'Agent IA pour :
+        # 1. find_merchant_contact(url_site) → Trouver l'email juridique
+        # 2. generate_mise_en_demeure(case) → Générer le courrier personnalisé
+        # 3. send_legal_email(case, merchant_email) → Envoyer automatiquement
+        #
+        # merchant_email = find_merchant_contact(url_site) if url_site else None
+        # if merchant_email:
+        #     new_case.merchant_email = merchant_email
+        #     db.session.commit()
+        #     # Lancer la génération de mise en demeure
+        #     launch_detective_agent(new_case.id)
+        #
+        # ════════════════════════════════════════════════════════════════
+        
         # Notification Telegram
         send_telegram_notif(f"📝 NOUVEAU LITIGE MANUEL 📝\n\n🏪 {company.upper()}\n💰 {amount_float:.2f}€\n📋 N° {order_id}\n⚠️ {problem_label}\n👤 {session['email']}\n\n📄 Description:\n{description[:200]}...")
         
-        # Page de succès
+        # Page de succès avec wording impactant
         return STYLE + f"""
         <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
             <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
                         padding:30px; border-radius:20px; margin-bottom:25px;'>
-                <div style='font-size:4rem; margin-bottom:15px;'>✅</div>
-                <h1 style='color:#065f46; margin:0 0 10px 0;'>Dossier ouvert !</h1>
-                <p style='color:#047857; margin:0;'>Votre litige a été enregistré avec succès.</p>
+                <div style='font-size:4rem; margin-bottom:15px;'>⚡</div>
+                <h1 style='color:#065f46; margin:0 0 10px 0;'>Procédure lancée !</h1>
+                <p style='color:#047857; margin:0;'>Notre IA prend le relais.</p>
             </div>
             
             <div style='background:white; padding:25px; border-radius:15px; text-align:left;
                         box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
                 <h3 style='margin-top:0; color:#1e293b;'>📋 Récapitulatif</h3>
                 <p><b>🏪 Entreprise :</b> {company.upper()}</p>
-                <p><b>💰 Montant :</b> {amount_float:.2f}€</p>
+                <p><b>💰 Montant réclamé :</b> {amount_float:.2f}€</p>
                 <p><b>📋 N° Commande :</b> {order_id}</p>
-                <p><b>⚖️ Loi applicable :</b> {law}</p>
-                <p><b>📊 Statut :</b> <span style='color:#f59e0b; font-weight:600;'>En attente d'analyse</span></p>
+                <p><b>⚖️ Base légale :</b> {law}</p>
+            </div>
+            
+            <div style='background:linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); 
+                        padding:20px; border-radius:15px; margin-bottom:25px;
+                        border-left:4px solid #3b82f6;'>
+                <h4 style='margin:0 0 10px 0; color:#1e40af;'>🤖 Que va faire notre IA ?</h4>
+                <div style='text-align:left; color:#1e40af; font-size:0.9rem;'>
+                    <p style='margin:5px 0;'>1️⃣ <b>Recherche</b> du contact juridique de l'entreprise</p>
+                    <p style='margin:5px 0;'>2️⃣ <b>Rédaction</b> d'une mise en demeure personnalisée</p>
+                    <p style='margin:5px 0;'>3️⃣ <b>Envoi</b> depuis votre adresse email</p>
+                </div>
             </div>
             
             <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:25px;
                         border-left:4px solid #f59e0b;'>
                 <p style='margin:0; color:#92400e; font-size:0.9rem;'>
-                    <b>⏳ Prochaine étape :</b><br>
-                    Notre IA juridique va analyser votre dossier et préparer 
-                    une mise en demeure personnalisée sous 24h.
+                    <b>⏱️ Délai estimé :</b> Mise en demeure envoyée sous 24h<br>
+                    <span style='font-size:0.8rem;'>Vous recevrez une notification par email.</span>
                 </p>
             </div>
             
             <a href='/dashboard' class='btn-success' style='display:inline-block; padding:15px 30px;'>
-                📂 Voir mes dossiers
+                📂 Suivre mon dossier
             </a>
         </div>
         """ + FOOTER
@@ -2056,6 +2137,9 @@ def submit_litige():
             <p>Une erreur est survenue lors de l'enregistrement : {str(e)}</p>
             <br>
             <a href='/declare' class='btn-success'>Réessayer</a>
+            <br><br>
+            <a href='mailto:{SUPPORT_EMAIL}?subject=Erreur%20lors%20de%20la%20déclaration' 
+               style='color:#4f46e5; font-size:0.9rem;'>Contacter le support →</a>
         </div>
         """ + FOOTER
 
