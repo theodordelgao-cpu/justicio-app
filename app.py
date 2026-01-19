@@ -306,14 +306,13 @@ def is_spam(sender, subject, body_snippet):
 
 def find_merchant_email(url):
     """
-    🕵️ AGENT DÉTECTIVE V2 - Trouve l'email de contact d'un site marchand
+    🕵️ AGENT DÉTECTIVE V3 - Trouve l'email de contact d'un site marchand
     
-    Stratégie AGRESSIVE :
-    1. Visite la page d'accueil
-    2. Extrait les mailto: (méthode la plus fiable)
-    3. Cherche les liens vers pages contact
-    4. FALLBACK : Teste les chemins standards hardcodés
-    5. Priorise les emails "contact", "support", "sav"
+    Stratégie ULTIME :
+    1. Scraping direct du site (accueil + liens contact)
+    2. FALLBACK 1 : Chemins standards CMS (Shopify, WordPress, Prestashop)
+    3. FALLBACK 2 : Recherche DuckDuckGo/Bing
+    4. Priorise les emails "contact", "support", "sav"
     
     Retourne : {"email": str|None, "source": str, "all_emails": list}
     """
@@ -343,8 +342,12 @@ def find_merchant_email(url):
     # Timeout court pour ne pas bloquer l'utilisateur
     TIMEOUT = 5
     
-    # Chemins standards à tester EN FALLBACK
+    # ═══════════════════════════════════════════════════════════════
+    # CHEMINS CMS STANDARDS (Shopify, WordPress, Prestashop, etc.)
+    # ═══════════════════════════════════════════════════════════════
+    
     STANDARD_PATHS = [
+        # Génériques
         '/contact',
         '/contact-us',
         '/contactez-nous',
@@ -358,6 +361,7 @@ def find_merchant_email(url):
         '/conditions-generales-de-vente',
         '/conditions-generales',
         '/terms',
+        '/terms-of-service',
         '/terms-and-conditions',
         '/support',
         '/aide',
@@ -366,37 +370,114 @@ def find_merchant_email(url):
         '/about',
         '/about-us',
         '/qui-sommes-nous',
-        '/page/contact',
+        
+        # SHOPIFY spécifiques
         '/pages/contact',
-        '/page/mentions-legales',
+        '/pages/contactez-nous',
+        '/pages/nous-contacter',
         '/pages/mentions-legales',
+        '/pages/mentions-légales',
+        '/pages/legal',
+        '/pages/cgv',
+        '/pages/cgu',
+        '/pages/a-propos',
+        '/pages/about',
+        '/pages/about-us',
+        '/pages/faq',
+        '/policies/legal-notice',
+        '/policies/terms-of-service',
+        '/policies/privacy-policy',
+        '/policies/refund-policy',
+        '/policies/shipping-policy',
+        
+        # WORDPRESS / WOOCOMMERCE
+        '/page/contact',
+        '/page/mentions-legales',
+        '/page/cgv',
+        '/?page_id=contact',
+        '/contact-2',
+        '/contactez-nous-2',
+        
+        # PRESTASHOP
+        '/nous-contacter',
+        '/contactez-nous.html',
+        '/content/1-livraison',
+        '/content/2-mentions-legales',
+        '/content/3-conditions-generales-de-vente',
+        '/content/4-a-propos',
         '/info/contact',
+        '/infos/contact',
+        
+        # MAGENTO
+        '/contacts',
+        '/contact-us.html',
+        '/customer-service',
+        
+        # WIXWIX
+        '/contact-1',
+        '/blank',
+        
+        # Autres patterns
+        '/fr/contact',
+        '/fr/mentions-legales',
+        '/fr/cgv',
+        '/en/contact',
+        '/service-client',
+        '/customer-service',
+        '/help-center',
+        '/centre-aide',
+        
+        # SHOPIFY FR supplémentaires
+        '/pages/service-client',
+        '/pages/sav',
+        '/pages/contactez-nous-2',
+        '/pages/contact-us',
+        '/pages/informations-legales',
+        '/pages/qui-sommes-nous',
+        '/policies/contact-information',
+        
+        # Patterns avec .html
+        '/contact.html',
+        '/mentions-legales.html',
+        '/cgv.html',
+        '/a-propos.html',
     ]
     
-    # Regex pour extraire les emails
+    # Regex pour extraire les emails (standard)
     EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    
+    # Regex pour emails obfusqués (contact [at] domain [dot] com)
+    EMAIL_OBFUSCATED_PATTERNS = [
+        r'([a-zA-Z0-9._%+-]+)\s*\[\s*at\s*\]\s*([a-zA-Z0-9.-]+)\s*\[\s*dot\s*\]\s*([a-zA-Z]{2,})',
+        r'([a-zA-Z0-9._%+-]+)\s*\(\s*at\s*\)\s*([a-zA-Z0-9.-]+)\s*\(\s*dot\s*\)\s*([a-zA-Z]{2,})',
+        r'([a-zA-Z0-9._%+-]+)\s*\[at\]\s*([a-zA-Z0-9.-]+)\s*\[dot\]\s*([a-zA-Z]{2,})',
+        r'([a-zA-Z0-9._%+-]+)\s*arobase\s*([a-zA-Z0-9.-]+)\s*point\s*([a-zA-Z]{2,})',
+    ]
     
     # Emails à ignorer (parasites)
     BLACKLIST_PATTERNS = [
         'example.com', 'domain.com', 'email.com', 'test.com', 'exemple.com',
         'wixpress.com', 'sentry.io', 'schema.org', 'w3.org', 'googleapis.com',
-        'facebook.com', 'twitter.com', 'instagram.com', 'google.com',
+        'shopify.com', 'myshopify.com',
+        'facebook.com', 'twitter.com', 'instagram.com', 'google.com', 'youtube.com',
         'noreply@', 'no-reply@', 'no_reply@', 'mailer-daemon@', 'daemon@',
-        'postmaster@', 'webmaster@', 'hostmaster@', 'admin@',
-        'abuse@', 'spam@', 'unsubscribe@', 'newsletter@', 'marketing@',
+        'postmaster@', 'webmaster@', 'hostmaster@', 'admin@', 'root@',
+        'abuse@', 'spam@', 'unsubscribe@', 'newsletter@', 'marketing@', 'notification@',
         '.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.js', '.woff',
-        'sentry', 'bugsnag', 'raygun', 'trackjs',
-        '@2x', '@3x',  # Images retina
+        'sentry', 'bugsnag', 'raygun', 'trackjs', 'hotjar', 'clarity',
+        '@2x', '@3x',
+        'placeholder', 'dummy', 'fake',
     ]
     
     # Mots-clés de liens à visiter
     CONTACT_KEYWORDS = [
         'contact', 'nous-contacter', 'contactez', 'contactez-nous',
         'mentions-legales', 'mentions_legales', 'legal', 'legales', 'mention',
-        'cgv', 'cgu', 'conditions', 'terms',
+        'cgv', 'cgu', 'conditions', 'terms', 'policies', 'policy',
         'support', 'aide', 'help', 'faq', 'assistance',
         'a-propos', 'about', 'qui-sommes-nous',
-        'service-client', 'sav', 'reclamation', 'réclamation'
+        'service-client', 'sav', 'reclamation', 'réclamation',
+        'footer', 'pied-de-page'  # Souvent les liens légaux sont dans le footer
     ]
     
     # Priorité des emails (plus le score est élevé, mieux c'est)
@@ -425,6 +506,8 @@ def find_merchant_email(url):
         'sales': 50,
         'order': 45,
         'commande': 45,
+        'shop': 40,
+        'boutique': 40,
     }
     
     # ═══════════════════════════════════════════════════════════════
@@ -436,7 +519,6 @@ def find_merchant_email(url):
         raw_url = raw_url.strip()
         if not raw_url:
             return None
-        # Enlever le trailing slash pour éviter les doublons
         raw_url = raw_url.rstrip('/')
         if not raw_url.startswith(('http://', 'https://')):
             raw_url = 'https://' + raw_url
@@ -447,51 +529,74 @@ def find_merchant_email(url):
         parsed = urlparse(full_url)
         return f"{parsed.scheme}://{parsed.netloc}"
     
+    def get_domain_name(full_url):
+        """Extrait juste le nom de domaine (ex: site.com)"""
+        parsed = urlparse(full_url)
+        domain = parsed.netloc.replace('www.', '')
+        return domain
+    
     def is_valid_email(email):
         """Vérifie si un email est valide et pas dans la blacklist"""
         email_lower = email.lower()
         
-        # Vérifier la blacklist
         for blacklisted in BLACKLIST_PATTERNS:
             if blacklisted in email_lower:
                 return False
         
-        # Vérifier le format
         if email.count('@') != 1:
             return False
         
         local, domain = email.split('@')
         
-        # Vérifications de longueur
         if len(local) < 2 or len(domain) < 4:
             return False
         
-        # Vérifier qu'il y a un point dans le domaine
         if '.' not in domain:
             return False
         
-        # Vérifier que ce n'est pas une extension de fichier
         if domain.endswith(('.png', '.jpg', '.gif', '.css', '.js')):
             return False
         
         return True
     
     def extract_mailto_emails(soup):
-        """Extrait les emails des balises mailto: (méthode la plus fiable)"""
+        """Extrait les emails des balises mailto:"""
         emails = []
         for a_tag in soup.find_all('a', href=True):
             href = a_tag.get('href', '')
             if href.lower().startswith('mailto:'):
-                # Extraire l'email du mailto:
-                email = href[7:].split('?')[0].strip()  # Enlever les paramètres
+                email = href[7:].split('?')[0].strip()
                 if email and is_valid_email(email):
                     emails.append(email)
         return emails
     
     def extract_emails_from_text(text):
-        """Extrait tous les emails valides d'un texte"""
+        """Extrait tous les emails valides d'un texte (y compris obfusqués)"""
+        emails = []
+        
+        # 1. Emails standards
         found = re.findall(EMAIL_REGEX, text, re.IGNORECASE)
-        return [e for e in found if is_valid_email(e)]
+        emails.extend([e for e in found if is_valid_email(e)])
+        
+        # 2. Emails obfusqués ([at], [dot], arobase, etc.)
+        for pattern in EMAIL_OBFUSCATED_PATTERNS:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if len(match) == 3:
+                    reconstructed = f"{match[0]}@{match[1]}.{match[2]}"
+                    if is_valid_email(reconstructed):
+                        emails.append(reconstructed)
+        
+        # 3. Pattern spécial : "contact at domain.com" ou "contact(at)domain.com"
+        special_pattern = r'([a-zA-Z0-9._%+-]+)\s*(?:\(at\)|at|@|chez)\s*([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+        special_matches = re.findall(special_pattern, text, re.IGNORECASE)
+        for match in special_matches:
+            if len(match) == 2:
+                reconstructed = f"{match[0]}@{match[1]}"
+                if is_valid_email(reconstructed) and reconstructed not in emails:
+                    emails.append(reconstructed)
+        
+        return list(set(emails))  # Dédupliquer
     
     def score_email(email, site_domain=None):
         """Calcule un score de priorité pour un email"""
@@ -501,7 +606,6 @@ def find_merchant_email(url):
         
         score = 0
         
-        # Score basé sur le préfixe
         for keyword, priority in EMAIL_PRIORITY.items():
             if keyword in local_part:
                 score = max(score, priority)
@@ -509,70 +613,67 @@ def find_merchant_email(url):
         # BONUS si le domaine de l'email correspond au site
         if site_domain:
             site_domain_clean = site_domain.replace('www.', '').lower()
-            if site_domain_clean in domain_part or domain_part in site_domain_clean:
-                score += 50  # Gros bonus pour correspondance de domaine
+            email_domain_clean = domain_part.replace('www.', '').lower()
+            # Correspondance exacte ou partielle
+            if site_domain_clean == email_domain_clean:
+                score += 60  # Correspondance exacte
+            elif site_domain_clean in email_domain_clean or email_domain_clean in site_domain_clean:
+                score += 40  # Correspondance partielle
         
-        return score if score > 0 else 10  # Score minimum de 10
+        return score if score > 0 else 10
     
-    def get_page_content(page_url):
+    def get_page_content(page_url, timeout=TIMEOUT):
         """Récupère le contenu d'une page avec gestion des erreurs"""
         try:
             response = requests.get(
                 page_url, 
                 headers=HEADERS, 
-                timeout=TIMEOUT, 
+                timeout=timeout, 
                 allow_redirects=True,
                 verify=True
             )
             if response.status_code == 200:
                 return response.text
-            elif response.status_code in [301, 302, 303, 307, 308]:
-                # Suivre la redirection manuellement si nécessaire
-                redirect_url = response.headers.get('Location')
-                if redirect_url:
-                    return get_page_content(redirect_url)
         except requests.exceptions.Timeout:
-            DEBUG_LOGS.append(f"🕵️ Timeout: {page_url[:50]}")
+            pass
         except requests.exceptions.SSLError:
-            # Réessayer sans vérification SSL
             try:
-                response = requests.get(page_url, headers=HEADERS, timeout=TIMEOUT, verify=False)
+                response = requests.get(page_url, headers=HEADERS, timeout=timeout, verify=False)
                 if response.status_code == 200:
                     return response.text
             except:
                 pass
-        except Exception as e:
-            DEBUG_LOGS.append(f"🕵️ Erreur: {page_url[:40]} - {str(e)[:30]}")
+        except:
+            pass
         return None
     
     def find_contact_links(soup, base_url):
         """Trouve les liens vers les pages de contact"""
         links = set()
+        base_domain = urlparse(base_url).netloc
+        
         for a_tag in soup.find_all('a', href=True):
             href = a_tag.get('href', '').lower()
             text = a_tag.get_text().lower().strip()
             
-            # Ignorer les liens vides ou javascript
             if not href or href.startswith(('javascript:', '#', 'tel:', 'mailto:')):
                 continue
             
-            # Vérifier si le lien ou le texte contient un mot-clé
             for keyword in CONTACT_KEYWORDS:
                 if keyword in href or keyword in text:
                     full_url = urljoin(base_url, a_tag['href'])
-                    # S'assurer que c'est le même domaine
-                    if urlparse(full_url).netloc == urlparse(base_url).netloc:
+                    if urlparse(full_url).netloc == base_domain:
                         links.add(full_url)
                     break
         
-        return list(links)[:15]  # Limiter à 15 liens
+        return list(links)[:20]
     
     def get_page_type(url):
         """Identifie le type de page pour le log"""
         url_lower = url.lower()
-        if any(kw in url_lower for kw in ['contact', 'nous-contacter']):
+        if any(kw in url_lower for kw in ['contact', 'nous-contacter', 'contactez']):
             return "Contact"
-        elif any(kw in url_lower for kw in ['legal', 'mention', 'cgv', 'cgu', 'conditions']):
+        elif any(kw in url_lower for kw in ['legal', 'mention', 'cgv', 'cgu', 'conditions', 'policies', 'terms']):
             return "Mentions Légales"
         elif any(kw in url_lower for kw in ['support', 'aide', 'faq', 'help']):
             return "Support"
@@ -580,11 +681,67 @@ def find_merchant_email(url):
             return "À propos"
         return "Page"
     
+    def search_duckduckgo(query):
+        """
+        🦆 Recherche DuckDuckGo HTML (fallback ultime)
+        Retourne les snippets des résultats
+        """
+        try:
+            # DuckDuckGo HTML lite (pas de JS requis)
+            search_url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
+            
+            search_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+                'Accept-Language': 'fr-FR,fr;q=0.9',
+            }
+            
+            response = requests.get(search_url, headers=search_headers, timeout=8)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Extraire les snippets des résultats
+                snippets = []
+                for result in soup.find_all('a', class_='result__snippet'):
+                    text = result.get_text()
+                    if text:
+                        snippets.append(text)
+                
+                # Aussi chercher dans les titres et URLs
+                for result in soup.find_all('a', class_='result__a'):
+                    text = result.get_text()
+                    href = result.get('href', '')
+                    if text:
+                        snippets.append(text)
+                    if href:
+                        snippets.append(href)
+                
+                return ' '.join(snippets[:10])
+            
+        except Exception as e:
+            DEBUG_LOGS.append(f"🦆 Erreur DuckDuckGo: {str(e)[:50]}")
+        
+        return ""
+    
+    def search_bing(query):
+        """
+        🔍 Recherche Bing (fallback alternatif)
+        """
+        try:
+            search_url = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
+            
+            response = requests.get(search_url, headers=HEADERS, timeout=8)
+            if response.status_code == 200:
+                return response.text
+        except:
+            pass
+        return ""
+    
     # ═══════════════════════════════════════════════════════════════
     # EXÉCUTION DU SCRAPING
     # ═══════════════════════════════════════════════════════════════
     
-    all_emails = {}  # {email: {"score": int, "source": str}}
+    all_emails = {}
     pages_visited = set()
     
     try:
@@ -594,14 +751,13 @@ def find_merchant_email(url):
             return {"email": None, "source": None, "all_emails": []}
         
         base_domain = get_base_domain(base_url)
-        site_domain = urlparse(base_url).netloc
+        site_domain = get_domain_name(base_url)
         
-        DEBUG_LOGS.append(f"🕵️ Agent Détective V2: Analyse de {base_url}")
+        DEBUG_LOGS.append(f"🕵️ Agent Détective V3: Analyse de {base_url}")
         
         # 2. Récupérer la page d'accueil
         homepage_content = get_page_content(base_url)
         if not homepage_content:
-            # Essayer avec www ou sans www
             alt_url = base_url.replace('://www.', '://') if '://www.' in base_url else base_url.replace('://', '://www.')
             homepage_content = get_page_content(alt_url)
             if homepage_content:
@@ -609,56 +765,58 @@ def find_merchant_email(url):
                 base_domain = get_base_domain(alt_url)
         
         if not homepage_content:
-            return {"email": None, "source": "Erreur: Site inaccessible", "all_emails": []}
-        
-        pages_visited.add(base_url)
-        soup = BeautifulSoup(homepage_content, 'html.parser')
-        
-        # 3. PRIORITÉ 1 : Extraire les mailto: (méthode la plus fiable)
-        mailto_emails = extract_mailto_emails(soup)
-        for email in mailto_emails:
-            score = score_email(email, site_domain) + 30  # Bonus mailto
-            if email not in all_emails or all_emails[email]["score"] < score:
-                all_emails[email] = {"score": score, "source": "Page d'accueil (mailto)"}
-        
-        # 4. Extraire les emails du texte de la page d'accueil
-        homepage_emails = extract_emails_from_text(homepage_content)
-        for email in homepage_emails:
-            if email not in all_emails:
-                all_emails[email] = {"score": score_email(email, site_domain), "source": "Page d'accueil"}
-        
-        # 5. Trouver les liens vers les pages de contact
-        contact_links = find_contact_links(soup, base_url)
-        DEBUG_LOGS.append(f"🕵️ {len(contact_links)} liens contact détectés")
-        
-        # 6. Visiter chaque page de contact trouvée
-        for link in contact_links:
-            if link in pages_visited:
-                continue
-            pages_visited.add(link)
+            DEBUG_LOGS.append(f"🕵️ Site inaccessible, passage au fallback Google...")
+            # Aller directement au fallback recherche
+            homepage_content = ""
+        else:
+            pages_visited.add(base_url)
+            soup = BeautifulSoup(homepage_content, 'html.parser')
             
-            page_content = get_page_content(link)
-            if page_content:
-                page_soup = BeautifulSoup(page_content, 'html.parser')
-                page_type = get_page_type(link)
+            # 3. Extraire mailto: de l'accueil
+            mailto_emails = extract_mailto_emails(soup)
+            for email in mailto_emails:
+                score = score_email(email, site_domain) + 30
+                if email not in all_emails or all_emails[email]["score"] < score:
+                    all_emails[email] = {"score": score, "source": "Accueil (mailto)"}
+            
+            # 4. Extraire emails du texte
+            homepage_emails = extract_emails_from_text(homepage_content)
+            for email in homepage_emails:
+                if email not in all_emails:
+                    all_emails[email] = {"score": score_email(email, site_domain), "source": "Accueil"}
+            
+            # 5. Visiter les liens contact trouvés
+            contact_links = find_contact_links(soup, base_url)
+            DEBUG_LOGS.append(f"🕵️ {len(contact_links)} liens contact détectés")
+            
+            for link in contact_links:
+                if link in pages_visited:
+                    continue
+                pages_visited.add(link)
                 
-                # Mailto en priorité
-                page_mailto = extract_mailto_emails(page_soup)
-                for email in page_mailto:
-                    score = score_email(email, site_domain) + 40  # Gros bonus mailto + page contact
-                    if email not in all_emails or all_emails[email]["score"] < score:
-                        all_emails[email] = {"score": score, "source": f"{page_type} (mailto)"}
-                
-                # Emails dans le texte
-                page_emails = extract_emails_from_text(page_content)
-                for email in page_emails:
-                    score = score_email(email, site_domain) + 20  # Bonus page contact
-                    if email not in all_emails or all_emails[email]["score"] < score:
-                        all_emails[email] = {"score": score, "source": page_type}
+                page_content = get_page_content(link)
+                if page_content:
+                    page_soup = BeautifulSoup(page_content, 'html.parser')
+                    page_type = get_page_type(link)
+                    
+                    page_mailto = extract_mailto_emails(page_soup)
+                    for email in page_mailto:
+                        score = score_email(email, site_domain) + 40
+                        if email not in all_emails or all_emails[email]["score"] < score:
+                            all_emails[email] = {"score": score, "source": f"{page_type} (mailto)"}
+                    
+                    page_emails = extract_emails_from_text(page_content)
+                    for email in page_emails:
+                        score = score_email(email, site_domain) + 20
+                        if email not in all_emails or all_emails[email]["score"] < score:
+                            all_emails[email] = {"score": score, "source": page_type}
         
-        # 7. FALLBACK : Si pas d'email trouvé, tester les chemins standards
+        # ═══════════════════════════════════════════════════════════════
+        # FALLBACK 1 : Chemins CMS standards
+        # ═══════════════════════════════════════════════════════════════
+        
         if not all_emails:
-            DEBUG_LOGS.append(f"🕵️ Fallback: Test des chemins standards...")
+            DEBUG_LOGS.append(f"🕵️ Fallback 1: Test des {len(STANDARD_PATHS)} chemins CMS...")
             
             for path in STANDARD_PATHS:
                 test_url = base_domain + path
@@ -666,30 +824,94 @@ def find_merchant_email(url):
                     continue
                 pages_visited.add(test_url)
                 
-                page_content = get_page_content(test_url)
+                page_content = get_page_content(test_url, timeout=3)
                 if page_content:
                     page_soup = BeautifulSoup(page_content, 'html.parser')
                     page_type = get_page_type(test_url)
                     
-                    # Mailto
                     page_mailto = extract_mailto_emails(page_soup)
                     for email in page_mailto:
                         score = score_email(email, site_domain) + 40
                         all_emails[email] = {"score": score, "source": f"{page_type} (mailto)"}
                     
-                    # Texte
                     page_emails = extract_emails_from_text(page_content)
                     for email in page_emails:
                         score = score_email(email, site_domain) + 20
                         if email not in all_emails or all_emails[email]["score"] < score:
                             all_emails[email] = {"score": score, "source": page_type}
                     
-                    # Si on a trouvé des emails, on peut s'arrêter
                     if all_emails:
-                        DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé via fallback: {path}")
+                        DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé via CMS path: {path}")
                         break
         
-        # 8. Trier par score et sélectionner le meilleur
+        # ═══════════════════════════════════════════════════════════════
+        # FALLBACK 2 : Recherche DuckDuckGo / Bing
+        # ═══════════════════════════════════════════════════════════════
+        
+        if not all_emails:
+            DEBUG_LOGS.append(f"🕵️ Fallback 2: Recherche DuckDuckGo/Bing pour {site_domain}...")
+            
+            # Extraire le nom de marque du domaine (archiduchesse.com -> archiduchesse)
+            brand_name = site_domain.split('.')[0].replace('www', '').replace('-', ' ')
+            
+            # Construire plusieurs requêtes de recherche
+            search_queries = [
+                f'"{site_domain}" email contact',
+                f'"{brand_name}" email contact service client',
+                f'"{site_domain}" mentions légales email',
+                f'site:{site_domain} contact email "@"',
+                f'"{brand_name}" contact support email france',
+            ]
+            
+            for query in search_queries:
+                # Essayer DuckDuckGo
+                search_results = search_duckduckgo(query)
+                
+                if search_results:
+                    search_emails = extract_emails_from_text(search_results)
+                    for email in search_emails:
+                        # Vérifier que l'email correspond au domaine du site
+                        email_domain = email.split('@')[1].lower()
+                        # Accepter si le domaine correspond OU si c'est le nom de marque
+                        domain_match = (
+                            site_domain.lower() in email_domain or 
+                            email_domain in site_domain.lower() or
+                            brand_name.lower() in email_domain
+                        )
+                        if domain_match:
+                            score = score_email(email, site_domain) + 25
+                            if email not in all_emails or all_emails[email]["score"] < score:
+                                all_emails[email] = {"score": score, "source": "Recherche Web"}
+                
+                # Si on a trouvé des emails, on arrête
+                if all_emails:
+                    DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé via recherche web!")
+                    break
+                
+                # Essayer Bing si DuckDuckGo n'a rien donné
+                if not all_emails:
+                    bing_results = search_bing(query)
+                    if bing_results:
+                        bing_emails = extract_emails_from_text(bing_results)
+                        for email in bing_emails:
+                            email_domain = email.split('@')[1].lower()
+                            domain_match = (
+                                site_domain.lower() in email_domain or 
+                                email_domain in site_domain.lower() or
+                                brand_name.lower() in email_domain
+                            )
+                            if domain_match:
+                                score = score_email(email, site_domain) + 20
+                                if email not in all_emails or all_emails[email]["score"] < score:
+                                    all_emails[email] = {"score": score, "source": "Recherche Bing"}
+                
+                if all_emails:
+                    break
+        
+        # ═══════════════════════════════════════════════════════════════
+        # RÉSULTAT FINAL
+        # ═══════════════════════════════════════════════════════════════
+        
         if all_emails:
             sorted_emails = sorted(all_emails.items(), key=lambda x: x[1]["score"], reverse=True)
             best_email = sorted_emails[0][0]
@@ -704,11 +926,11 @@ def find_merchant_email(url):
                 "all_emails": [e[0] for e in sorted_emails[:5]]
             }
         
-        DEBUG_LOGS.append(f"🕵️ ❌ Aucun email trouvé sur {base_url} ({len(pages_visited)} pages visitées)")
+        DEBUG_LOGS.append(f"🕵️ ❌ Aucun email trouvé pour {site_domain} ({len(pages_visited)} pages)")
         return {"email": None, "source": "Aucun email trouvé", "all_emails": []}
         
     except Exception as e:
-        DEBUG_LOGS.append(f"🕵️ Erreur Agent Détective: {str(e)}")
+        DEBUG_LOGS.append(f"🕵️ Erreur Agent Détective V3: {str(e)}")
         return {"email": None, "source": f"Erreur: {str(e)[:50]}", "all_emails": []}
 
 def extract_email_content(message_data):
