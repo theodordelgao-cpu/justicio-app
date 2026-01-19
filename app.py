@@ -145,10 +145,21 @@ class Litigation(db.Model):
     status = db.Column(db.String(50), default="Détecté")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # ════════════════════════════════════════════════════════════════
+    # NOUVEAUX CHAMPS POUR DÉCLARATION MANUELLE (V2)
+    # ════════════════════════════════════════════════════════════════
+    source = db.Column(db.String(20), default="SCAN")  # "SCAN" ou "MANUAL"
+    url_site = db.Column(db.String(300))  # URL du site e-commerce
+    order_id = db.Column(db.String(100))  # Numéro de commande
+    order_date = db.Column(db.Date)  # Date de commande
+    amount_float = db.Column(db.Float)  # Montant en float pour calculs
+    problem_type = db.Column(db.String(50))  # Type de problème
+    description = db.Column(db.Text)  # Description détaillée du litige
 
 with app.app_context():
     try:
-        # Migration : Ajoute message_id si manquant
+        # Migration : Ajoute les colonnes manquantes
         from sqlalchemy import text, inspect
         inspector = inspect(db.engine)
         columns = [col['name'] for col in inspector.get_columns('litigation')]
@@ -167,8 +178,30 @@ with app.app_context():
                 conn.commit()
             print("✅ Colonne updated_at ajoutée")
         
+        # ════════════════════════════════════════════════════════════════
+        # MIGRATIONS V2 - Déclaration manuelle
+        # ════════════════════════════════════════════════════════════════
+        
+        new_columns_v2 = {
+            'source': 'VARCHAR(20) DEFAULT \'SCAN\'',
+            'url_site': 'VARCHAR(300)',
+            'order_id': 'VARCHAR(100)',
+            'order_date': 'DATE',
+            'amount_float': 'FLOAT',
+            'problem_type': 'VARCHAR(50)',
+            'description': 'TEXT'
+        }
+        
+        for col_name, col_type in new_columns_v2.items():
+            if col_name not in columns:
+                print(f"🔄 Migration V2 : Ajout de {col_name}...")
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE litigation ADD COLUMN {col_name} {col_type}'))
+                    conn.commit()
+                print(f"✅ Colonne {col_name} ajoutée")
+        
         db.create_all()
-        print("✅ Base de données synchronisée.")
+        print("✅ Base de données synchronisée (V2).")
     except Exception as e:
         print(f"❌ Erreur DB : {e}")
 
@@ -1637,6 +1670,12 @@ def dashboard():
             status_text = "⏳ En attente de remboursement"
             status_icon = "⏳"
         
+        elif case.status == "En attente d'analyse":
+            # Litige MANUEL en attente d'analyse IA
+            color = "#0ea5e9"  # Bleu clair
+            status_text = "🔬 En attente d'analyse IA"
+            status_icon = "🔬"
+        
         elif case.status in ["Envoyé", "En cours"]:
             color = "#8b5cf6"  # Violet
             status_text = "📧 Mise en demeure envoyée"
@@ -1656,13 +1695,19 @@ def dashboard():
             if match:
                 detail_text = f"<div style='font-size:0.75rem; color:{color}; margin-top:3px;'>({match.group(1)})</div>"
         
+        # Badge source (SCAN vs MANUAL)
+        source = getattr(case, 'source', 'SCAN') or 'SCAN'
+        source_badge = ""
+        if source == "MANUAL":
+            source_badge = "<span style='font-size:0.65rem; background:#dbeafe; color:#1d4ed8; padding:2px 6px; border-radius:4px; margin-left:8px;'>✍️ Manuel</span>"
+        
         html_rows += f"""
         <div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; 
                     border-left:5px solid {color}; box-shadow:0 2px 5px rgba(0,0,0,0.05); 
                     display:flex; justify-content:space-between; align-items:center;'>
             <div>
                 <div style='font-weight:bold; font-size:1.1rem; color:#1e293b'>
-                    {case.company.upper()}
+                    {case.company.upper()} {source_badge}
                 </div>
                 <div style='font-size:0.9rem; color:#64748b'>
                     {case.subject[:50]}...
@@ -1705,14 +1750,314 @@ def dashboard():
             <a href='/scan' class='btn-success' style='background:#4f46e5; margin-right:10px;'>
                 🔍 SCANNER
             </a>
-            <a href='/' class='btn-logout'>Retour Accueil</a>
+            <a href='/declare' class='btn-success' style='background:#10b981; margin-right:10px;'>
+                ✍️ DÉCLARER
+            </a>
+            <a href='/' class='btn-logout'>Retour</a>
         </div>
     </div>
     """ + FOOTER
 
 # ========================================
-# SUPPRESSION D'UN DOSSIER
+# DÉCLARATION MANUELLE DE LITIGE (V2)
 # ========================================
+
+# Types de problèmes disponibles
+PROBLEM_TYPES = [
+    ("non_recu", "📦 Colis non reçu", "Le colis n'a jamais été livré ou est marqué livré mais non reçu"),
+    ("defectueux", "🔧 Produit défectueux", "Le produit reçu est cassé, ne fonctionne pas ou est endommagé"),
+    ("non_conforme", "❌ Non conforme à la description", "Le produit ne correspond pas à ce qui était annoncé"),
+    ("retour_refuse", "🚫 Retour refusé", "Le vendeur refuse d'accepter le retour ou de rembourser"),
+    ("contrefacon", "⚠️ Contrefaçon", "Le produit reçu est une contrefaçon ou une imitation"),
+    ("retard", "⏰ Retard de livraison important", "Le délai de livraison annoncé n'a pas été respecté"),
+    ("annulation_refusee", "🔄 Annulation refusée", "Le vendeur refuse d'annuler une commande non expédiée"),
+    ("autre", "❓ Autre problème", "Un autre type de litige non listé ci-dessus")
+]
+
+@app.route("/declare")
+def declare_litige():
+    """Formulaire de déclaration manuelle de litige"""
+    if "email" not in session:
+        return redirect("/login")
+    
+    # Générer les options du menu déroulant
+    options_html = ""
+    for value, label, description in PROBLEM_TYPES:
+        options_html += f'<option value="{value}" data-description="{description}">{label}</option>'
+    
+    return STYLE + f"""
+    <div style='max-width:600px; margin:0 auto;'>
+        <h1>✍️ Déclarer un Litige</h1>
+        
+        <div style='background:linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); 
+                    padding:20px; border-radius:15px; margin-bottom:25px;
+                    border-left:4px solid #3b82f6;'>
+            <p style='margin:0; color:#1e40af; font-size:0.95rem;'>
+                <b>💡 Vous avez un problème avec un achat ?</b><br>
+                Remplissez ce formulaire et notre IA juridique analysera votre dossier 
+                pour générer automatiquement une mise en demeure conforme au droit européen.
+            </p>
+        </div>
+        
+        <form action='/submit_litige' method='POST' style='background:white; padding:25px; border-radius:20px; box-shadow:0 4px 15px rgba(0,0,0,0.1);'>
+            
+            <!-- NOM DU SITE / ENTREPRISE -->
+            <div style='margin-bottom:20px;'>
+                <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                    🏪 Nom du site ou de l'entreprise *
+                </label>
+                <input type='text' name='company' required
+                       placeholder='Ex: MaSuperBoutique, Amazon, Cdiscount...'
+                       style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                              font-size:1rem; transition:border-color 0.2s;'
+                       onfocus="this.style.borderColor='#3b82f6'" 
+                       onblur="this.style.borderColor='#e2e8f0'">
+            </div>
+            
+            <!-- URL DU SITE -->
+            <div style='margin-bottom:20px;'>
+                <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                    🌐 URL du site (optionnel)
+                </label>
+                <input type='url' name='url_site'
+                       placeholder='Ex: https://www.site-arnaque.com'
+                       style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                              font-size:1rem; transition:border-color 0.2s;'
+                       onfocus="this.style.borderColor='#3b82f6'" 
+                       onblur="this.style.borderColor='#e2e8f0'">
+            </div>
+            
+            <!-- NUMÉRO DE COMMANDE -->
+            <div style='margin-bottom:20px;'>
+                <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                    📋 Numéro de commande *
+                </label>
+                <input type='text' name='order_id' required
+                       placeholder='Ex: #123456, ORD-2024-789, etc.'
+                       style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                              font-size:1rem; transition:border-color 0.2s;'
+                       onfocus="this.style.borderColor='#3b82f6'" 
+                       onblur="this.style.borderColor='#e2e8f0'">
+            </div>
+            
+            <!-- DATE ET MONTANT (sur la même ligne) -->
+            <div style='display:flex; gap:15px; margin-bottom:20px;'>
+                <div style='flex:1;'>
+                    <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                        📅 Date de commande *
+                    </label>
+                    <input type='date' name='order_date' required
+                           style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                                  font-size:1rem; transition:border-color 0.2s;'
+                           onfocus="this.style.borderColor='#3b82f6'" 
+                           onblur="this.style.borderColor='#e2e8f0'">
+                </div>
+                <div style='flex:1;'>
+                    <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                        💰 Montant (€) *
+                    </label>
+                    <input type='number' name='amount' required step='0.01' min='0.01'
+                           placeholder='Ex: 89.99'
+                           style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                                  font-size:1rem; transition:border-color 0.2s;'
+                           onfocus="this.style.borderColor='#3b82f6'" 
+                           onblur="this.style.borderColor='#e2e8f0'">
+                </div>
+            </div>
+            
+            <!-- TYPE DE PROBLÈME -->
+            <div style='margin-bottom:20px;'>
+                <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                    ⚠️ Type de problème *
+                </label>
+                <select name='problem_type' required id='problem_type'
+                        style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                               font-size:1rem; transition:border-color 0.2s; background:white;'
+                        onfocus="this.style.borderColor='#3b82f6'" 
+                        onblur="this.style.borderColor='#e2e8f0'"
+                        onchange="updateDescription()">
+                    <option value=''>-- Sélectionnez le type de problème --</option>
+                    {options_html}
+                </select>
+                <p id='problem_description' style='margin-top:8px; font-size:0.85rem; color:#64748b; font-style:italic;'></p>
+            </div>
+            
+            <!-- DESCRIPTION DÉTAILLÉE -->
+            <div style='margin-bottom:25px;'>
+                <label style='display:block; font-weight:600; color:#1e293b; margin-bottom:8px;'>
+                    📝 Décrivez votre problème *
+                </label>
+                <textarea name='description' required rows='5'
+                          placeholder='Expliquez en détail ce qui s'est passé : quand avez-vous commandé, qu'avez-vous reçu (ou non), quelles démarches avez-vous déjà effectuées...'
+                          style='width:100%; padding:12px 15px; border:2px solid #e2e8f0; border-radius:10px; 
+                                 font-size:1rem; resize:vertical; min-height:120px; transition:border-color 0.2s;'
+                          onfocus="this.style.borderColor='#3b82f6'" 
+                          onblur="this.style.borderColor='#e2e8f0'"></textarea>
+                <p style='margin-top:5px; font-size:0.8rem; color:#94a3b8;'>
+                    Plus vous donnez de détails, plus notre IA pourra personnaliser votre mise en demeure.
+                </p>
+            </div>
+            
+            <!-- BOUTON SUBMIT -->
+            <button type='submit' 
+                    style='width:100%; padding:15px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); 
+                           color:white; border:none; border-radius:12px; font-size:1.1rem; font-weight:600;
+                           cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;
+                           box-shadow:0 4px 15px rgba(16,185,129,0.3);'
+                    onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(16,185,129,0.4)';"
+                    onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 15px rgba(16,185,129,0.3)';">
+                🚀 Ouvrir mon dossier
+            </button>
+        </form>
+        
+        <div style='text-align:center; margin-top:20px;'>
+            <a href='/dashboard' style='color:#64748b; text-decoration:none;'>← Retour au Dashboard</a>
+        </div>
+        
+        <script>
+            function updateDescription() {{
+                var select = document.getElementById('problem_type');
+                var desc = document.getElementById('problem_description');
+                var selectedOption = select.options[select.selectedIndex];
+                if (selectedOption.value) {{
+                    desc.textContent = selectedOption.getAttribute('data-description');
+                }} else {{
+                    desc.textContent = '';
+                }}
+            }}
+        </script>
+    </div>
+    """ + FOOTER
+
+
+@app.route("/submit_litige", methods=["POST"])
+def submit_litige():
+    """Traite la soumission du formulaire de déclaration manuelle"""
+    if "email" not in session:
+        return redirect("/login")
+    
+    try:
+        # Récupérer les données du formulaire
+        company = request.form.get("company", "").strip()
+        url_site = request.form.get("url_site", "").strip()
+        order_id = request.form.get("order_id", "").strip()
+        order_date_str = request.form.get("order_date", "")
+        amount_str = request.form.get("amount", "0")
+        problem_type = request.form.get("problem_type", "")
+        description = request.form.get("description", "").strip()
+        
+        # Validation
+        if not company or not order_id or not problem_type or not description:
+            return STYLE + """
+            <div style='text-align:center; padding:50px;'>
+                <h1>❌ Formulaire incomplet</h1>
+                <p>Veuillez remplir tous les champs obligatoires.</p>
+                <br>
+                <a href='/declare' class='btn-success'>Réessayer</a>
+            </div>
+            """ + FOOTER
+        
+        # Parser la date
+        order_date = None
+        if order_date_str:
+            try:
+                order_date = datetime.strptime(order_date_str, "%Y-%m-%d").date()
+            except:
+                pass
+        
+        # Parser le montant
+        try:
+            amount_float = float(amount_str.replace(",", "."))
+        except:
+            amount_float = 0
+        
+        # Déterminer la loi applicable selon le type de problème
+        problem_to_law = {
+            "non_recu": "la Directive UE 2011/83 (Livraison)",
+            "defectueux": "la Directive UE 2019/771 (Garantie légale)",
+            "non_conforme": "la Directive UE 2019/771 (Conformité)",
+            "retour_refuse": "la Directive UE 2011/83 (Droit de rétractation)",
+            "contrefacon": "le Code de la consommation (Contrefaçon)",
+            "retard": "la Directive UE 2011/83 (Délai de livraison)",
+            "annulation_refusee": "la Directive UE 2011/83 (Annulation)",
+            "autre": "le Code de la consommation"
+        }
+        law = problem_to_law.get(problem_type, "le Code de la consommation")
+        
+        # Créer le résumé pour le champ subject
+        problem_labels = {p[0]: p[1] for p in PROBLEM_TYPES}
+        problem_label = problem_labels.get(problem_type, "Litige")
+        subject = f"{problem_label} - {description[:100]}..."
+        
+        # Créer l'entrée en base de données
+        new_case = Litigation(
+            user_email=session["email"],
+            company=company.upper(),
+            amount=f"{amount_float:.2f}€",
+            law=law,
+            subject=subject,
+            message_id=f"MANUAL-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            status="En attente d'analyse",
+            source="MANUAL",
+            url_site=url_site if url_site else None,
+            order_id=order_id,
+            order_date=order_date,
+            amount_float=amount_float,
+            problem_type=problem_type,
+            description=description
+        )
+        
+        db.session.add(new_case)
+        db.session.commit()
+        
+        # Notification Telegram
+        send_telegram_notif(f"📝 NOUVEAU LITIGE MANUEL 📝\n\n🏪 {company.upper()}\n💰 {amount_float:.2f}€\n📋 N° {order_id}\n⚠️ {problem_label}\n👤 {session['email']}\n\n📄 Description:\n{description[:200]}...")
+        
+        # Page de succès
+        return STYLE + f"""
+        <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
+            <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                        padding:30px; border-radius:20px; margin-bottom:25px;'>
+                <div style='font-size:4rem; margin-bottom:15px;'>✅</div>
+                <h1 style='color:#065f46; margin:0 0 10px 0;'>Dossier ouvert !</h1>
+                <p style='color:#047857; margin:0;'>Votre litige a été enregistré avec succès.</p>
+            </div>
+            
+            <div style='background:white; padding:25px; border-radius:15px; text-align:left;
+                        box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
+                <h3 style='margin-top:0; color:#1e293b;'>📋 Récapitulatif</h3>
+                <p><b>🏪 Entreprise :</b> {company.upper()}</p>
+                <p><b>💰 Montant :</b> {amount_float:.2f}€</p>
+                <p><b>📋 N° Commande :</b> {order_id}</p>
+                <p><b>⚖️ Loi applicable :</b> {law}</p>
+                <p><b>📊 Statut :</b> <span style='color:#f59e0b; font-weight:600;'>En attente d'analyse</span></p>
+            </div>
+            
+            <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:25px;
+                        border-left:4px solid #f59e0b;'>
+                <p style='margin:0; color:#92400e; font-size:0.9rem;'>
+                    <b>⏳ Prochaine étape :</b><br>
+                    Notre IA juridique va analyser votre dossier et préparer 
+                    une mise en demeure personnalisée sous 24h.
+                </p>
+            </div>
+            
+            <a href='/dashboard' class='btn-success' style='display:inline-block; padding:15px 30px;'>
+                📂 Voir mes dossiers
+            </a>
+        </div>
+        """ + FOOTER
+        
+    except Exception as e:
+        DEBUG_LOGS.append(f"Erreur submit_litige: {str(e)}")
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Erreur</h1>
+            <p>Une erreur est survenue lors de l'enregistrement : {str(e)}</p>
+            <br>
+            <a href='/declare' class='btn-success'>Réessayer</a>
+        </div>
+        """ + FOOTER
 
 @app.route("/delete-case/<int:case_id>")
 def delete_case(case_id):
