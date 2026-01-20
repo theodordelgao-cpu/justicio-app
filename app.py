@@ -39,6 +39,20 @@ if STRIPE_SK:
     stripe.api_key = STRIPE_SK
 
 # ========================================
+# SCOPES GMAIL API (LECTURE + ENVOI)
+# ========================================
+# IMPORTANT: Ces scopes doivent être autorisés dans Google Cloud Console
+# Si vous passez de readonly à send, les utilisateurs devront se reconnecter
+GMAIL_SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',  # Lecture des emails
+    'https://www.googleapis.com/auth/gmail.send',      # Envoi d'emails
+    'https://www.googleapis.com/auth/gmail.modify',    # Modification (labels)
+]
+
+# Email support Justicio
+SUPPORT_EMAIL = "support@justicio.fr"
+
+# ========================================
 # BLACKLIST ANTI-SPAM (PARE-FEU) - CORRIGÉ BUG N°2
 # ========================================
 # On garde UNIQUEMENT les termes liés au SPAM pur
@@ -164,6 +178,13 @@ class Litigation(db.Model):
     # ════════════════════════════════════════════════════════════════
     merchant_email = db.Column(db.String(200))  # Email trouvé par le détective
     merchant_email_source = db.Column(db.String(100))  # Page où l'email a été trouvé
+    
+    # ════════════════════════════════════════════════════════════════
+    # CHAMPS ENVOI MISE EN DEMEURE (V4)
+    # ════════════════════════════════════════════════════════════════
+    legal_notice_sent = db.Column(db.Boolean, default=False)  # Mise en demeure envoyée
+    legal_notice_date = db.Column(db.DateTime)  # Date d'envoi
+    legal_notice_message_id = db.Column(db.String(100))  # ID Gmail du message envoyé
 
 with app.app_context():
     try:
@@ -225,8 +246,26 @@ with app.app_context():
                     conn.commit()
                 print(f"✅ Colonne {col_name} ajoutée")
         
+        # ════════════════════════════════════════════════════════════════
+        # MIGRATIONS V4 - Envoi Mise en Demeure
+        # ════════════════════════════════════════════════════════════════
+        
+        new_columns_v4 = {
+            'legal_notice_sent': 'BOOLEAN DEFAULT FALSE',
+            'legal_notice_date': 'TIMESTAMP',
+            'legal_notice_message_id': 'VARCHAR(100)'
+        }
+        
+        for col_name, col_type in new_columns_v4.items():
+            if col_name not in columns:
+                print(f"🔄 Migration V4 : Ajout de {col_name}...")
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE litigation ADD COLUMN {col_name} {col_type}'))
+                    conn.commit()
+                print(f"✅ Colonne {col_name} ajoutée")
+        
         db.create_all()
-        print("✅ Base de données synchronisée (V3 - Agent Détective).")
+        print("✅ Base de données synchronisée (V4 - Envoi Mise en Demeure).")
     except Exception as e:
         print(f"❌ Erreur DB : {e}")
 
@@ -1090,6 +1129,258 @@ def find_merchant_email(url):
         import traceback
         debug_log(f"Traceback: {traceback.format_exc()[:200]}", "ERROR")
         return {"email": None, "source": f"Erreur: {str(e)[:50]}", "all_emails": []}
+
+# ========================================
+# ⚖️ AGENT AVOCAT - Envoi Mise en Demeure
+# ========================================
+
+def send_legal_notice(dossier, user):
+    """
+    ⚖️ AGENT AVOCAT - Envoie une mise en demeure légale au marchand
+    
+    Args:
+        dossier: Instance Litigation avec merchant_email rempli
+        user: Instance User avec refresh_token
+    
+    Returns:
+        dict: {"success": bool, "message": str, "message_id": str|None}
+    """
+    
+    DEBUG_LOGS.append(f"⚖️ Agent Avocat: Préparation mise en demeure pour {dossier.company}")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # VÉRIFICATIONS
+    # ═══════════════════════════════════════════════════════════════
+    
+    if not dossier.merchant_email:
+        DEBUG_LOGS.append("⚖️ ❌ Pas d'email marchand - Impossible d'envoyer")
+        return {"success": False, "message": "Email marchand non trouvé", "message_id": None}
+    
+    if not user or not user.refresh_token:
+        DEBUG_LOGS.append("⚖️ ❌ Utilisateur non authentifié")
+        return {"success": False, "message": "Utilisateur non authentifié", "message_id": None}
+    
+    # ═══════════════════════════════════════════════════════════════
+    # TEMPLATES JURIDIQUES PAR TYPE DE PROBLÈME
+    # ═══════════════════════════════════════════════════════════════
+    
+    # Informations du dossier
+    company = dossier.company or "Vendeur"
+    order_ref = dossier.order_id or "N/A"
+    amount = dossier.amount or dossier.amount_float or "N/A"
+    problem_type = dossier.problem_type or "autre"
+    description = dossier.description or ""
+    user_name = user.name or user.email.split('@')[0]
+    
+    # Date limite (8 jours)
+    from datetime import timedelta
+    deadline = (datetime.now() + timedelta(days=8)).strftime("%d/%m/%Y")
+    
+    # Templates selon le type de problème
+    LEGAL_TEMPLATES = {
+        "colis_non_recu": {
+            "emoji": "📦",
+            "objet": f"MISE EN DEMEURE - Commande {order_ref} non reçue",
+            "loi": "Article L.216-6 du Code de la consommation",
+            "message": f"""La date de livraison contractuelle étant dépassée, et n'ayant toujours pas reçu ma commande malgré mes relances, je vous mets formellement en demeure de procéder :
+
+- Soit à la LIVRAISON EFFECTIVE de ma commande sous 8 jours,
+- Soit au REMBOURSEMENT INTÉGRAL de la somme de {amount}€.
+
+Conformément à l'article L.216-6 du Code de la consommation, à défaut de livraison dans ce délai, le contrat pourra être considéré comme résolu et je serai en droit de demander le remboursement intégral des sommes versées."""
+        },
+        
+        "produit_defectueux": {
+            "emoji": "🔧",
+            "objet": f"RÉCLAMATION - Commande {order_ref} - Produit défectueux",
+            "loi": "Articles L.217-3 et suivants du Code de la consommation (Garantie Légale de Conformité)",
+            "message": f"""Le produit reçu présente un défaut de conformité le rendant impropre à l'usage auquel il est destiné.
+
+En vertu de la Garantie Légale de Conformité (Articles L.217-3 et suivants), je vous demande de procéder à votre choix :
+- À la RÉPARATION du produit,
+- Ou à son REMPLACEMENT par un produit conforme.
+
+Si ces solutions s'avèrent impossibles ou disproportionnées, je demande le REMBOURSEMENT INTÉGRAL conformément à l'article L.217-8."""
+        },
+        
+        "non_conforme": {
+            "emoji": "❌",
+            "objet": f"NON-CONFORMITÉ - Commande {order_ref}",
+            "loi": "Article L.217-4 du Code de la consommation",
+            "message": f"""Le produit reçu ne correspond pas aux caractéristiques présentées lors de la vente, constituant ainsi un défaut de conformité au sens de l'article L.217-4 du Code de la consommation.
+
+Je vous mets en demeure de remédier à cette non-conformité sous 8 jours par :
+- L'échange contre un produit CONFORME à la description,
+- Ou le REMBOURSEMENT INTÉGRAL de {amount}€.
+
+À défaut, je me réserve le droit de saisir les juridictions compétentes et la DGCCRF."""
+        },
+        
+        "retour_refuse": {
+            "emoji": "🚫",
+            "objet": f"MISE EN DEMEURE - Commande {order_ref} - Refus de retour illégal",
+            "loi": "Article L.221-18 du Code de la consommation (Droit de Rétractation)",
+            "message": f"""Je vous rappelle que, conformément à l'article L.221-18 du Code de la consommation, je dispose d'un délai de 14 jours pour exercer mon droit de rétractation, sans avoir à justifier de motif ni à payer de pénalités.
+
+Votre refus de procéder au retour et au remboursement est donc ILLÉGAL.
+
+Je vous mets en demeure d'accepter ce retour et de procéder au remboursement de {amount}€ dans un délai de 8 jours, faute de quoi je saisirai la DGCCRF et les tribunaux compétents."""
+        },
+        
+        "contrefacon": {
+            "emoji": "⚠️",
+            "objet": f"SIGNALEMENT URGENT - Commande {order_ref} - Suspicion de contrefaçon",
+            "loi": "Garantie Légale de Conformité + Code de la Propriété Intellectuelle (L.716-1)",
+            "message": f"""Le produit reçu présente toutes les caractéristiques d'une CONTREFAÇON (qualité inférieure, absence de marquages officiels, emballage non conforme).
+
+La vente de produits contrefaits constitue :
+- Un défaut de conformité (Code de la consommation),
+- Un délit pénal (Article L.716-1 du Code de la Propriété Intellectuelle).
+
+Je vous mets en demeure de procéder au REMBOURSEMENT INTÉGRAL de {amount}€ sous 8 jours.
+
+À défaut, je procéderai au signalement auprès de la DGCCRF et des services de douanes, et me réserve le droit de porter plainte."""
+        },
+        
+        "retard_livraison": {
+            "emoji": "⏰",
+            "objet": f"RETARD DE LIVRAISON - Commande {order_ref}",
+            "loi": "Article L.216-1 du Code de la consommation",
+            "message": f"""Les délais de livraison annoncés lors de ma commande ne sont pas respectés, en violation de l'article L.216-1 du Code de la consommation.
+
+Je vous mets en demeure de :
+- Procéder à la LIVRAISON IMMÉDIATE de ma commande,
+- Ou, si celle-ci n'est plus possible, de me REMBOURSER INTÉGRALEMENT.
+
+Conformément à l'article L.216-6, à défaut d'exécution dans un délai de 8 jours, le contrat sera résolu de plein droit."""
+        },
+        
+        "annulation_refusee": {
+            "emoji": "🔄",
+            "objet": f"LITIGE - Commande {order_ref} - Refus d'annulation illégal",
+            "loi": "Articles L.221-18 et L.121-20 du Code de la consommation",
+            "message": f"""J'ai demandé l'annulation de ma commande conformément à mes droits de consommateur, demande que vous avez refusée de manière illégale.
+
+Conformément aux articles L.221-18 et L.121-20 du Code de la consommation applicables à la vente à distance, je dispose du droit d'annuler ma commande.
+
+Je vous mets en demeure d'accepter cette annulation et de procéder au remboursement de {amount}€ sous 8 jours."""
+        },
+        
+        "autre": {
+            "emoji": "❓",
+            "objet": f"RÉCLAMATION FORMELLE - Commande {order_ref}",
+            "loi": "Article 1103 du Code Civil (Force obligatoire des contrats)",
+            "message": f"""Je vous contacte concernant un problème rencontré avec ma commande, tel que décrit ci-dessous.
+
+Conformément à l'article 1103 du Code Civil, les contrats légalement formés tiennent lieu de loi à ceux qui les ont faits.
+
+Je vous mets en demeure de résoudre ce litige de manière amiable sous 8 jours, faute de quoi je me réserve le droit d'engager toute procédure judiciaire nécessaire."""
+        }
+    }
+    
+    # Sélectionner le template approprié
+    template = LEGAL_TEMPLATES.get(problem_type, LEGAL_TEMPLATES["autre"])
+    
+    # ═══════════════════════════════════════════════════════════════
+    # CONSTRUCTION DU MESSAGE
+    # ═══════════════════════════════════════════════════════════════
+    
+    email_body = f"""Madame, Monsieur,
+
+{template['message']}
+
+{f"Description du problème : {description}" if description else ""}
+
+Cette mise en demeure vaut interpellation au sens de l'article 1344 du Code Civil.
+
+Sans réponse satisfaisante de votre part avant le {deadline}, je me réserve le droit de :
+- Saisir le Médiateur de la Consommation,
+- Signaler cette pratique à la DGCCRF,
+- Engager une procédure judiciaire devant le tribunal compétent.
+
+Dans l'attente d'une réponse rapide, je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.
+
+{user_name}
+Email : {user.email}
+
+---
+📋 Références :
+• Numéro de commande : {order_ref}
+• Montant : {amount}€
+• Base légale : {template['loi']}
+
+Ce courrier constitue une mise en demeure au sens juridique du terme.
+Envoyé via Justicio.fr - Protection des droits des consommateurs
+"""
+
+    # ═══════════════════════════════════════════════════════════════
+    # ENVOI VIA GMAIL API
+    # ═══════════════════════════════════════════════════════════════
+    
+    try:
+        # Rafraîchir les credentials
+        creds = get_refreshed_credentials(user.refresh_token)
+        service = build('gmail', 'v1', credentials=creds)
+        
+        # Construire le message MIME
+        message = MIMEText(email_body, 'plain', 'utf-8')
+        message['to'] = dossier.merchant_email
+        message['cc'] = user.email  # Copie à l'utilisateur comme preuve
+        message['from'] = user.email
+        message['subject'] = f"{template['emoji']} {template['objet']}"
+        
+        # Ajouter les headers pour le suivi
+        message['X-Justicio-Case-ID'] = str(dossier.id)
+        message['X-Justicio-Type'] = 'legal-notice'
+        
+        # Encoder en base64 URL-safe
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+        
+        # Envoyer
+        DEBUG_LOGS.append(f"⚖️ Envoi à {dossier.merchant_email} (CC: {user.email})")
+        
+        result = service.users().messages().send(
+            userId='me',
+            body={'raw': raw_message}
+        ).execute()
+        
+        # Vérifier le succès
+        message_id = result.get('id')
+        labels = result.get('labelIds', [])
+        
+        if message_id:
+            DEBUG_LOGS.append(f"⚖️ ✅ Mise en demeure envoyée! Message ID: {message_id}")
+            
+            # Mettre à jour le dossier
+            dossier.legal_notice_sent = True
+            dossier.legal_notice_date = datetime.now()
+            dossier.legal_notice_message_id = message_id
+            dossier.status = "En cours juridique"  # Statut bleu
+            db.session.commit()
+            
+            return {
+                "success": True,
+                "message": f"Mise en demeure envoyée à {dossier.merchant_email}",
+                "message_id": message_id
+            }
+        else:
+            DEBUG_LOGS.append(f"⚖️ ❌ Envoi échoué - Pas de message_id retourné")
+            return {"success": False, "message": "Envoi échoué - Pas de confirmation", "message_id": None}
+            
+    except Exception as e:
+        error_msg = str(e)
+        DEBUG_LOGS.append(f"⚖️ ❌ Erreur envoi: {error_msg[:100]}")
+        
+        # Vérifier si c'est un problème de permissions
+        if "insufficient" in error_msg.lower() or "scope" in error_msg.lower():
+            return {
+                "success": False,
+                "message": "Permissions insuffisantes. Reconnectez-vous pour autoriser l'envoi d'emails.",
+                "message_id": None
+            }
+        
+        return {"success": False, "message": f"Erreur: {error_msg[:50]}", "message_id": None}
+
 
 def extract_email_content(message_data):
     """Extrait le contenu textuel d'un email Gmail"""
@@ -2528,6 +2819,12 @@ def dashboard():
             status_text = "📧 Mise en demeure envoyée"
             status_icon = "📧"
         
+        elif case.status == "En cours juridique":
+            # Mise en demeure envoyée, attente de réponse
+            color = "#3b82f6"  # Bleu
+            status_text = "⚖️ En cours juridique"
+            status_icon = "⚖️"
+        
         else:
             color = "#94a3b8"  # Gris
             status_text = "🔍 Détecté - En attente d'action"
@@ -2554,6 +2851,14 @@ def dashboard():
         if merchant_email:
             merchant_badge = f"<div style='font-size:0.75rem; color:#059669; margin-top:3px;'>📧 {merchant_email}</div>"
         
+        # Afficher la date d'envoi de mise en demeure si envoyée
+        legal_notice_sent = getattr(case, 'legal_notice_sent', False)
+        legal_notice_date = getattr(case, 'legal_notice_date', None)
+        legal_notice_badge = ""
+        if legal_notice_sent and legal_notice_date:
+            date_str = legal_notice_date.strftime("%d/%m/%Y à %H:%M")
+            legal_notice_badge = f"<div style='font-size:0.75rem; color:#3b82f6; margin-top:3px;'>⚖️ Envoyé le {date_str}</div>"
+        
         html_rows += f"""
         <div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; 
                     border-left:5px solid {color}; box-shadow:0 2px 5px rgba(0,0,0,0.05); 
@@ -2569,6 +2874,7 @@ def dashboard():
                     ⚖️ {case.law}
                 </div>
                 {merchant_badge}
+                {legal_notice_badge}
             </div>
             <div style='text-align:right;'>
                 <div style='font-size:1.2rem; font-weight:bold; color:{color}'>
@@ -2937,36 +3243,97 @@ def submit_litige():
             """
         
         # ════════════════════════════════════════════════════════════════
-        # TODO: PROCHAINES ÉTAPES (V4)
-        # ════════════════════════════════════════════════════════════════
-        # 
-        # Si merchant_email trouvé :
-        #   1. generate_mise_en_demeure(new_case) → Générer le courrier IA
-        #   2. send_legal_email(new_case) → Envoyer depuis Gmail de l'utilisateur
-        #   3. Mettre à jour status = "Mise en demeure envoyée"
-        #
+        # ⚖️ AGENT AVOCAT - Envoi automatique de la mise en demeure (V4)
         # ════════════════════════════════════════════════════════════════
         
-        # Notification Telegram avec résultat détective
+        legal_notice_result = {"success": False, "message": "Non lancé"}
+        legal_notice_html = ""
+        
+        if merchant_result["email"]:
+            DEBUG_LOGS.append(f"⚖️ Lancement Agent Avocat pour {company}")
+            
+            # Récupérer l'utilisateur pour l'envoi
+            user = User.query.filter_by(email=session['email']).first()
+            
+            if user and user.refresh_token:
+                # Envoyer la mise en demeure
+                legal_notice_result = send_legal_notice(new_case, user)
+                
+                if legal_notice_result["success"]:
+                    DEBUG_LOGS.append(f"⚖️ ✅ Mise en demeure envoyée avec succès!")
+                    legal_notice_html = f"""
+                    <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                                padding:15px; border-radius:10px; margin-bottom:15px;
+                                border-left:4px solid #10b981;'>
+                        <p style='margin:0; color:#065f46;'>
+                            <b>⚖️ Agent Avocat :</b> Mise en demeure ENVOYÉE !<br>
+                            <span style='font-size:0.85rem;'>Envoyé à {merchant_result['email']} (copie dans votre boîte mail)</span>
+                        </p>
+                    </div>
+                    """
+                else:
+                    DEBUG_LOGS.append(f"⚖️ ❌ Échec envoi: {legal_notice_result['message']}")
+                    legal_notice_html = f"""
+                    <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:15px;
+                                border-left:4px solid #f59e0b;'>
+                        <p style='margin:0; color:#92400e; font-size:0.9rem;'>
+                            <b>⚖️ Agent Avocat :</b> Envoi différé<br>
+                            <span style='font-size:0.85rem;'>{legal_notice_result['message']}</span>
+                        </p>
+                    </div>
+                    """
+            else:
+                DEBUG_LOGS.append(f"⚖️ ❌ Utilisateur non trouvé ou non authentifié")
+                legal_notice_html = """
+                <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:15px;
+                            border-left:4px solid #f59e0b;'>
+                    <p style='margin:0; color:#92400e; font-size:0.9rem;'>
+                        <b>⚖️ Agent Avocat :</b> Reconnexion nécessaire<br>
+                        <span style='font-size:0.85rem;'>Reconnectez-vous pour autoriser l'envoi d'emails.</span>
+                    </p>
+                </div>
+                """
+        
+        # Notification Telegram avec résultat détective + avocat
         detective_notif = ""
         if merchant_result["email"]:
             detective_notif = f"\n\n🕵️ EMAIL TROUVÉ: {merchant_result['email']}"
+            if legal_notice_result["success"]:
+                detective_notif += "\n⚖️ MISE EN DEMEURE ENVOYÉE ✅"
+            else:
+                detective_notif += f"\n⚖️ Envoi différé: {legal_notice_result['message']}"
         else:
             detective_notif = "\n\n🕵️ Email non trouvé (recherche manuelle requise)"
         
         send_telegram_notif(f"📝 NOUVEAU LITIGE MANUEL 📝\n\n🏪 {company.upper()}\n💰 {amount_float:.2f}€\n📋 N° {order_id}\n⚠️ {problem_label}\n👤 {session['email']}{detective_notif}\n\n📄 Description:\n{description[:150]}...")
         
-        # Page de succès avec résultat du détective
+        # Déterminer le titre selon le résultat
+        if legal_notice_result["success"]:
+            success_title = "Mise en demeure envoyée !"
+            success_icon = "✅"
+            success_subtitle = "Le marchand a reçu votre réclamation officielle."
+        elif merchant_result["email"]:
+            success_title = "Procédure lancée !"
+            success_icon = "⚡"
+            success_subtitle = "L'envoi de la mise en demeure est en préparation."
+        else:
+            success_title = "Dossier créé !"
+            success_icon = "📋"
+            success_subtitle = "Nous recherchons le contact du marchand."
+        
+        # Page de succès avec résultat du détective et avocat
         return STYLE + f"""
         <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
             <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
                         padding:30px; border-radius:20px; margin-bottom:25px;'>
-                <div style='font-size:4rem; margin-bottom:15px;'>⚡</div>
-                <h1 style='color:#065f46; margin:0 0 10px 0;'>Procédure lancée !</h1>
-                <p style='color:#047857; margin:0;'>Notre IA prend le relais.</p>
+                <div style='font-size:4rem; margin-bottom:15px;'>{success_icon}</div>
+                <h1 style='color:#065f46; margin:0 0 10px 0;'>{success_title}</h1>
+                <p style='color:#047857; margin:0;'>{success_subtitle}</p>
             </div>
             
             {detective_html}
+            
+            {legal_notice_html}
             
             <div style='background:white; padding:25px; border-radius:15px; text-align:left;
                         box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
@@ -2975,24 +3342,36 @@ def submit_litige():
                 <p><b>💰 Montant réclamé :</b> {amount_float:.2f}€</p>
                 <p><b>📋 N° Commande :</b> {order_id}</p>
                 <p><b>⚖️ Base légale :</b> {law}</p>
+                <p><b>📊 Statut :</b> <span style='background:#3b82f6; color:white; padding:3px 8px; border-radius:5px; font-size:0.85rem;'>{new_case.status}</span></p>
             </div>
             
             <div style='background:linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); 
                         padding:20px; border-radius:15px; margin-bottom:25px;
                         border-left:4px solid #3b82f6;'>
-                <h4 style='margin:0 0 10px 0; color:#1e40af;'>🤖 Que va faire notre IA ?</h4>
+                <h4 style='margin:0 0 10px 0; color:#1e40af;'>🤖 Progression</h4>
                 <div style='text-align:left; color:#1e40af; font-size:0.9rem;'>
-                    <p style='margin:5px 0;'>1️⃣ <b>Recherche</b> du contact juridique {'✅' if merchant_result['email'] else '⏳'}</p>
-                    <p style='margin:5px 0;'>2️⃣ <b>Rédaction</b> d'une mise en demeure personnalisée</p>
-                    <p style='margin:5px 0;'>3️⃣ <b>Envoi</b> depuis votre adresse email</p>
+                    <p style='margin:5px 0;'>1️⃣ <b>Recherche contact</b> {"✅" if merchant_result["email"] else "⏳"}</p>
+                    <p style='margin:5px 0;'>2️⃣ <b>Rédaction mise en demeure</b> {"✅" if legal_notice_result["success"] else ("⏳" if merchant_result["email"] else "⏸️")}</p>
+                    <p style='margin:5px 0;'>3️⃣ <b>Envoi au marchand</b> {"✅" if legal_notice_result["success"] else "⏳"}</p>
+                    <p style='margin:5px 0;'>4️⃣ <b>Suivi des réponses</b> ⏳</p>
                 </div>
             </div>
+            
+            {"" if not legal_notice_result["success"] else '''
+            <div style="background:#ecfdf5; padding:15px; border-radius:10px; margin-bottom:25px;
+                        border-left:4px solid #10b981;">
+                <p style="margin:0; color:#065f46; font-size:0.9rem;">
+                    <b>📧 Email envoyé !</b><br>
+                    <span style="font-size:0.85rem;">Une copie de la mise en demeure a été envoyée dans votre boîte mail.</span>
+                </p>
+            </div>
+            '''}
             
             <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:25px;
                         border-left:4px solid #f59e0b;'>
                 <p style='margin:0; color:#92400e; font-size:0.9rem;'>
-                    <b>⏱️ Délai estimé :</b> Mise en demeure envoyée sous 24h<br>
-                    <span style='font-size:0.8rem;'>Vous recevrez une notification par email.</span>
+                    <b>⏱️ Délai légal :</b> Le marchand dispose de 8 jours pour répondre.<br>
+                    <span style='font-size:0.8rem;'>Nous surveillerons votre boîte mail pour détecter sa réponse.</span>
                 </p>
             </div>
             
