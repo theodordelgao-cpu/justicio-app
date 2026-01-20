@@ -3113,7 +3113,7 @@ def declare_litige():
     """ + FOOTER
 
 
-@app.route("/submit_litige", methods=["POST"])
+@app.route('/submit_litige', methods=['GET', 'POST'])
 def submit_litige():
     """Traite la soumission du formulaire de déclaration manuelle"""
     if "email" not in session:
@@ -4690,3 +4690,4 @@ def test_detective():
 
 if __name__ == "__main__":
     app.run(debug=False)
+
