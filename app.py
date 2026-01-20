@@ -317,30 +317,59 @@ def find_merchant_email(url):
     Retourne : {"email": str|None, "source": str, "all_emails": list}
     """
     
+    # ═══════════════════════════════════════════════════════════════
+    # MODE DEBUG - Affiche les logs dans la console
+    # ═══════════════════════════════════════════════════════════════
+    DEBUG_MODE = True
+    
+    def debug_log(message, level="INFO"):
+        """Log de debug avec timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        prefix = {
+            "INFO": "🔍",
+            "SUCCESS": "✅",
+            "WARNING": "⚠️",
+            "ERROR": "❌",
+            "HTTP": "🌐"
+        }.get(level, "📝")
+        
+        log_msg = f"[{timestamp}] {prefix} [DETECTIVE] {message}"
+        print(log_msg)  # Console
+        DEBUG_LOGS.append(log_msg)  # Stockage pour /debug-logs
+    
     if not url:
+        debug_log("URL vide, abandon", "WARNING")
         return {"email": None, "source": None, "all_emails": []}
     
+    debug_log(f"═══════════════════════════════════════════════════", "INFO")
+    debug_log(f"DÉMARRAGE ANALYSE : {url}", "INFO")
+    debug_log(f"═══════════════════════════════════════════════════", "INFO")
+    
     # ═══════════════════════════════════════════════════════════════
-    # CONFIGURATION
+    # CONFIGURATION - Headers identiques à Chrome réel
     # ═══════════════════════════════════════════════════════════════
     
-    # Headers anti-bot (Chrome récent)
     HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://www.google.com/',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-Site': 'cross-site',
         'Sec-Fetch-User': '?1',
         'Cache-Control': 'max-age=0',
+        'DNT': '1',
     }
     
-    # Timeout court pour ne pas bloquer l'utilisateur
-    TIMEOUT = 5
+    # Timeout
+    TIMEOUT = 8
     
     # ═══════════════════════════════════════════════════════════════
     # CHEMINS CMS STANDARDS (Shopify, WordPress, Prestashop, etc.)
@@ -623,7 +652,9 @@ def find_merchant_email(url):
         return score if score > 0 else 10
     
     def get_page_content(page_url, timeout=TIMEOUT):
-        """Récupère le contenu d'une page avec gestion des erreurs"""
+        """Récupère le contenu d'une page avec gestion des erreurs et logs détaillés"""
+        debug_log(f"Tentative accès : {page_url}", "HTTP")
+        
         try:
             response = requests.get(
                 page_url, 
@@ -632,20 +663,45 @@ def find_merchant_email(url):
                 allow_redirects=True,
                 verify=True
             )
-            if response.status_code == 200:
+            
+            status = response.status_code
+            content_length = len(response.text) if response.text else 0
+            
+            if status == 200:
+                debug_log(f"Status: {status} OK | Contenu: {content_length} chars", "SUCCESS")
                 return response.text
+            elif status == 403:
+                debug_log(f"Status: {status} BLOQUÉ (Forbidden) - Anti-bot actif?", "WARNING")
+            elif status == 404:
+                debug_log(f"Status: {status} Page non trouvée", "WARNING")
+            elif status == 503:
+                debug_log(f"Status: {status} Service indisponible", "WARNING")
+            else:
+                debug_log(f"Status: {status} - Réponse inattendue", "WARNING")
+            
+            return None
+            
         except requests.exceptions.Timeout:
-            pass
-        except requests.exceptions.SSLError:
+            debug_log(f"TIMEOUT après {timeout}s : {page_url[:50]}...", "ERROR")
+            return None
+        except requests.exceptions.SSLError as e:
+            debug_log(f"Erreur SSL : {str(e)[:50]} - Retry sans SSL...", "WARNING")
             try:
                 response = requests.get(page_url, headers=HEADERS, timeout=timeout, verify=False)
                 if response.status_code == 200:
+                    debug_log(f"Retry SSL OK | Contenu: {len(response.text)} chars", "SUCCESS")
                     return response.text
-            except:
-                pass
-        except:
-            pass
-        return None
+                else:
+                    debug_log(f"Retry SSL échoué : Status {response.status_code}", "ERROR")
+            except Exception as e2:
+                debug_log(f"Retry SSL exception : {str(e2)[:50]}", "ERROR")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            debug_log(f"Erreur connexion : {str(e)[:50]}", "ERROR")
+            return None
+        except Exception as e:
+            debug_log(f"Exception inattendue : {type(e).__name__} - {str(e)[:50]}", "ERROR")
+            return None
     
     def find_contact_links(soup, base_url):
         """Trouve les liens vers les pages de contact"""
@@ -686,22 +742,27 @@ def find_merchant_email(url):
         🦆 Recherche DuckDuckGo HTML (fallback ultime)
         Retourne les snippets des résultats
         """
+        debug_log(f"🦆 Recherche DuckDuckGo : {query}", "INFO")
+        
         try:
-            # DuckDuckGo HTML lite (pas de JS requis)
             search_url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
             
             search_headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml',
-                'Accept-Language': 'fr-FR,fr;q=0.9',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.7',
+                'Referer': 'https://duckduckgo.com/',
             }
             
-            response = requests.get(search_url, headers=search_headers, timeout=8)
+            response = requests.get(search_url, headers=search_headers, timeout=10)
+            debug_log(f"🦆 DuckDuckGo Status: {response.status_code} | Taille: {len(response.text)} chars", "HTTP")
+            
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # Extraire les snippets des résultats
                 snippets = []
+                
+                # Extraire les snippets des résultats
                 for result in soup.find_all('a', class_='result__snippet'):
                     text = result.get_text()
                     if text:
@@ -716,10 +777,26 @@ def find_merchant_email(url):
                     if href:
                         snippets.append(href)
                 
-                return ' '.join(snippets[:10])
+                # Chercher aussi dans les résultats classiques
+                for result in soup.find_all(class_='result__body'):
+                    text = result.get_text()
+                    if text:
+                        snippets.append(text)
+                
+                result_text = ' '.join(snippets[:15])
+                debug_log(f"🦆 DuckDuckGo: {len(snippets)} snippets extraits", "SUCCESS" if snippets else "WARNING")
+                
+                # Log des emails trouvés dans les résultats
+                found_emails = re.findall(EMAIL_REGEX, result_text, re.IGNORECASE)
+                if found_emails:
+                    debug_log(f"🦆 Emails trouvés dans résultats DDG: {found_emails[:3]}", "SUCCESS")
+                
+                return result_text
+            else:
+                debug_log(f"🦆 DuckDuckGo échec: Status {response.status_code}", "ERROR")
             
         except Exception as e:
-            DEBUG_LOGS.append(f"🦆 Erreur DuckDuckGo: {str(e)[:50]}")
+            debug_log(f"🦆 DuckDuckGo Exception: {type(e).__name__} - {str(e)[:50]}", "ERROR")
         
         return ""
     
@@ -727,14 +804,32 @@ def find_merchant_email(url):
         """
         🔍 Recherche Bing (fallback alternatif)
         """
+        debug_log(f"🔍 Recherche Bing : {query[:50]}...", "INFO")
+        
         try:
             search_url = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
             
-            response = requests.get(search_url, headers=HEADERS, timeout=8)
+            bing_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'fr-FR,fr;q=0.9',
+                'Referer': 'https://www.bing.com/',
+            }
+            
+            response = requests.get(search_url, headers=bing_headers, timeout=10)
+            debug_log(f"🔍 Bing Status: {response.status_code} | Taille: {len(response.text)} chars", "HTTP")
+            
             if response.status_code == 200:
+                # Log des emails trouvés
+                found_emails = re.findall(EMAIL_REGEX, response.text, re.IGNORECASE)
+                if found_emails:
+                    debug_log(f"🔍 Emails trouvés dans Bing: {found_emails[:3]}", "SUCCESS")
                 return response.text
-        except:
-            pass
+            else:
+                debug_log(f"🔍 Bing échec: Status {response.status_code}", "ERROR")
+                
+        except Exception as e:
+            debug_log(f"🔍 Bing Exception: {type(e).__name__} - {str(e)[:50]}", "ERROR")
         return ""
     
     # ═══════════════════════════════════════════════════════════════
@@ -748,16 +843,20 @@ def find_merchant_email(url):
         # 1. Nettoyer l'URL
         base_url = clean_url(url)
         if not base_url:
+            debug_log("URL invalide après nettoyage", "ERROR")
             return {"email": None, "source": None, "all_emails": []}
         
         base_domain = get_base_domain(base_url)
         site_domain = get_domain_name(base_url)
         
-        DEBUG_LOGS.append(f"🕵️ Agent Détective V3: Analyse de {base_url}")
+        debug_log(f"Base URL: {base_url}", "INFO")
+        debug_log(f"Domaine: {site_domain}", "INFO")
         
         # 2. Récupérer la page d'accueil
+        debug_log("═══ ÉTAPE 1: Page d'accueil ═══", "INFO")
         homepage_content = get_page_content(base_url)
         if not homepage_content:
+            debug_log("Accueil inaccessible, essai avec/sans www...", "WARNING")
             alt_url = base_url.replace('://www.', '://') if '://www.' in base_url else base_url.replace('://', '://www.')
             homepage_content = get_page_content(alt_url)
             if homepage_content:
@@ -765,29 +864,43 @@ def find_merchant_email(url):
                 base_domain = get_base_domain(alt_url)
         
         if not homepage_content:
-            DEBUG_LOGS.append(f"🕵️ Site inaccessible, passage au fallback Google...")
-            # Aller directement au fallback recherche
+            debug_log("Site inaccessible même avec www/sans www", "ERROR")
+            debug_log("Passage direct au FALLBACK recherche web...", "WARNING")
             homepage_content = ""
         else:
             pages_visited.add(base_url)
             soup = BeautifulSoup(homepage_content, 'html.parser')
+            debug_log(f"Page d'accueil chargée: {len(homepage_content)} chars", "SUCCESS")
             
             # 3. Extraire mailto: de l'accueil
+            debug_log("Recherche des mailto: sur l'accueil...", "INFO")
             mailto_emails = extract_mailto_emails(soup)
+            if mailto_emails:
+                debug_log(f"Mailto trouvés sur accueil: {mailto_emails}", "SUCCESS")
+            else:
+                debug_log("Aucun mailto sur l'accueil", "WARNING")
+            
             for email in mailto_emails:
                 score = score_email(email, site_domain) + 30
                 if email not in all_emails or all_emails[email]["score"] < score:
                     all_emails[email] = {"score": score, "source": "Accueil (mailto)"}
             
             # 4. Extraire emails du texte
+            debug_log("Recherche emails dans le texte de l'accueil...", "INFO")
             homepage_emails = extract_emails_from_text(homepage_content)
+            if homepage_emails:
+                debug_log(f"Emails trouvés dans texte accueil: {homepage_emails}", "SUCCESS")
+            else:
+                debug_log("Aucun email dans le texte de l'accueil", "WARNING")
+            
             for email in homepage_emails:
                 if email not in all_emails:
                     all_emails[email] = {"score": score_email(email, site_domain), "source": "Accueil"}
             
             # 5. Visiter les liens contact trouvés
+            debug_log("═══ ÉTAPE 2: Recherche liens contact ═══", "INFO")
             contact_links = find_contact_links(soup, base_url)
-            DEBUG_LOGS.append(f"🕵️ {len(contact_links)} liens contact détectés")
+            debug_log(f"{len(contact_links)} liens contact détectés: {contact_links[:5]}", "INFO")
             
             for link in contact_links:
                 if link in pages_visited:
@@ -800,23 +913,35 @@ def find_merchant_email(url):
                     page_type = get_page_type(link)
                     
                     page_mailto = extract_mailto_emails(page_soup)
+                    if page_mailto:
+                        debug_log(f"Mailto trouvés sur {page_type}: {page_mailto}", "SUCCESS")
+                    
                     for email in page_mailto:
                         score = score_email(email, site_domain) + 40
                         if email not in all_emails or all_emails[email]["score"] < score:
                             all_emails[email] = {"score": score, "source": f"{page_type} (mailto)"}
                     
                     page_emails = extract_emails_from_text(page_content)
+                    if page_emails:
+                        debug_log(f"Emails trouvés sur {page_type}: {page_emails}", "SUCCESS")
+                    
                     for email in page_emails:
                         score = score_email(email, site_domain) + 20
                         if email not in all_emails or all_emails[email]["score"] < score:
                             all_emails[email] = {"score": score, "source": page_type}
+            
+            # Log état actuel
+            if all_emails:
+                debug_log(f"État après étape 2: {len(all_emails)} emails trouvés", "SUCCESS")
+            else:
+                debug_log("Aucun email trouvé après étapes 1-2", "WARNING")
         
         # ═══════════════════════════════════════════════════════════════
         # FALLBACK 1 : Chemins CMS standards
         # ═══════════════════════════════════════════════════════════════
         
         if not all_emails:
-            DEBUG_LOGS.append(f"🕵️ Fallback 1: Test des {len(STANDARD_PATHS)} chemins CMS...")
+            debug_log(f"═══ FALLBACK 1: Test des {len(STANDARD_PATHS)} chemins CMS ═══", "INFO")
             
             for path in STANDARD_PATHS:
                 test_url = base_domain + path
@@ -824,35 +949,45 @@ def find_merchant_email(url):
                     continue
                 pages_visited.add(test_url)
                 
-                page_content = get_page_content(test_url, timeout=3)
+                page_content = get_page_content(test_url, timeout=4)
                 if page_content:
                     page_soup = BeautifulSoup(page_content, 'html.parser')
                     page_type = get_page_type(test_url)
                     
                     page_mailto = extract_mailto_emails(page_soup)
+                    if page_mailto:
+                        debug_log(f"CMS {path} → Mailto: {page_mailto}", "SUCCESS")
+                    
                     for email in page_mailto:
                         score = score_email(email, site_domain) + 40
                         all_emails[email] = {"score": score, "source": f"{page_type} (mailto)"}
                     
                     page_emails = extract_emails_from_text(page_content)
+                    if page_emails:
+                        debug_log(f"CMS {path} → Emails texte: {page_emails}", "SUCCESS")
+                    
                     for email in page_emails:
                         score = score_email(email, site_domain) + 20
                         if email not in all_emails or all_emails[email]["score"] < score:
                             all_emails[email] = {"score": score, "source": page_type}
                     
                     if all_emails:
-                        DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé via CMS path: {path}")
+                        debug_log(f"Email trouvé via CMS path: {path}", "SUCCESS")
                         break
+            
+            if not all_emails:
+                debug_log("Aucun email trouvé après FALLBACK 1 (CMS paths)", "WARNING")
         
         # ═══════════════════════════════════════════════════════════════
         # FALLBACK 2 : Recherche DuckDuckGo / Bing
         # ═══════════════════════════════════════════════════════════════
         
         if not all_emails:
-            DEBUG_LOGS.append(f"🕵️ Fallback 2: Recherche DuckDuckGo/Bing pour {site_domain}...")
+            debug_log(f"═══ FALLBACK 2: Recherche Web pour {site_domain} ═══", "INFO")
             
             # Extraire le nom de marque du domaine (archiduchesse.com -> archiduchesse)
             brand_name = site_domain.split('.')[0].replace('www', '').replace('-', ' ')
+            debug_log(f"Nom de marque extrait: '{brand_name}'", "INFO")
             
             # Construire plusieurs requêtes de recherche
             search_queries = [
@@ -864,11 +999,15 @@ def find_merchant_email(url):
             ]
             
             for query in search_queries:
+                debug_log(f"Requête: {query}", "INFO")
+                
                 # Essayer DuckDuckGo
                 search_results = search_duckduckgo(query)
                 
                 if search_results:
                     search_emails = extract_emails_from_text(search_results)
+                    debug_log(f"Emails extraits de DDG: {search_emails[:5] if search_emails else 'Aucun'}", "INFO")
+                    
                     for email in search_emails:
                         # Vérifier que l'email correspond au domaine du site
                         email_domain = email.split('@')[1].lower()
@@ -878,14 +1017,18 @@ def find_merchant_email(url):
                             email_domain in site_domain.lower() or
                             brand_name.lower() in email_domain
                         )
+                        
                         if domain_match:
+                            debug_log(f"Email MATCH domaine: {email}", "SUCCESS")
                             score = score_email(email, site_domain) + 25
                             if email not in all_emails or all_emails[email]["score"] < score:
                                 all_emails[email] = {"score": score, "source": "Recherche Web"}
+                        else:
+                            debug_log(f"Email REJETÉ (domaine ne match pas): {email}", "WARNING")
                 
                 # Si on a trouvé des emails, on arrête
                 if all_emails:
-                    DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé via recherche web!")
+                    debug_log("Email trouvé via recherche DuckDuckGo!", "SUCCESS")
                     break
                 
                 # Essayer Bing si DuckDuckGo n'a rien donné
@@ -893,6 +1036,8 @@ def find_merchant_email(url):
                     bing_results = search_bing(query)
                     if bing_results:
                         bing_emails = extract_emails_from_text(bing_results)
+                        debug_log(f"Emails extraits de Bing: {bing_emails[:5] if bing_emails else 'Aucun'}", "INFO")
+                        
                         for email in bing_emails:
                             email_domain = email.split('@')[1].lower()
                             domain_match = (
@@ -901,6 +1046,7 @@ def find_merchant_email(url):
                                 brand_name.lower() in email_domain
                             )
                             if domain_match:
+                                debug_log(f"Bing - Email MATCH: {email}", "SUCCESS")
                                 score = score_email(email, site_domain) + 20
                                 if email not in all_emails or all_emails[email]["score"] < score:
                                     all_emails[email] = {"score": score, "source": "Recherche Bing"}
@@ -912,13 +1058,21 @@ def find_merchant_email(url):
         # RÉSULTAT FINAL
         # ═══════════════════════════════════════════════════════════════
         
+        debug_log("═══════════════════════════════════════════════════", "INFO")
+        debug_log("RÉSULTAT FINAL", "INFO")
+        debug_log("═══════════════════════════════════════════════════", "INFO")
+        
         if all_emails:
             sorted_emails = sorted(all_emails.items(), key=lambda x: x[1]["score"], reverse=True)
             best_email = sorted_emails[0][0]
             best_source = sorted_emails[0][1]["source"]
+            best_score = sorted_emails[0][1]["score"]
             
-            DEBUG_LOGS.append(f"🕵️ ✅ TROUVÉ: {best_email} (via {best_source}, score: {sorted_emails[0][1]['score']})")
-            DEBUG_LOGS.append(f"🕵️ Pages visitées: {len(pages_visited)}")
+            debug_log(f"✅ SUCCÈS: {best_email}", "SUCCESS")
+            debug_log(f"   Source: {best_source}", "SUCCESS")
+            debug_log(f"   Score: {best_score}", "SUCCESS")
+            debug_log(f"   Tous les emails: {[e[0] for e in sorted_emails[:5]]}", "INFO")
+            debug_log(f"   Pages visitées: {len(pages_visited)}", "INFO")
             
             return {
                 "email": best_email,
@@ -926,11 +1080,15 @@ def find_merchant_email(url):
                 "all_emails": [e[0] for e in sorted_emails[:5]]
             }
         
-        DEBUG_LOGS.append(f"🕵️ ❌ Aucun email trouvé pour {site_domain} ({len(pages_visited)} pages)")
+        debug_log(f"❌ ÉCHEC: Aucun email trouvé pour {site_domain}", "ERROR")
+        debug_log(f"   Pages visitées: {len(pages_visited)}", "INFO")
+        debug_log("   Suggestions: Vérifier si le site est accessible, si les emails sont en JS", "INFO")
         return {"email": None, "source": "Aucun email trouvé", "all_emails": []}
         
     except Exception as e:
-        DEBUG_LOGS.append(f"🕵️ Erreur Agent Détective V3: {str(e)}")
+        debug_log(f"EXCEPTION FATALE: {type(e).__name__} - {str(e)}", "ERROR")
+        import traceback
+        debug_log(f"Traceback: {traceback.format_exc()[:200]}", "ERROR")
         return {"email": None, "source": f"Erreur: {str(e)[:50]}", "all_emails": []}
 
 def extract_email_content(message_data):
@@ -4039,26 +4197,44 @@ def verif_user():
 
 @app.route("/test-detective")
 def test_detective():
-    """Page de test pour l'Agent Détective"""
+    """Page de test pour l'Agent Détective avec logs détaillés"""
     url = request.args.get("url", "")
     
     if not url:
         return STYLE + """
         <div style='max-width:500px; margin:0 auto; padding:30px;'>
-            <h1>🕵️ Test Agent Détective</h1>
+            <h1>🕵️ Test Agent Détective V3</h1>
+            <p style='color:#64748b; margin-bottom:20px;'>
+                Teste le scraping d'email sur n'importe quel site e-commerce.
+                Les logs détaillés s'afficheront après l'analyse.
+            </p>
             <form method='GET' style='background:white; padding:25px; border-radius:15px;'>
                 <label style='display:block; margin-bottom:10px; font-weight:600;'>URL du site à analyser :</label>
                 <input type='url' name='url' required placeholder='https://www.exemple.com' 
                        style='width:100%; padding:12px; border:2px solid #e2e8f0; border-radius:8px; margin-bottom:15px;'>
                 <button type='submit' class='btn-success' style='width:100%;'>🔍 Lancer l'analyse</button>
             </form>
+            <div style='margin-top:20px; background:#f1f5f9; padding:15px; border-radius:10px;'>
+                <p style='margin:0; font-size:0.85rem; color:#64748b;'>
+                    <b>Sites de test suggérés :</b><br>
+                    • archiduchesse.com (Shopify FR)<br>
+                    • asphalte.com (Shopify FR)<br>
+                    • lemahieu.com (E-commerce FR)
+                </p>
+            </div>
             <br>
             <a href='/' style='color:#64748b;'>← Retour</a>
         </div>
         """ + FOOTER
     
+    # Marquer le début des logs pour ce test
+    log_start_index = len(DEBUG_LOGS)
+    
     # Lancer l'analyse
     result = find_merchant_email(url)
+    
+    # Récupérer les logs générés pendant l'analyse
+    test_logs = DEBUG_LOGS[log_start_index:]
     
     # Afficher les résultats
     email_found = result.get("email")
@@ -4070,7 +4246,7 @@ def test_detective():
         status_html = f"""
         <div style='background:#d1fae5; padding:20px; border-radius:10px; margin:20px 0;'>
             <h3 style='color:#065f46; margin:0;'>✅ Email trouvé !</h3>
-            <p style='font-size:1.3rem; font-family:monospace; margin:10px 0;'>{email_found}</p>
+            <p style='font-size:1.3rem; font-family:monospace; margin:10px 0; background:#ecfdf5; padding:10px; border-radius:5px;'>{email_found}</p>
             <p style='color:#047857; font-size:0.9rem;'>Source : {source}</p>
         </div>
         """
@@ -4089,19 +4265,41 @@ def test_detective():
             all_emails_html += f"<li><code>{e}</code></li>"
         all_emails_html += "</ul>"
     
+    # Formater les logs pour l'affichage
+    logs_html = ""
+    if test_logs:
+        logs_html = "<div style='background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; font-family:monospace; font-size:0.8rem; max-height:400px; overflow-y:auto; white-space:pre-wrap;'>"
+        for log in test_logs:
+            # Coloriser selon le type
+            if "SUCCESS" in log or "✅" in log:
+                logs_html += f"<div style='color:#4ade80;'>{log}</div>"
+            elif "ERROR" in log or "❌" in log:
+                logs_html += f"<div style='color:#f87171;'>{log}</div>"
+            elif "WARNING" in log or "⚠️" in log:
+                logs_html += f"<div style='color:#fbbf24;'>{log}</div>"
+            elif "HTTP" in log or "🌐" in log:
+                logs_html += f"<div style='color:#60a5fa;'>{log}</div>"
+            else:
+                logs_html += f"<div>{log}</div>"
+        logs_html += "</div>"
+    
     return STYLE + f"""
-    <div style='max-width:600px; margin:0 auto; padding:30px;'>
-        <h1>🕵️ Résultats Agent Détective</h1>
-        <p style='color:#64748b;'>URL analysée : <code>{url}</code></p>
+    <div style='max-width:800px; margin:0 auto; padding:30px;'>
+        <h1>🕵️ Résultats Agent Détective V3</h1>
+        <p style='color:#64748b;'>URL analysée : <code style='background:#f1f5f9; padding:3px 8px; border-radius:4px;'>{url}</code></p>
         
         {status_html}
         
-        <div style='background:white; padding:20px; border-radius:10px;'>
+        <div style='background:white; padding:20px; border-radius:10px; margin-bottom:20px;'>
             {all_emails_html if all_emails_html else "<p>Aucun email trouvé sur ce site.</p>"}
         </div>
         
+        <h3>📋 Logs de Debug ({len(test_logs)} entrées)</h3>
+        {logs_html if logs_html else "<p style='color:#94a3b8;'>Aucun log disponible</p>"}
+        
         <div style='margin-top:20px;'>
             <a href='/test-detective' class='btn-success' style='margin-right:10px;'>🔄 Nouveau test</a>
+            <a href='/debug-logs' class='btn-logout' style='margin-right:10px;'>📋 Tous les logs</a>
             <a href='/' class='btn-logout'>Retour</a>
         </div>
     </div>
