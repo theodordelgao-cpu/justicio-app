@@ -4728,12 +4728,29 @@ def check_refunds():
         "rejets_securite": 0
     }
     
-    # Chercher les litiges en attente de remboursement
+    # ════════════════════════════════════════════════════════════════
+    # FILTRE ÉLARGI : Surveiller TOUS les dossiers actifs
+    # - "En attente de remboursement" : Dossiers SCAN classiques
+    # - "En cours juridique" : Mise en demeure envoyée (Agent Avocat)
+    # - "En cours" / "Envoyé" : Anciens statuts de compatibilité
+    # - "En attente d'analyse" : Dossiers manuels en cours
+    # ════════════════════════════════════════════════════════════════
+    
+    STATUTS_ACTIFS = [
+        "En attente de remboursement",
+        "En cours juridique",
+        "En cours",
+        "Envoyé",
+        "En attente d'analyse",
+        "Détecté"
+    ]
+    
     active_cases = Litigation.query.filter(
-        Litigation.status == "En attente de remboursement"
+        Litigation.status.in_(STATUTS_ACTIFS)
     ).all()
     
-    logs.append(f"<p>📂 {len(active_cases)} dossier(s) en attente de remboursement</p>")
+    logs.append(f"<p>📂 {len(active_cases)} dossier(s) actifs à surveiller</p>")
+    logs.append(f"<p style='font-size:0.8rem; color:#64748b;'>Statuts surveillés : {', '.join(STATUTS_ACTIFS)}</p>")
     
     # ANTI-DOUBLON : Tracker les emails déjà utilisés
     used_email_ids = set()
