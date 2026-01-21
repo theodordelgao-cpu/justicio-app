@@ -3101,6 +3101,28 @@ def dashboard():
             date_str = legal_notice_date.strftime("%d/%m/%Y à %H:%M")
             legal_notice_badge = f"<div style='font-size:0.75rem; color:#3b82f6; margin-top:3px;'>⚖️ Envoyé le {date_str}</div>"
         
+        # Bouton Éditer/Compléter si le dossier n'est pas finalisé
+        edit_button = ""
+        finalized_statuses = ["En cours juridique", "Remboursé", "Annulé (sans débit)"]
+        is_finalized = case.status in finalized_statuses or case.status.startswith("Remboursé (") or case.status.startswith("Résolu (")
+        
+        if not is_finalized:
+            # Dossier modifiable - afficher le bouton
+            if not merchant_email:
+                edit_label = "✏️ Compléter"
+                edit_tooltip = "Ajouter l'email du marchand"
+            else:
+                edit_label = "📧 Renvoyer"
+                edit_tooltip = "Modifier et renvoyer la mise en demeure"
+            
+            edit_button = f"""
+                <a href='/edit_case/{case.id}' 
+                   style='font-size:0.75rem; color:#3b82f6; text-decoration:none; margin-right:15px;'
+                   title='{edit_tooltip}'>
+                    {edit_label}
+                </a>
+            """
+        
         html_rows += f"""
         <div style='background:white; padding:20px; margin-bottom:15px; border-radius:15px; 
                     border-left:5px solid {color}; box-shadow:0 2px 5px rgba(0,0,0,0.05); 
@@ -3128,6 +3150,7 @@ def dashboard():
                 </div>
                 {detail_text}
                 <div style='margin-top:8px;'>
+                    {edit_button}
                     <a href='/delete-case/{case.id}' 
                        onclick="return confirm('🗑️ Supprimer ce dossier {case.company.upper()} ?\\n\\nCette action est irréversible.');"
                        style='font-size:0.75rem; color:#dc2626; text-decoration:none; opacity:0.6;'
@@ -3156,6 +3179,260 @@ def dashboard():
                 ✍️ DÉCLARER
             </a>
             <a href='/' class='btn-logout'>Retour</a>
+        </div>
+    </div>
+    """ + FOOTER
+
+# ========================================
+# ÉDITION MANUELLE D'UN DOSSIER
+# ========================================
+
+@app.route("/edit_case/<int:case_id>", methods=["GET", "POST"])
+def edit_case(case_id):
+    """
+    ✏️ Permet de modifier un dossier et d'envoyer manuellement la mise en demeure
+    
+    Fonctionnalités :
+    - Modifier l'email du marchand (si Agent Détective a échoué)
+    - Corriger le montant
+    - Envoyer/Renvoyer la mise en demeure
+    """
+    if "email" not in session:
+        return redirect("/login")
+    
+    # Récupérer le dossier
+    case = Litigation.query.filter_by(id=case_id, user_email=session['email']).first()
+    
+    if not case:
+        return STYLE + """
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Dossier introuvable</h1>
+            <p>Ce dossier n'existe pas ou ne vous appartient pas.</p>
+            <br>
+            <a href='/dashboard' class='btn-success'>📂 Retour au dashboard</a>
+        </div>
+        """ + FOOTER
+    
+    user = User.query.filter_by(email=session['email']).first()
+    
+    # ════════════════════════════════════════════════════════════════
+    # TRAITEMENT DU FORMULAIRE (POST)
+    # ════════════════════════════════════════════════════════════════
+    
+    if request.method == "POST":
+        # Récupérer les nouvelles valeurs
+        new_merchant_email = request.form.get("merchant_email", "").strip()
+        new_amount = request.form.get("amount", "").strip()
+        send_notice = request.form.get("send_notice") == "on"
+        
+        # Mise à jour de l'email marchand
+        old_email = case.merchant_email
+        if new_merchant_email and '@' in new_merchant_email:
+            case.merchant_email = new_merchant_email
+            case.merchant_email_source = "Manuel"
+            DEBUG_LOGS.append(f"✏️ Edit: Email marchand modifié: {old_email} → {new_merchant_email}")
+        
+        # Mise à jour du montant
+        if new_amount:
+            try:
+                # Nettoyer et parser le montant
+                amount_clean = new_amount.replace('€', '').replace(',', '.').strip()
+                amount_float = float(amount_clean)
+                case.amount = f"{amount_float:.2f}€"
+                case.amount_float = amount_float
+                DEBUG_LOGS.append(f"✏️ Edit: Montant modifié → {amount_float:.2f}€")
+            except:
+                pass
+        
+        db.session.commit()
+        
+        # ════════════════════════════════════════════════════════════════
+        # ENVOI DE LA MISE EN DEMEURE (Si demandé et email présent)
+        # ════════════════════════════════════════════════════════════════
+        
+        notice_result = None
+        if send_notice and case.merchant_email:
+            DEBUG_LOGS.append(f"⚖️ Edit: Envoi manuel de mise en demeure à {case.merchant_email}")
+            notice_result = send_legal_notice(case, user)
+            
+            if notice_result["success"]:
+                # Notification Telegram
+                send_telegram_notif(f"📧 MISE EN DEMEURE MANUELLE 📧\n\n🏪 {case.company.upper()}\n💰 {case.amount}\n📧 {case.merchant_email}\n👤 {session['email']}\n\n⚖️ Envoi manuel réussi!")
+        
+        # Message de succès
+        if notice_result and notice_result["success"]:
+            success_message = f"""
+            <div style='background:#d1fae5; padding:15px; border-radius:10px; margin-bottom:20px;
+                        border-left:4px solid #10b981;'>
+                <p style='margin:0; color:#065f46;'>
+                    <b>✅ Mise en demeure envoyée avec succès !</b><br>
+                    <span style='font-size:0.9rem;'>Destinataire : {case.merchant_email}</span>
+                </p>
+            </div>
+            """
+        elif notice_result and not notice_result["success"]:
+            success_message = f"""
+            <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:20px;
+                        border-left:4px solid #f59e0b;'>
+                <p style='margin:0; color:#92400e;'>
+                    <b>⚠️ Dossier mis à jour, mais erreur d'envoi :</b><br>
+                    <span style='font-size:0.9rem;'>{notice_result['message']}</span>
+                </p>
+            </div>
+            """
+        else:
+            success_message = """
+            <div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px;
+                        border-left:4px solid #3b82f6;'>
+                <p style='margin:0; color:#1e40af;'>
+                    <b>💾 Dossier mis à jour !</b><br>
+                    <span style='font-size:0.9rem;'>Les modifications ont été enregistrées.</span>
+                </p>
+            </div>
+            """
+        
+        return STYLE + f"""
+        <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
+            {success_message}
+            
+            <div style='background:white; padding:25px; border-radius:15px; text-align:left;
+                        box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
+                <h3 style='margin-top:0; color:#1e293b;'>📋 Récapitulatif</h3>
+                <p><b>🏪 Entreprise :</b> {case.company.upper()}</p>
+                <p><b>💰 Montant :</b> {case.amount}</p>
+                <p><b>📧 Email marchand :</b> {case.merchant_email or 'Non renseigné'}</p>
+                <p><b>📊 Statut :</b> {case.status}</p>
+            </div>
+            
+            <a href='/dashboard' class='btn-success' style='display:inline-block; padding:15px 30px;'>
+                📂 Retour au dashboard
+            </a>
+        </div>
+        """ + FOOTER
+    
+    # ════════════════════════════════════════════════════════════════
+    # AFFICHAGE DU FORMULAIRE D'ÉDITION (GET)
+    # ════════════════════════════════════════════════════════════════
+    
+    # Statut actuel avec couleur
+    status_color = "#94a3b8"
+    if case.status == "En cours juridique":
+        status_color = "#3b82f6"
+    elif case.status == "Remboursé":
+        status_color = "#10b981"
+    elif "En attente" in case.status:
+        status_color = "#f59e0b"
+    
+    # Checkbox pour envoi auto
+    send_notice_checked = "checked" if not case.legal_notice_sent else ""
+    send_notice_label = "Envoyer la mise en demeure" if not case.legal_notice_sent else "Renvoyer la mise en demeure"
+    
+    # Info sur la dernière mise en demeure
+    legal_notice_info = ""
+    if case.legal_notice_sent and case.legal_notice_date:
+        date_str = case.legal_notice_date.strftime("%d/%m/%Y à %H:%M")
+        legal_notice_info = f"""
+        <div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px;
+                    border-left:4px solid #3b82f6;'>
+            <p style='margin:0; color:#1e40af; font-size:0.9rem;'>
+                <b>⚖️ Mise en demeure déjà envoyée</b><br>
+                Le {date_str} à {case.merchant_email}
+            </p>
+        </div>
+        """
+    
+    return STYLE + f"""
+    <div style='max-width:500px; margin:0 auto; padding:20px;'>
+        <h1 style='text-align:center;'>✏️ Modifier le dossier</h1>
+        
+        <div style='background:white; padding:25px; border-radius:15px; 
+                    box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:20px;'>
+            
+            <!-- Résumé du dossier -->
+            <div style='background:#f8fafc; padding:15px; border-radius:10px; margin-bottom:20px;'>
+                <h3 style='margin:0 0 10px 0; color:#1e293b;'>🏪 {case.company.upper()}</h3>
+                <p style='margin:5px 0; color:#64748b; font-size:0.9rem;'>
+                    <b>Sujet :</b> {case.subject[:80]}...
+                </p>
+                <p style='margin:5px 0; color:#64748b; font-size:0.9rem;'>
+                    <b>Base légale :</b> {case.law}
+                </p>
+                <p style='margin:5px 0;'>
+                    <b>Statut :</b> 
+                    <span style='background:{status_color}20; color:{status_color}; padding:3px 8px; border-radius:5px;'>
+                        {case.status}
+                    </span>
+                </p>
+            </div>
+            
+            {legal_notice_info}
+            
+            <form method='POST'>
+                <!-- Email marchand -->
+                <div style='margin-bottom:20px;'>
+                    <label style='font-weight:bold; color:#1e293b; display:block; margin-bottom:8px;'>
+                        📧 Email du marchand *
+                    </label>
+                    <input type='email' name='merchant_email' 
+                           value='{case.merchant_email or ""}'
+                           placeholder='contact@marchand.com'
+                           style='width:100%; padding:12px; border:1px solid #e2e8f0; border-radius:8px;
+                                  font-size:1rem; box-sizing:border-box;'>
+                    <p style='font-size:0.8rem; color:#64748b; margin:5px 0 0 0;'>
+                        Si l'Agent Détective n'a pas trouvé l'email, entrez-le manuellement.
+                    </p>
+                </div>
+                
+                <!-- Montant -->
+                <div style='margin-bottom:20px;'>
+                    <label style='font-weight:bold; color:#1e293b; display:block; margin-bottom:8px;'>
+                        💰 Montant du litige
+                    </label>
+                    <input type='text' name='amount' 
+                           value='{case.amount.replace("€", "") if case.amount else ""}'
+                           placeholder='150.00'
+                           style='width:100%; padding:12px; border:1px solid #e2e8f0; border-radius:8px;
+                                  font-size:1rem; box-sizing:border-box;'>
+                    <p style='font-size:0.8rem; color:#64748b; margin:5px 0 0 0;'>
+                        Corrigez si le montant scanné est incorrect.
+                    </p>
+                </div>
+                
+                <!-- Checkbox envoi mise en demeure -->
+                <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:20px;
+                            border-left:4px solid #f59e0b;'>
+                    <label style='display:flex; align-items:center; cursor:pointer;'>
+                        <input type='checkbox' name='send_notice' {send_notice_checked}
+                               style='width:20px; height:20px; margin-right:10px;'>
+                        <span style='color:#92400e;'>
+                            <b>⚖️ {send_notice_label}</b><br>
+                            <span style='font-size:0.85rem;'>
+                                La mise en demeure sera envoyée à l'email ci-dessus.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+                
+                <!-- Boutons -->
+                <div style='display:flex; gap:10px;'>
+                    <button type='submit' class='btn-success' 
+                            style='flex:1; padding:15px; font-size:1rem; border:none; cursor:pointer;'>
+                        💾 Enregistrer
+                    </button>
+                    <a href='/dashboard' class='btn-logout' 
+                       style='flex:0.5; text-align:center; padding:15px; text-decoration:none;'>
+                        Annuler
+                    </a>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Aide -->
+        <div style='background:#f1f5f9; padding:15px; border-radius:10px; text-align:center;'>
+            <p style='margin:0; color:#64748b; font-size:0.85rem;'>
+                💡 <b>Astuce :</b> Cherchez l'email de contact sur le site du marchand 
+                (page Contact, Mentions Légales, CGV...).
+            </p>
         </div>
     </div>
     """ + FOOTER
