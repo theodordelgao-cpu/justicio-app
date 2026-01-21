@@ -3771,7 +3771,7 @@ def setup_payment():
             payment_method_types=['card'],
             mode='setup',
             success_url=url_for('success_page', _external=True).replace("http://", "https://"),
-            cancel_url=url_for('declare', _external=True).replace("http://", "https://") if is_manual_flow else url_for('index', _external=True).replace("http://", "https://")
+            cancel_url=url_for('declare_litige', _external=True).replace("http://", "https://") if is_manual_flow else url_for('index', _external=True).replace("http://", "https://")
         )
         
         # Si c'est le flux manuel, afficher une page intermédiaire avec message
