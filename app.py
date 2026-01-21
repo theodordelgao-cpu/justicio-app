@@ -411,6 +411,103 @@ def find_merchant_email(url):
     TIMEOUT = 8
     
     # ═══════════════════════════════════════════════════════════════
+    # BLACKLIST DOMAINES - Emails à rejeter systématiquement
+    # ═══════════════════════════════════════════════════════════════
+    # Ces domaines apparaissent souvent dans les résultats de recherche
+    # mais ne sont JAMAIS des emails de marchands
+    
+    BLACKLIST_EMAIL_DOMAINS = [
+        # Médias / Journaux
+        'lefigaro.fr', 'lemonde.fr', 'liberation.fr', 'lexpress.fr',
+        'leparisien.fr', 'lepoint.fr', 'francetvinfo.fr', 'bfmtv.com',
+        'tf1.fr', 'france24.com', '20minutes.fr', 'lesechos.fr',
+        'latribune.fr', 'lequipe.fr', 'huffpost.fr', 'mediapart.fr',
+        'nouvelobs.com', 'marianne.net', 'challenges.fr', 'rtl.fr',
+        'europe1.fr', 'rfi.fr', 'franceinter.fr', 'ouest-france.fr',
+        'sudouest.fr', 'lavoixdunord.fr', 'ladepeche.fr',
+        'nytimes.com', 'theguardian.com', 'bbc.com', 'cnn.com',
+        'forbes.com', 'bloomberg.com', 'reuters.com', 'wsj.com',
+        'washingtonpost.com', 'independent.co.uk', 'mirror.co.uk',
+        
+        # Réseaux sociaux
+        'facebook.com', 'twitter.com', 'instagram.com', 'tiktok.com',
+        'linkedin.com', 'youtube.com', 'pinterest.com', 'snapchat.com',
+        'reddit.com', 'tumblr.com', 'twitch.tv', 'discord.com',
+        
+        # Email génériques (webmail)
+        'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
+        'live.com', 'msn.com', 'aol.com', 'protonmail.com',
+        'icloud.com', 'me.com', 'mail.com', 'gmx.com', 'yandex.com',
+        'orange.fr', 'free.fr', 'sfr.fr', 'laposte.net', 'wanadoo.fr',
+        
+        # Sites d'avis / comparateurs
+        'trustpilot.com', 'avis-verifies.com', 'tripadvisor.com',
+        'yelp.com', 'google.com', 'facebook.com', 'quechoisir.org',
+        '60millions-mag.com', 'signal-arnaques.com',
+        
+        # Sites tech / forums
+        'wikipedia.org', 'github.com', 'stackoverflow.com',
+        'medium.com', 'wordpress.com', 'blogger.com', 'wix.com',
+        
+        # Gouvernement / institutions
+        'gouv.fr', 'service-public.fr', 'economie.gouv.fr',
+        'dgccrf.finances.gouv.fr', 'cnil.fr', 'europa.eu',
+    ]
+    
+    def is_email_domain_valid(email, site_domain, brand_name):
+        """
+        🕵️ VALIDATION STRICTE DU DOMAINE EMAIL
+        
+        Règles :
+        1. Rejeter si domaine dans blacklist (médias, gmail, etc.)
+        2. Accepter si domaine email = domaine site (exact)
+        3. Accepter si domaine email contient le nom de marque (≥3 chars)
+        4. Accepter si nom de marque contient domaine email
+        5. SINON : Rejeter
+        """
+        try:
+            email_domain = email.split('@')[1].lower()
+            site_clean = site_domain.lower().replace('www.', '')
+            brand_clean = brand_name.lower().strip()
+            
+            # RÈGLE 1 : Blacklist
+            for blacklisted in BLACKLIST_EMAIL_DOMAINS:
+                if blacklisted in email_domain or email_domain in blacklisted:
+                    debug_log(f"🚫 Email {email} BLACKLISTÉ (domaine média/générique)", "WARNING")
+                    return False, "blacklist"
+            
+            # RÈGLE 2 : Correspondance exacte du domaine
+            if site_clean == email_domain or site_clean.replace('.com', '') == email_domain.replace('.com', ''):
+                return True, "exact_match"
+            
+            # Extraire la partie principale du domaine (sans TLD)
+            email_domain_base = email_domain.split('.')[0]
+            site_domain_base = site_clean.split('.')[0]
+            
+            # RÈGLE 3 : Le domaine email contient le nom de marque (min 3 chars)
+            if len(brand_clean) >= 3 and brand_clean in email_domain_base:
+                return True, "brand_in_email"
+            
+            # RÈGLE 4 : Le nom de marque contient le domaine email (min 3 chars)
+            if len(email_domain_base) >= 3 and email_domain_base in brand_clean:
+                return True, "email_in_brand"
+            
+            # RÈGLE 5 : Correspondance partielle domaine
+            if len(site_domain_base) >= 3 and site_domain_base in email_domain_base:
+                return True, "site_in_email"
+            
+            if len(email_domain_base) >= 3 and email_domain_base in site_domain_base:
+                return True, "email_in_site"
+            
+            # SINON : Rejet
+            debug_log(f"🚫 Email {email} REJETÉ - Domaine '{email_domain}' ne correspond pas à '{site_domain}'", "WARNING")
+            return False, "no_match"
+            
+        except Exception as e:
+            debug_log(f"Erreur validation email {email}: {str(e)}", "ERROR")
+            return False, "error"
+    
+    # ═══════════════════════════════════════════════════════════════
     # CHEMINS CMS STANDARDS (Shopify, WordPress, Prestashop, etc.)
     # ═══════════════════════════════════════════════════════════════
     
@@ -1048,22 +1145,15 @@ def find_merchant_email(url):
                     debug_log(f"Emails extraits de DDG: {search_emails[:5] if search_emails else 'Aucun'}", "INFO")
                     
                     for email in search_emails:
-                        # Vérifier que l'email correspond au domaine du site
-                        email_domain = email.split('@')[1].lower()
-                        # Accepter si le domaine correspond OU si c'est le nom de marque
-                        domain_match = (
-                            site_domain.lower() in email_domain or 
-                            email_domain in site_domain.lower() or
-                            brand_name.lower() in email_domain
-                        )
+                        # 🕵️ VALIDATION STRICTE DU DOMAINE
+                        is_valid, reason = is_email_domain_valid(email, site_domain, brand_name)
                         
-                        if domain_match:
-                            debug_log(f"Email MATCH domaine: {email}", "SUCCESS")
+                        if is_valid:
+                            debug_log(f"✅ Email VALIDÉ: {email} (raison: {reason})", "SUCCESS")
                             score = score_email(email, site_domain) + 25
                             if email not in all_emails or all_emails[email]["score"] < score:
                                 all_emails[email] = {"score": score, "source": "Recherche Web"}
-                        else:
-                            debug_log(f"Email REJETÉ (domaine ne match pas): {email}", "WARNING")
+                        # else: déjà loggé par is_email_domain_valid
                 
                 # Si on a trouvé des emails, on arrête
                 if all_emails:
@@ -1078,17 +1168,15 @@ def find_merchant_email(url):
                         debug_log(f"Emails extraits de Bing: {bing_emails[:5] if bing_emails else 'Aucun'}", "INFO")
                         
                         for email in bing_emails:
-                            email_domain = email.split('@')[1].lower()
-                            domain_match = (
-                                site_domain.lower() in email_domain or 
-                                email_domain in site_domain.lower() or
-                                brand_name.lower() in email_domain
-                            )
-                            if domain_match:
-                                debug_log(f"Bing - Email MATCH: {email}", "SUCCESS")
+                            # 🕵️ VALIDATION STRICTE DU DOMAINE
+                            is_valid, reason = is_email_domain_valid(email, site_domain, brand_name)
+                            
+                            if is_valid:
+                                debug_log(f"✅ Bing - Email VALIDÉ: {email} (raison: {reason})", "SUCCESS")
                                 score = score_email(email, site_domain) + 20
                                 if email not in all_emails or all_emails[email]["score"] < score:
                                     all_emails[email] = {"score": score, "source": "Recherche Bing"}
+                            # else: déjà loggé par is_email_domain_valid
                 
                 if all_emails:
                     break
@@ -3273,6 +3361,55 @@ def submit_litige():
     if "email" not in session:
         return redirect("/login")
     
+    # ════════════════════════════════════════════════════════════════
+    # 🔒 GATEKEEPER STRIPE - VÉRIFICATION STRICTE EN PREMIER
+    # ════════════════════════════════════════════════════════════════
+    # Cette vérification DOIT être faite AVANT tout traitement
+    # pour empêcher le bypass via bouton "Retour" du navigateur
+    
+    user = User.query.filter_by(email=session['email']).first()
+    
+    if not user:
+        return redirect("/login")
+    
+    # BLOCAGE STRICT : Pas de carte = Pas de service
+    if not user.stripe_customer_id:
+        print(f"⛔ REFUS : Utilisateur {user.email} sans carte tente de déclarer un litige.")
+        DEBUG_LOGS.append(f"⛔ GATEKEEPER STRICT: Blocage {user.email} - Tentative sans carte")
+        
+        # Sauvegarder TOUT le formulaire en session
+        session['pending_manual_litige'] = request.form.to_dict()
+        session['pending_manual_litige']['created_at'] = datetime.now().isoformat()
+        
+        # Message d'avertissement
+        session['payment_message'] = "🔒 Vous devez enregistrer un moyen de paiement pour lancer la procédure juridique."
+        
+        # ARRÊT TOTAL - Redirection forcée
+        return redirect(url_for('setup_payment'))
+    
+    # Vérification supplémentaire : La carte est-elle toujours valide chez Stripe ?
+    try:
+        payment_methods = stripe.PaymentMethod.list(
+            customer=user.stripe_customer_id,
+            type="card",
+            limit=1
+        )
+        if not payment_methods.data:
+            print(f"⛔ REFUS : Utilisateur {user.email} - Customer Stripe sans carte active")
+            DEBUG_LOGS.append(f"⛔ GATEKEEPER: {user.email} - Stripe customer sans carte valide")
+            session['pending_manual_litige'] = request.form.to_dict()
+            session['payment_message'] = "🔒 Votre carte n'est plus valide. Veuillez en enregistrer une nouvelle."
+            return redirect(url_for('setup_payment'))
+    except Exception as e:
+        DEBUG_LOGS.append(f"⚠️ Gatekeeper: Erreur vérification Stripe: {str(e)[:50]}")
+        # En cas d'erreur Stripe, on laisse passer (fail-open pour ne pas bloquer)
+    
+    DEBUG_LOGS.append(f"✅ GATEKEEPER: {user.email} autorisé - Carte valide ({user.stripe_customer_id})")
+    
+    # ════════════════════════════════════════════════════════════════
+    # TRAITEMENT DU FORMULAIRE (Seulement si carte validée)
+    # ════════════════════════════════════════════════════════════════
+    
     try:
         # Récupérer les données du formulaire
         company = request.form.get("company", "").strip()
@@ -3293,39 +3430,6 @@ def submit_litige():
                 <a href='/declare' class='btn-success'>Réessayer</a>
             </div>
             """ + FOOTER
-        
-        # ════════════════════════════════════════════════════════════════
-        # 🔒 GATEKEEPER STRIPE - Vérification du moyen de paiement
-        # ════════════════════════════════════════════════════════════════
-        
-        user = User.query.filter_by(email=session['email']).first()
-        
-        if not user:
-            return redirect("/login")
-        
-        # SCÉNARIO B : Nouveau client sans carte → Redirection Stripe
-        if not user.stripe_customer_id:
-            DEBUG_LOGS.append(f"🔒 Gatekeeper: Nouveau client {session['email']} - Redirection vers paiement")
-            
-            # Sauvegarder les données du formulaire en session
-            session['pending_manual_litige'] = {
-                'company': company,
-                'url_site': url_site,
-                'order_id': order_id,
-                'order_date_str': order_date_str,
-                'amount_str': amount_str,
-                'problem_type': problem_type,
-                'description': description,
-                'created_at': datetime.now().isoformat()
-            }
-            
-            # Stocker un message flash
-            session['payment_message'] = "🔒 Sécurisez votre moyen de paiement (0€ maintenant) pour lancer la procédure juridique."
-            
-            return redirect("/setup-payment")
-        
-        # SCÉNARIO A : Client existant avec carte → Continuer normalement
-        DEBUG_LOGS.append(f"🔒 Gatekeeper: Client existant {session['email']} - Carte OK ({user.stripe_customer_id})")
         
         # ════════════════════════════════════════════════════════════════
         # Suite du traitement normal (client authentifié avec carte)
