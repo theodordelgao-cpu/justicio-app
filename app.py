@@ -1136,7 +1136,13 @@ def find_merchant_email(url):
 
 def send_legal_notice(dossier, user):
     """
-    ⚖️ AGENT AVOCAT - Envoie une mise en demeure légale au marchand
+    ⚖️ AGENT AVOCAT V2 - Envoie une mise en demeure légale au marchand
+    
+    Améliorations V2 :
+    - Format HTML professionnel
+    - Header From avec nom (anti-spam)
+    - Nettoyage email destinataire
+    - Correction double €
     
     Args:
         dossier: Instance Litigation avec merchant_email rempli
@@ -1146,171 +1152,307 @@ def send_legal_notice(dossier, user):
         dict: {"success": bool, "message": str, "message_id": str|None}
     """
     
-    DEBUG_LOGS.append(f"⚖️ Agent Avocat: Préparation mise en demeure pour {dossier.company}")
+    DEBUG_LOGS.append(f"⚖️ Agent Avocat V2: Préparation mise en demeure pour {dossier.company}")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # FONCTIONS UTILITAIRES
+    # ═══════════════════════════════════════════════════════════════
+    
+    def clean_email(email):
+        """Nettoie une adresse email (enlève chevrons, espaces, etc.)"""
+        if not email:
+            return None
+        # Enlever les espaces
+        email = email.strip()
+        # Extraire l'email si format "Nom <email@domain.com>"
+        if '<' in email and '>' in email:
+            import re
+            match = re.search(r'<([^>]+)>', email)
+            if match:
+                email = match.group(1)
+        # Enlever les chevrons orphelins
+        email = email.replace('<', '').replace('>', '').strip()
+        return email if '@' in email else None
+    
+    def format_amount(amount_value):
+        """Formate le montant sans double €"""
+        if amount_value is None:
+            return "N/A"
+        # Convertir en string
+        amount_str = str(amount_value)
+        # Enlever les € existants
+        amount_str = amount_str.replace('€', '').replace('EUR', '').strip()
+        # Si c'est un nombre, formater proprement
+        try:
+            amount_num = float(amount_str.replace(',', '.'))
+            return f"{amount_num:.2f}"
+        except:
+            return amount_str
     
     # ═══════════════════════════════════════════════════════════════
     # VÉRIFICATIONS
     # ═══════════════════════════════════════════════════════════════
     
-    if not dossier.merchant_email:
-        DEBUG_LOGS.append("⚖️ ❌ Pas d'email marchand - Impossible d'envoyer")
-        return {"success": False, "message": "Email marchand non trouvé", "message_id": None}
+    # Nettoyer l'email destinataire
+    merchant_email_clean = clean_email(dossier.merchant_email)
+    
+    if not merchant_email_clean:
+        DEBUG_LOGS.append(f"⚖️ ❌ Email marchand invalide: {dossier.merchant_email}")
+        return {"success": False, "message": "Email marchand invalide", "message_id": None}
     
     if not user or not user.refresh_token:
         DEBUG_LOGS.append("⚖️ ❌ Utilisateur non authentifié")
         return {"success": False, "message": "Utilisateur non authentifié", "message_id": None}
     
     # ═══════════════════════════════════════════════════════════════
+    # PRÉPARATION DES DONNÉES
+    # ═══════════════════════════════════════════════════════════════
+    
+    company = dossier.company or "Vendeur"
+    order_ref = dossier.order_id or "N/A"
+    amount = format_amount(dossier.amount_float or dossier.amount)
+    problem_type = dossier.problem_type or "autre"
+    description = dossier.description or ""
+    user_name = user.name or user.email.split('@')[0].title()
+    user_email = user.email
+    
+    # Date du jour et deadline (8 jours)
+    from datetime import timedelta
+    today = datetime.now()
+    today_str = today.strftime("%d/%m/%Y")
+    deadline = (today + timedelta(days=8)).strftime("%d/%m/%Y")
+    
+    # ═══════════════════════════════════════════════════════════════
     # TEMPLATES JURIDIQUES PAR TYPE DE PROBLÈME
     # ═══════════════════════════════════════════════════════════════
     
-    # Informations du dossier
-    company = dossier.company or "Vendeur"
-    order_ref = dossier.order_id or "N/A"
-    amount = dossier.amount or dossier.amount_float or "N/A"
-    problem_type = dossier.problem_type or "autre"
-    description = dossier.description or ""
-    user_name = user.name or user.email.split('@')[0]
-    
-    # Date limite (8 jours)
-    from datetime import timedelta
-    deadline = (datetime.now() + timedelta(days=8)).strftime("%d/%m/%Y")
-    
-    # Templates selon le type de problème
     LEGAL_TEMPLATES = {
         "colis_non_recu": {
-            "emoji": "📦",
+            "titre": "MISE EN DEMEURE",
             "objet": f"MISE EN DEMEURE - Commande {order_ref} non reçue",
             "loi": "Article L.216-6 du Code de la consommation",
+            "article_detail": "L.216-6",
             "message": f"""La date de livraison contractuelle étant dépassée, et n'ayant toujours pas reçu ma commande malgré mes relances, je vous mets formellement en demeure de procéder :
-
-- Soit à la LIVRAISON EFFECTIVE de ma commande sous 8 jours,
-- Soit au REMBOURSEMENT INTÉGRAL de la somme de {amount}€.
-
-Conformément à l'article L.216-6 du Code de la consommation, à défaut de livraison dans ce délai, le contrat pourra être considéré comme résolu et je serai en droit de demander le remboursement intégral des sommes versées."""
+            <ul>
+                <li>Soit à la <strong>LIVRAISON EFFECTIVE</strong> de ma commande sous 8 jours,</li>
+                <li>Soit au <strong>REMBOURSEMENT INTÉGRAL</strong> de la somme de <strong>{amount} €</strong>.</li>
+            </ul>
+            <p>Conformément à l'article L.216-6 du Code de la consommation, à défaut de livraison dans ce délai, le contrat pourra être considéré comme résolu et je serai en droit de demander le remboursement intégral des sommes versées.</p>"""
         },
         
         "produit_defectueux": {
-            "emoji": "🔧",
+            "titre": "RÉCLAMATION - GARANTIE LÉGALE",
             "objet": f"RÉCLAMATION - Commande {order_ref} - Produit défectueux",
-            "loi": "Articles L.217-3 et suivants du Code de la consommation (Garantie Légale de Conformité)",
-            "message": f"""Le produit reçu présente un défaut de conformité le rendant impropre à l'usage auquel il est destiné.
-
-En vertu de la Garantie Légale de Conformité (Articles L.217-3 et suivants), je vous demande de procéder à votre choix :
-- À la RÉPARATION du produit,
-- Ou à son REMPLACEMENT par un produit conforme.
-
-Si ces solutions s'avèrent impossibles ou disproportionnées, je demande le REMBOURSEMENT INTÉGRAL conformément à l'article L.217-8."""
+            "loi": "Articles L.217-3 et suivants du Code de la consommation",
+            "article_detail": "L.217-3 à L.217-8",
+            "message": f"""Le produit reçu présente un <strong>défaut de conformité</strong> le rendant impropre à l'usage auquel il est destiné.
+            <p>En vertu de la <strong>Garantie Légale de Conformité</strong> (Articles L.217-3 et suivants), je vous demande de procéder à votre choix :</p>
+            <ul>
+                <li>À la <strong>RÉPARATION</strong> du produit,</li>
+                <li>Ou à son <strong>REMPLACEMENT</strong> par un produit conforme.</li>
+            </ul>
+            <p>Si ces solutions s'avèrent impossibles ou disproportionnées, je demande le <strong>REMBOURSEMENT INTÉGRAL</strong> conformément à l'article L.217-8.</p>"""
         },
         
         "non_conforme": {
-            "emoji": "❌",
+            "titre": "NON-CONFORMITÉ",
             "objet": f"NON-CONFORMITÉ - Commande {order_ref}",
             "loi": "Article L.217-4 du Code de la consommation",
-            "message": f"""Le produit reçu ne correspond pas aux caractéristiques présentées lors de la vente, constituant ainsi un défaut de conformité au sens de l'article L.217-4 du Code de la consommation.
-
-Je vous mets en demeure de remédier à cette non-conformité sous 8 jours par :
-- L'échange contre un produit CONFORME à la description,
-- Ou le REMBOURSEMENT INTÉGRAL de {amount}€.
-
-À défaut, je me réserve le droit de saisir les juridictions compétentes et la DGCCRF."""
+            "article_detail": "L.217-4",
+            "message": f"""Le produit reçu <strong>ne correspond pas aux caractéristiques présentées</strong> lors de la vente, constituant ainsi un défaut de conformité au sens de l'article L.217-4 du Code de la consommation.
+            <p>Je vous mets en demeure de remédier à cette non-conformité sous 8 jours par :</p>
+            <ul>
+                <li>L'échange contre un produit <strong>CONFORME</strong> à la description,</li>
+                <li>Ou le <strong>REMBOURSEMENT INTÉGRAL</strong> de <strong>{amount} €</strong>.</li>
+            </ul>
+            <p>À défaut, je me réserve le droit de saisir les juridictions compétentes et la DGCCRF.</p>"""
         },
         
         "retour_refuse": {
-            "emoji": "🚫",
+            "titre": "MISE EN DEMEURE - RÉTRACTATION",
             "objet": f"MISE EN DEMEURE - Commande {order_ref} - Refus de retour illégal",
-            "loi": "Article L.221-18 du Code de la consommation (Droit de Rétractation)",
-            "message": f"""Je vous rappelle que, conformément à l'article L.221-18 du Code de la consommation, je dispose d'un délai de 14 jours pour exercer mon droit de rétractation, sans avoir à justifier de motif ni à payer de pénalités.
-
-Votre refus de procéder au retour et au remboursement est donc ILLÉGAL.
-
-Je vous mets en demeure d'accepter ce retour et de procéder au remboursement de {amount}€ dans un délai de 8 jours, faute de quoi je saisirai la DGCCRF et les tribunaux compétents."""
+            "loi": "Article L.221-18 du Code de la consommation",
+            "article_detail": "L.221-18",
+            "message": f"""Je vous rappelle que, conformément à l'<strong>article L.221-18 du Code de la consommation</strong>, je dispose d'un délai de <strong>14 jours</strong> pour exercer mon droit de rétractation, sans avoir à justifier de motif ni à payer de pénalités.
+            <p>Votre refus de procéder au retour et au remboursement est donc <strong style="color:#b91c1c;">ILLÉGAL</strong>.</p>
+            <p>Je vous mets en demeure d'accepter ce retour et de procéder au remboursement de <strong>{amount} €</strong> dans un délai de 8 jours, faute de quoi je saisirai la DGCCRF et les tribunaux compétents.</p>"""
         },
         
         "contrefacon": {
-            "emoji": "⚠️",
+            "titre": "SIGNALEMENT - CONTREFAÇON",
             "objet": f"SIGNALEMENT URGENT - Commande {order_ref} - Suspicion de contrefaçon",
-            "loi": "Garantie Légale de Conformité + Code de la Propriété Intellectuelle (L.716-1)",
-            "message": f"""Le produit reçu présente toutes les caractéristiques d'une CONTREFAÇON (qualité inférieure, absence de marquages officiels, emballage non conforme).
-
-La vente de produits contrefaits constitue :
-- Un défaut de conformité (Code de la consommation),
-- Un délit pénal (Article L.716-1 du Code de la Propriété Intellectuelle).
-
-Je vous mets en demeure de procéder au REMBOURSEMENT INTÉGRAL de {amount}€ sous 8 jours.
-
-À défaut, je procéderai au signalement auprès de la DGCCRF et des services de douanes, et me réserve le droit de porter plainte."""
+            "loi": "Code de la Propriété Intellectuelle (L.716-1)",
+            "article_detail": "L.716-1 CPI",
+            "message": f"""Le produit reçu présente toutes les caractéristiques d'une <strong style="color:#b91c1c;">CONTREFAÇON</strong> (qualité inférieure, absence de marquages officiels, emballage non conforme).
+            <p>La vente de produits contrefaits constitue :</p>
+            <ul>
+                <li>Un <strong>défaut de conformité</strong> (Code de la consommation),</li>
+                <li>Un <strong>délit pénal</strong> (Article L.716-1 du Code de la Propriété Intellectuelle).</li>
+            </ul>
+            <p>Je vous mets en demeure de procéder au <strong>REMBOURSEMENT INTÉGRAL</strong> de <strong>{amount} €</strong> sous 8 jours.</p>
+            <p>À défaut, je procéderai au signalement auprès de la <strong>DGCCRF</strong> et des services de douanes, et me réserve le droit de porter plainte.</p>"""
         },
         
         "retard_livraison": {
-            "emoji": "⏰",
+            "titre": "RETARD DE LIVRAISON",
             "objet": f"RETARD DE LIVRAISON - Commande {order_ref}",
             "loi": "Article L.216-1 du Code de la consommation",
-            "message": f"""Les délais de livraison annoncés lors de ma commande ne sont pas respectés, en violation de l'article L.216-1 du Code de la consommation.
-
-Je vous mets en demeure de :
-- Procéder à la LIVRAISON IMMÉDIATE de ma commande,
-- Ou, si celle-ci n'est plus possible, de me REMBOURSER INTÉGRALEMENT.
-
-Conformément à l'article L.216-6, à défaut d'exécution dans un délai de 8 jours, le contrat sera résolu de plein droit."""
+            "article_detail": "L.216-1",
+            "message": f"""Les délais de livraison annoncés lors de ma commande <strong>ne sont pas respectés</strong>, en violation de l'article L.216-1 du Code de la consommation.
+            <p>Je vous mets en demeure de :</p>
+            <ul>
+                <li>Procéder à la <strong>LIVRAISON IMMÉDIATE</strong> de ma commande,</li>
+                <li>Ou, si celle-ci n'est plus possible, de me <strong>REMBOURSER INTÉGRALEMENT</strong>.</li>
+            </ul>
+            <p>Conformément à l'article L.216-6, à défaut d'exécution dans un délai de 8 jours, le contrat sera résolu de plein droit.</p>"""
         },
         
         "annulation_refusee": {
-            "emoji": "🔄",
+            "titre": "LITIGE - ANNULATION",
             "objet": f"LITIGE - Commande {order_ref} - Refus d'annulation illégal",
             "loi": "Articles L.221-18 et L.121-20 du Code de la consommation",
-            "message": f"""J'ai demandé l'annulation de ma commande conformément à mes droits de consommateur, demande que vous avez refusée de manière illégale.
-
-Conformément aux articles L.221-18 et L.121-20 du Code de la consommation applicables à la vente à distance, je dispose du droit d'annuler ma commande.
-
-Je vous mets en demeure d'accepter cette annulation et de procéder au remboursement de {amount}€ sous 8 jours."""
+            "article_detail": "L.221-18 / L.121-20",
+            "message": f"""J'ai demandé l'annulation de ma commande conformément à mes droits de consommateur, demande que vous avez refusée de manière <strong style="color:#b91c1c;">illégale</strong>.
+            <p>Conformément aux articles L.221-18 et L.121-20 du Code de la consommation applicables à la vente à distance, je dispose du droit d'annuler ma commande.</p>
+            <p>Je vous mets en demeure d'accepter cette annulation et de procéder au remboursement de <strong>{amount} €</strong> sous 8 jours.</p>"""
         },
         
         "autre": {
-            "emoji": "❓",
+            "titre": "RÉCLAMATION FORMELLE",
             "objet": f"RÉCLAMATION FORMELLE - Commande {order_ref}",
-            "loi": "Article 1103 du Code Civil (Force obligatoire des contrats)",
-            "message": f"""Je vous contacte concernant un problème rencontré avec ma commande, tel que décrit ci-dessous.
-
-Conformément à l'article 1103 du Code Civil, les contrats légalement formés tiennent lieu de loi à ceux qui les ont faits.
-
-Je vous mets en demeure de résoudre ce litige de manière amiable sous 8 jours, faute de quoi je me réserve le droit d'engager toute procédure judiciaire nécessaire."""
+            "loi": "Article 1103 du Code Civil",
+            "article_detail": "1103 C.Civ",
+            "message": f"""Je vous contacte concernant un <strong>problème rencontré avec ma commande</strong>, tel que décrit ci-dessous.
+            <p>Conformément à l'article 1103 du Code Civil, les contrats légalement formés tiennent lieu de loi à ceux qui les ont faits.</p>
+            <p>Je vous mets en demeure de résoudre ce litige de manière amiable sous 8 jours, faute de quoi je me réserve le droit d'engager toute procédure judiciaire nécessaire.</p>"""
         }
     }
     
-    # Sélectionner le template approprié
+    # Sélectionner le template
     template = LEGAL_TEMPLATES.get(problem_type, LEGAL_TEMPLATES["autre"])
     
     # ═══════════════════════════════════════════════════════════════
-    # CONSTRUCTION DU MESSAGE
+    # CONSTRUCTION DU MESSAGE HTML PROFESSIONNEL
     # ═══════════════════════════════════════════════════════════════
     
-    email_body = f"""Madame, Monsieur,
-
-{template['message']}
-
-{f"Description du problème : {description}" if description else ""}
-
-Cette mise en demeure vaut interpellation au sens de l'article 1344 du Code Civil.
-
-Sans réponse satisfaisante de votre part avant le {deadline}, je me réserve le droit de :
-- Saisir le Médiateur de la Consommation,
-- Signaler cette pratique à la DGCCRF,
-- Engager une procédure judiciaire devant le tribunal compétent.
-
-Dans l'attente d'une réponse rapide, je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.
-
-{user_name}
-Email : {user.email}
-
----
-📋 Références :
-• Numéro de commande : {order_ref}
-• Montant : {amount}€
-• Base légale : {template['loi']}
-
-Ce courrier constitue une mise en demeure au sens juridique du terme.
-Envoyé via Justicio.fr - Protection des droits des consommateurs
+    description_html = ""
+    if description:
+        description_html = f"""
+        <div style="background:#f8fafc; border-left:4px solid #64748b; padding:15px; margin:20px 0;">
+            <p style="margin:0; color:#475569; font-style:italic;"><strong>Description du problème :</strong><br>{description}</p>
+        </div>
+        """
+    
+    html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0; padding:0; font-family: Arial, Helvetica, sans-serif; background-color:#f3f4f6;">
+    <div style="max-width:650px; margin:0 auto; padding:20px;">
+        
+        <!-- EN-TÊTE MISE EN DEMEURE -->
+        <div style="background:linear-gradient(135deg, #1e293b 0%, #334155 100%); color:white; padding:25px; text-align:center; border-radius:10px 10px 0 0;">
+            <h1 style="margin:0; font-size:28px; letter-spacing:2px; color:#fbbf24;">⚖️ {template['titre']}</h1>
+            <p style="margin:10px 0 0 0; font-size:14px; color:#94a3b8;">Document à valeur juridique - Art. 1344 du Code Civil</p>
+        </div>
+        
+        <!-- CORPS DU MESSAGE -->
+        <div style="background:white; padding:30px; border-left:1px solid #e2e8f0; border-right:1px solid #e2e8f0;">
+            
+            <!-- Date et destinataire -->
+            <div style="text-align:right; color:#64748b; font-size:14px; margin-bottom:20px;">
+                <p style="margin:0;">Paris, le {today_str}</p>
+            </div>
+            
+            <div style="margin-bottom:25px;">
+                <p style="margin:0; color:#64748b; font-size:14px;">
+                    <strong>Destinataire :</strong> {company.upper()}<br>
+                    <strong>Email :</strong> {merchant_email_clean}
+                </p>
+            </div>
+            
+            <!-- Objet -->
+            <div style="background:#fef3c7; border-left:4px solid #f59e0b; padding:12px 15px; margin-bottom:25px;">
+                <p style="margin:0; font-weight:bold; color:#92400e;">
+                    📋 Objet : {template['objet']}
+                </p>
+            </div>
+            
+            <!-- Salutation -->
+            <p style="color:#1e293b; line-height:1.6;">Madame, Monsieur,</p>
+            
+            <!-- Contenu juridique -->
+            <div style="color:#1e293b; line-height:1.8; text-align:justify;">
+                {template['message']}
+            </div>
+            
+            <!-- Description utilisateur -->
+            {description_html}
+            
+            <!-- Avertissement légal -->
+            <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:20px; margin:25px 0;">
+                <p style="margin:0 0 10px 0; color:#991b1b; font-weight:bold;">⚠️ Cette mise en demeure vaut interpellation au sens de l'article 1344 du Code Civil.</p>
+                <p style="margin:0; color:#7f1d1d; font-size:14px;">
+                    Sans réponse satisfaisante de votre part avant le <strong>{deadline}</strong>, je me réserve le droit de :
+                </p>
+                <ul style="color:#7f1d1d; font-size:14px; margin:10px 0 0 0;">
+                    <li>Saisir le <strong>Médiateur de la Consommation</strong></li>
+                    <li>Signaler cette pratique à la <strong>DGCCRF</strong></li>
+                    <li>Engager une <strong>procédure judiciaire</strong> devant le tribunal compétent</li>
+                </ul>
+            </div>
+            
+            <!-- Formule de politesse -->
+            <p style="color:#1e293b; line-height:1.6; margin-top:25px;">
+                Dans l'attente d'une réponse rapide, je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.
+            </p>
+            
+            <!-- Signature -->
+            <div style="margin-top:30px; padding-top:20px; border-top:1px solid #e2e8f0;">
+                <p style="margin:0; font-weight:bold; color:#1e293b; font-size:16px;">{user_name}</p>
+                <p style="margin:5px 0 0 0; color:#64748b; font-size:14px;">Email : {user_email}</p>
+            </div>
+        </div>
+        
+        <!-- RÉCAPITULATIF -->
+        <div style="background:#f1f5f9; padding:20px; border-left:1px solid #e2e8f0; border-right:1px solid #e2e8f0;">
+            <table style="width:100%; font-size:14px; color:#475569;">
+                <tr>
+                    <td style="padding:5px 0;"><strong>📋 N° Commande :</strong></td>
+                    <td style="padding:5px 0; text-align:right;">{order_ref}</td>
+                </tr>
+                <tr>
+                    <td style="padding:5px 0;"><strong>💰 Montant :</strong></td>
+                    <td style="padding:5px 0; text-align:right; font-weight:bold; color:#059669;">{amount} €</td>
+                </tr>
+                <tr>
+                    <td style="padding:5px 0;"><strong>⚖️ Base légale :</strong></td>
+                    <td style="padding:5px 0; text-align:right;">{template['article_detail']}</td>
+                </tr>
+                <tr>
+                    <td style="padding:5px 0;"><strong>📅 Délai de réponse :</strong></td>
+                    <td style="padding:5px 0; text-align:right; color:#dc2626; font-weight:bold;">{deadline}</td>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- PIED DE PAGE -->
+        <div style="background:#1e293b; color:#94a3b8; padding:20px; text-align:center; border-radius:0 0 10px 10px; font-size:12px;">
+            <p style="margin:0 0 10px 0;">
+                <strong style="color:#fbbf24;">Justicio.fr</strong> - Protection des droits des consommateurs
+            </p>
+            <p style="margin:0; font-size:11px;">
+                Ce document constitue une mise en demeure au sens juridique du terme.<br>
+                Il a valeur probante en cas de procédure judiciaire ultérieure.
+            </p>
+        </div>
+        
+    </div>
+</body>
+</html>
 """
 
     # ═══════════════════════════════════════════════════════════════
@@ -1322,23 +1464,36 @@ Envoyé via Justicio.fr - Protection des droits des consommateurs
         creds = get_refreshed_credentials(user.refresh_token)
         service = build('gmail', 'v1', credentials=creds)
         
-        # Construire le message MIME
-        message = MIMEText(email_body, 'plain', 'utf-8')
-        message['to'] = dossier.merchant_email
-        message['cc'] = user.email  # Copie à l'utilisateur comme preuve
-        message['from'] = user.email
-        message['subject'] = f"{template['emoji']} {template['objet']}"
+        # Construire le message MIME en HTML
+        message = MIMEText(html_body, 'html', 'utf-8')
         
-        # Ajouter les headers pour le suivi
+        # Header TO : email propre
+        message['to'] = merchant_email_clean
+        
+        # Header CC : copie à l'utilisateur
+        message['cc'] = user_email
+        
+        # Header FROM : format professionnel (anti-spam)
+        from_name = f"{user_name} via Justicio"
+        message['from'] = f'"{from_name}" <{user_email}>'
+        
+        # Header SUBJECT
+        message['subject'] = f"⚖️ {template['objet']}"
+        
+        # Headers additionnels pour le suivi
         message['X-Justicio-Case-ID'] = str(dossier.id)
         message['X-Justicio-Type'] = 'legal-notice'
+        message['X-Priority'] = '1'  # Haute priorité
+        message['Importance'] = 'high'
         
         # Encoder en base64 URL-safe
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
         
-        # Envoyer
-        DEBUG_LOGS.append(f"⚖️ Envoi à {dossier.merchant_email} (CC: {user.email})")
+        # Log avant envoi
+        DEBUG_LOGS.append(f"⚖️ Envoi HTML à {merchant_email_clean} (CC: {user_email})")
+        DEBUG_LOGS.append(f"⚖️ From: \"{from_name}\" <{user_email}>")
         
+        # Envoyer
         result = service.users().messages().send(
             userId='me',
             body={'raw': raw_message}
@@ -1346,7 +1501,6 @@ Envoyé via Justicio.fr - Protection des droits des consommateurs
         
         # Vérifier le succès
         message_id = result.get('id')
-        labels = result.get('labelIds', [])
         
         if message_id:
             DEBUG_LOGS.append(f"⚖️ ✅ Mise en demeure envoyée! Message ID: {message_id}")
@@ -1355,21 +1509,21 @@ Envoyé via Justicio.fr - Protection des droits des consommateurs
             dossier.legal_notice_sent = True
             dossier.legal_notice_date = datetime.now()
             dossier.legal_notice_message_id = message_id
-            dossier.status = "En cours juridique"  # Statut bleu
+            dossier.status = "En cours juridique"
             db.session.commit()
             
             return {
                 "success": True,
-                "message": f"Mise en demeure envoyée à {dossier.merchant_email}",
+                "message": f"Mise en demeure envoyée à {merchant_email_clean}",
                 "message_id": message_id
             }
         else:
-            DEBUG_LOGS.append(f"⚖️ ❌ Envoi échoué - Pas de message_id retourné")
+            DEBUG_LOGS.append("⚖️ ❌ Envoi échoué - Pas de message_id retourné")
             return {"success": False, "message": "Envoi échoué - Pas de confirmation", "message_id": None}
             
     except Exception as e:
         error_msg = str(e)
-        DEBUG_LOGS.append(f"⚖️ ❌ Erreur envoi: {error_msg[:100]}")
+        DEBUG_LOGS.append(f"⚖️ ❌ Erreur envoi: {error_msg[:150]}")
         
         # Vérifier si c'est un problème de permissions
         if "insufficient" in error_msg.lower() or "scope" in error_msg.lower():
@@ -1379,7 +1533,7 @@ Envoyé via Justicio.fr - Protection des droits des consommateurs
                 "message_id": None
             }
         
-        return {"success": False, "message": f"Erreur: {error_msg[:50]}", "message_id": None}
+        return {"success": False, "message": f"Erreur: {error_msg[:80]}", "message_id": None}
 
 
 def extract_email_content(message_data):
@@ -3113,7 +3267,7 @@ def declare_litige():
     """ + FOOTER
 
 
-@app.route('/submit_litige', methods=['GET', 'POST'])
+@app.route("/submit_litige", methods=["POST"])
 def submit_litige():
     """Traite la soumission du formulaire de déclaration manuelle"""
     if "email" not in session:
@@ -4690,4 +4844,3 @@ def test_detective():
 
 if __name__ == "__main__":
     app.run(debug=False)
-
