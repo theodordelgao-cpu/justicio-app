@@ -275,6 +275,59 @@ with app.app_context():
 
 DEBUG_LOGS = []
 
+# ========================================
+# 🔐 CONFIGURATION ADMIN
+# ========================================
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "justicio2026")  # À changer en production
+
+# ========================================
+# 👁️ MIDDLEWARE LOGGER - Espion de trafic
+# ========================================
+
+@app.before_request
+def log_request():
+    """
+    👁️ LOGGER ESPION - Log chaque visite en temps réel
+    Format: 👁️ [IP: xxx.xxx.xxx.xxx] a visité [METHOD /url] à [HEURE]
+    
+    Visible dans les logs Render/Console
+    """
+    # Ignorer les fichiers statiques et les health checks
+    ignored_paths = ['/favicon.ico', '/static/', '/health', '/robots.txt']
+    if any(request.path.startswith(p) for p in ignored_paths):
+        return
+    
+    # Récupérer l'IP réelle (derrière proxy/Cloudflare)
+    ip = request.headers.get('CF-Connecting-IP') or \
+         request.headers.get('X-Real-IP') or \
+         request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or \
+         request.remote_addr or \
+         'Unknown'
+    
+    # Timestamp
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    # Méthode et URL
+    method = request.method
+    url = request.path
+    
+    # Query string si présent (sans les tokens sensibles)
+    if request.query_string:
+        qs = request.query_string.decode('utf-8', errors='ignore')
+        # Masquer les tokens sensibles
+        if 'token=' in qs:
+            qs = 'token=***'
+        url = f"{url}?{qs}"
+    
+    # Log formaté
+    log_line = f"👁️ [{timestamp}] [{ip}] {method} {url}"
+    print(log_line)
+    
+    # Stocker dans DEBUG_LOGS (garder les 100 derniers)
+    DEBUG_LOGS.append(log_line)
+    if len(DEBUG_LOGS) > 500:
+        DEBUG_LOGS.pop(0)
+
 @app.errorhandler(Exception)
 def handle_exception(e):
     error_trace = traceback.format_exc()
@@ -5443,6 +5496,242 @@ def show_debug_logs():
         return "<h1>Aucun log</h1><a href='/'>Retour</a>"
     
     return STYLE + "<h1>🕵️ Logs Debug</h1>" + "<br>".join(reversed(DEBUG_LOGS[-50:])) + "<br><br><a href='/' class='btn-logout'>Retour</a>"
+
+# ========================================
+# 🔐 ESPACE ADMINISTRATEUR
+# ========================================
+
+@app.route("/admin_panel", methods=["GET", "POST"])
+def admin_panel():
+    """
+    🔐 DASHBOARD ADMIN - Vision globale de l'activité
+    
+    Fonctionnalités :
+    - KPIs : Utilisateurs, Litiges, Commissions
+    - Activité récente : 10 derniers litiges
+    - Actions : Lancer le Cron manuellement
+    - Logs de trafic en temps réel
+    """
+    
+    # ════════════════════════════════════════════════════════════════
+    # AUTHENTIFICATION ADMIN
+    # ════════════════════════════════════════════════════════════════
+    
+    # Vérifier si déjà authentifié
+    if session.get('admin_authenticated') != True:
+        # Vérifier le mot de passe soumis
+        if request.method == "POST":
+            password = request.form.get("password", "")
+            if password == ADMIN_PASSWORD:
+                session['admin_authenticated'] = True
+            else:
+                return STYLE + """
+                <div style='max-width:400px; margin:100px auto; text-align:center;'>
+                    <h1>🔐 Accès Refusé</h1>
+                    <p style='color:#dc2626;'>Mot de passe incorrect.</p>
+                    <a href='/admin_panel' class='btn-success'>Réessayer</a>
+                </div>
+                """ + FOOTER
+        else:
+            # Afficher le formulaire de connexion
+            return STYLE + """
+            <div style='max-width:400px; margin:100px auto;'>
+                <div style='background:white; padding:30px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1);'>
+                    <h1 style='text-align:center; margin-bottom:25px;'>🔐 Admin Panel</h1>
+                    <form method='POST'>
+                        <label style='display:block; margin-bottom:8px; font-weight:600;'>Mot de passe :</label>
+                        <input type='password' name='password' required autofocus
+                               style='width:100%; padding:12px; border:2px solid #e2e8f0; border-radius:8px; 
+                                      margin-bottom:20px; box-sizing:border-box;'>
+                        <button type='submit' class='btn-success' style='width:100%; padding:15px;'>
+                            🔓 Accéder
+                        </button>
+                    </form>
+                </div>
+            </div>
+            """ + FOOTER
+    
+    # ════════════════════════════════════════════════════════════════
+    # CALCUL DES KPIs
+    # ════════════════════════════════════════════════════════════════
+    
+    # Nombre total d'utilisateurs
+    total_users = User.query.count()
+    users_with_card = User.query.filter(User.stripe_customer_id != None).count()
+    
+    # Nombre total de litiges
+    total_cases = Litigation.query.count()
+    cases_by_status = {}
+    for status in ["En attente de remboursement", "En cours juridique", "Remboursé", "En attente d'analyse", "Détecté"]:
+        count = Litigation.query.filter(Litigation.status == status).count()
+        if count > 0:
+            cases_by_status[status] = count
+    
+    # Litiges remboursés (pour calculer les commissions)
+    refunded_cases = Litigation.query.filter(
+        Litigation.status.in_(["Remboursé", "Remboursé (Partiel)"])
+    ).all()
+    
+    # Calcul des commissions (25% du montant)
+    total_refunded = 0
+    total_commission = 0
+    for case in refunded_cases:
+        try:
+            amount = extract_numeric_amount(case.amount)
+            total_refunded += amount
+            total_commission += amount * 0.25
+        except:
+            pass
+    
+    # Litiges remboursés partiels
+    partial_count = Litigation.query.filter(Litigation.status.like("Remboursé (Partiel:%")).count()
+    voucher_count = Litigation.query.filter(Litigation.status.like("Résolu (Bon d'achat:%")).count()
+    
+    # ════════════════════════════════════════════════════════════════
+    # 10 DERNIERS LITIGES
+    # ════════════════════════════════════════════════════════════════
+    
+    recent_cases = Litigation.query.order_by(Litigation.created_at.desc()).limit(10).all()
+    
+    recent_html = ""
+    for case in recent_cases:
+        # Couleur selon statut
+        if case.status == "Remboursé" or case.status.startswith("Remboursé"):
+            color = "#10b981"
+        elif case.status == "En cours juridique":
+            color = "#3b82f6"
+        elif "En attente" in case.status:
+            color = "#f59e0b"
+        else:
+            color = "#94a3b8"
+        
+        date_str = case.created_at.strftime("%d/%m %H:%M") if case.created_at else "N/A"
+        
+        recent_html += f"""
+        <tr style='border-bottom:1px solid #e2e8f0;'>
+            <td style='padding:10px; font-size:0.85rem;'>{date_str}</td>
+            <td style='padding:10px; font-size:0.85rem;'>{case.user_email[:20]}...</td>
+            <td style='padding:10px; font-weight:600;'>{case.company[:15].upper()}</td>
+            <td style='padding:10px; font-weight:bold; color:#059669;'>{case.amount}</td>
+            <td style='padding:10px;'>
+                <span style='background:{color}20; color:{color}; padding:3px 8px; border-radius:5px; font-size:0.75rem;'>
+                    {case.status[:20]}
+                </span>
+            </td>
+        </tr>
+        """
+    
+    # ════════════════════════════════════════════════════════════════
+    # LOGS RÉCENTS (Trafic)
+    # ════════════════════════════════════════════════════════════════
+    
+    traffic_logs = "<br>".join(DEBUG_LOGS[-20:][::-1]) if DEBUG_LOGS else "<p style='color:#94a3b8;'>Aucun log</p>"
+    
+    # ════════════════════════════════════════════════════════════════
+    # RENDU HTML
+    # ════════════════════════════════════════════════════════════════
+    
+    return STYLE + f"""
+    <div style='max-width:900px; margin:0 auto; padding:20px;'>
+        <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;'>
+            <h1 style='margin:0;'>🔐 Admin Panel</h1>
+            <a href='/admin_logout' style='color:#dc2626; font-size:0.9rem;'>🚪 Déconnexion</a>
+        </div>
+        
+        <!-- KPIs -->
+        <div style='display:grid; grid-template-columns: repeat(4, 1fr); gap:15px; margin-bottom:25px;'>
+            <div style='background:linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); padding:20px; border-radius:15px; text-align:center;'>
+                <div style='font-size:2rem; font-weight:bold; color:#1e40af;'>{total_users}</div>
+                <div style='color:#3730a3; font-size:0.9rem;'>👥 Utilisateurs</div>
+                <div style='color:#6366f1; font-size:0.75rem;'>{users_with_card} avec carte</div>
+            </div>
+            <div style='background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding:20px; border-radius:15px; text-align:center;'>
+                <div style='font-size:2rem; font-weight:bold; color:#92400e;'>{total_cases}</div>
+                <div style='color:#b45309; font-size:0.9rem;'>📂 Litiges</div>
+                <div style='color:#d97706; font-size:0.75rem;'>{len(refunded_cases)} remboursés</div>
+            </div>
+            <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); padding:20px; border-radius:15px; text-align:center;'>
+                <div style='font-size:2rem; font-weight:bold; color:#065f46;'>{total_refunded:.0f}€</div>
+                <div style='color:#047857; font-size:0.9rem;'>💰 Récupéré</div>
+                <div style='color:#10b981; font-size:0.75rem;'>pour les clients</div>
+            </div>
+            <div style='background:linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%); padding:20px; border-radius:15px; text-align:center;'>
+                <div style='font-size:2rem; font-weight:bold; color:#9d174d;'>{total_commission:.0f}€</div>
+                <div style='color:#be185d; font-size:0.9rem;'>💎 Commissions</div>
+                <div style='color:#ec4899; font-size:0.75rem;'>25% encaissé</div>
+            </div>
+        </div>
+        
+        <!-- Statuts détaillés -->
+        <div style='background:white; padding:20px; border-radius:15px; margin-bottom:25px; box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
+            <h3 style='margin-top:0;'>📊 Répartition par Statut</h3>
+            <div style='display:flex; flex-wrap:wrap; gap:10px;'>
+                {"".join([f"<span style='background:#f1f5f9; padding:5px 12px; border-radius:8px; font-size:0.85rem;'>{status}: <b>{count}</b></span>" for status, count in cases_by_status.items()])}
+                <span style='background:#fef3c7; padding:5px 12px; border-radius:8px; font-size:0.85rem;'>Partiels: <b>{partial_count}</b></span>
+                <span style='background:#dbeafe; padding:5px 12px; border-radius:8px; font-size:0.85rem;'>Bons d'achat: <b>{voucher_count}</b></span>
+            </div>
+        </div>
+        
+        <!-- Actions rapides -->
+        <div style='background:white; padding:20px; border-radius:15px; margin-bottom:25px; box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
+            <h3 style='margin-top:0;'>⚡ Actions Rapides</h3>
+            <div style='display:flex; gap:10px; flex-wrap:wrap;'>
+                <a href='/check-refunds?token={SCAN_TOKEN or ""}' target='_blank' class='btn-success' style='padding:10px 20px;'>
+                    💰 Lancer le Cron (Encaisseur)
+                </a>
+                <a href='/debug-logs' target='_blank' class='btn-success' style='background:#6366f1; padding:10px 20px;'>
+                    🕵️ Voir tous les logs
+                </a>
+                <a href='/verif-user' target='_blank' class='btn-success' style='background:#8b5cf6; padding:10px 20px;'>
+                    👥 Vérifier utilisateurs
+                </a>
+                <a href='/test-detective' target='_blank' class='btn-success' style='background:#0ea5e9; padding:10px 20px;'>
+                    🔍 Test Détective
+                </a>
+            </div>
+        </div>
+        
+        <!-- 10 derniers litiges -->
+        <div style='background:white; padding:20px; border-radius:15px; margin-bottom:25px; box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
+            <h3 style='margin-top:0;'>📋 10 Derniers Litiges</h3>
+            <div style='overflow-x:auto;'>
+                <table style='width:100%; border-collapse:collapse;'>
+                    <thead>
+                        <tr style='background:#f8fafc; border-bottom:2px solid #e2e8f0;'>
+                            <th style='padding:10px; text-align:left; font-size:0.85rem;'>Date</th>
+                            <th style='padding:10px; text-align:left; font-size:0.85rem;'>Client</th>
+                            <th style='padding:10px; text-align:left; font-size:0.85rem;'>Entreprise</th>
+                            <th style='padding:10px; text-align:left; font-size:0.85rem;'>Montant</th>
+                            <th style='padding:10px; text-align:left; font-size:0.85rem;'>Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {recent_html or "<tr><td colspan='5' style='padding:20px; text-align:center; color:#94a3b8;'>Aucun litige</td></tr>"}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Logs trafic -->
+        <div style='background:#1e293b; padding:20px; border-radius:15px; margin-bottom:25px;'>
+            <h3 style='margin-top:0; color:white;'>👁️ Trafic en Temps Réel (20 derniers)</h3>
+            <div style='font-family:monospace; font-size:0.8rem; color:#94a3b8; max-height:300px; overflow-y:auto;'>
+                {traffic_logs}
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div style='text-align:center; color:#94a3b8; font-size:0.85rem;'>
+            <p>Justicio Admin Panel v1.0 | {datetime.now().strftime("%d/%m/%Y %H:%M")}</p>
+        </div>
+    </div>
+    """ + FOOTER
+
+@app.route("/admin_logout")
+def admin_logout():
+    """Déconnexion de l'admin panel"""
+    session.pop('admin_authenticated', None)
+    return redirect("/admin_panel")
 
 @app.route("/verif-user")
 def verif_user():
