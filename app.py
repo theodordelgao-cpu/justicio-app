@@ -1227,7 +1227,7 @@ def send_legal_notice(dossier, user):
     # ═══════════════════════════════════════════════════════════════
     
     LEGAL_TEMPLATES = {
-        "colis_non_recu": {
+        "non_recu": {
             "titre": "MISE EN DEMEURE",
             "objet": f"MISE EN DEMEURE - Commande {order_ref} non reçue",
             "loi": "Article L.216-6 du Code de la consommation",
@@ -1240,7 +1240,7 @@ def send_legal_notice(dossier, user):
             <p>Conformément à l'article L.216-6 du Code de la consommation, à défaut de livraison dans ce délai, le contrat pourra être considéré comme résolu et je serai en droit de demander le remboursement intégral des sommes versées.</p>"""
         },
         
-        "produit_defectueux": {
+        "defectueux": {
             "titre": "RÉCLAMATION - GARANTIE LÉGALE",
             "objet": f"RÉCLAMATION - Commande {order_ref} - Produit défectueux",
             "loi": "Articles L.217-3 et suivants du Code de la consommation",
@@ -1293,7 +1293,7 @@ def send_legal_notice(dossier, user):
             <p>À défaut, je procéderai au signalement auprès de la <strong>DGCCRF</strong> et des services de douanes, et me réserve le droit de porter plainte.</p>"""
         },
         
-        "retard_livraison": {
+        "retard": {
             "titre": "RETARD DE LIVRAISON",
             "objet": f"RETARD DE LIVRAISON - Commande {order_ref}",
             "loi": "Article L.216-1 du Code de la consommation",
@@ -3294,6 +3294,43 @@ def submit_litige():
             </div>
             """ + FOOTER
         
+        # ════════════════════════════════════════════════════════════════
+        # 🔒 GATEKEEPER STRIPE - Vérification du moyen de paiement
+        # ════════════════════════════════════════════════════════════════
+        
+        user = User.query.filter_by(email=session['email']).first()
+        
+        if not user:
+            return redirect("/login")
+        
+        # SCÉNARIO B : Nouveau client sans carte → Redirection Stripe
+        if not user.stripe_customer_id:
+            DEBUG_LOGS.append(f"🔒 Gatekeeper: Nouveau client {session['email']} - Redirection vers paiement")
+            
+            # Sauvegarder les données du formulaire en session
+            session['pending_manual_litige'] = {
+                'company': company,
+                'url_site': url_site,
+                'order_id': order_id,
+                'order_date_str': order_date_str,
+                'amount_str': amount_str,
+                'problem_type': problem_type,
+                'description': description,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            # Stocker un message flash
+            session['payment_message'] = "🔒 Sécurisez votre moyen de paiement (0€ maintenant) pour lancer la procédure juridique."
+            
+            return redirect("/setup-payment")
+        
+        # SCÉNARIO A : Client existant avec carte → Continuer normalement
+        DEBUG_LOGS.append(f"🔒 Gatekeeper: Client existant {session['email']} - Carte OK ({user.stripe_customer_id})")
+        
+        # ════════════════════════════════════════════════════════════════
+        # Suite du traitement normal (client authentifié avec carte)
+        # ════════════════════════════════════════════════════════════════
+        
         # Parser la date
         order_date = None
         if order_date_str:
@@ -3709,7 +3746,7 @@ def callback():
 
 @app.route("/setup-payment")
 def setup_payment():
-    """Configure le paiement Stripe"""
+    """Configure le paiement Stripe - Gatekeeper pour les nouvelles déclarations"""
     if "email" not in session:
         return redirect("/login")
     
@@ -3724,18 +3761,72 @@ def setup_payment():
             user.stripe_customer_id = customer.id
             db.session.commit()
         
+        # Récupérer le message flash si présent
+        payment_message = session.pop('payment_message', None)
+        is_manual_flow = 'pending_manual_litige' in session
+        
+        # Créer la session Stripe
         session_stripe = stripe.checkout.Session.create(
             customer=user.stripe_customer_id,
             payment_method_types=['card'],
             mode='setup',
             success_url=url_for('success_page', _external=True).replace("http://", "https://"),
-            cancel_url=url_for('index', _external=True).replace("http://", "https://")
+            cancel_url=url_for('declare', _external=True).replace("http://", "https://") if is_manual_flow else url_for('index', _external=True).replace("http://", "https://")
         )
+        
+        # Si c'est le flux manuel, afficher une page intermédiaire avec message
+        if payment_message or is_manual_flow:
+            company = session.get('pending_manual_litige', {}).get('company', 'votre litige')
+            return STYLE + f"""
+            <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
+                <div style='background:linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); 
+                            padding:30px; border-radius:20px; margin-bottom:25px;
+                            border-left:5px solid #3b82f6;'>
+                    <div style='font-size:3rem; margin-bottom:15px;'>🔒</div>
+                    <h2 style='color:#1e40af; margin:0 0 15px 0;'>Sécurisez votre compte</h2>
+                    <p style='color:#3730a3; margin:0;'>
+                        {payment_message or "Enregistrez un moyen de paiement pour activer votre protection juridique."}
+                    </p>
+                </div>
+                
+                <div style='background:white; padding:25px; border-radius:15px; text-align:left;
+                            box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
+                    <h4 style='margin-top:0; color:#1e293b;'>📋 Récapitulatif</h4>
+                    <p style='color:#64748b;'><b>Dossier en attente :</b> {company.upper()}</p>
+                    <p style='color:#64748b; margin-bottom:0;'><b>Montant prélevé maintenant :</b> <span style='color:#059669; font-weight:bold;'>0€</span></p>
+                </div>
+                
+                <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:25px;
+                            border-left:4px solid #f59e0b;'>
+                    <p style='margin:0; color:#92400e; font-size:0.9rem;'>
+                        <b>💳 Commission :</b> 25% uniquement en cas de remboursement obtenu.<br>
+                        <span style='font-size:0.85rem;'>Aucun frais si nous n'obtenons pas satisfaction.</span>
+                    </p>
+                </div>
+                
+                <a href='{session_stripe.url}' class='btn-success' style='display:inline-block; padding:15px 40px; font-size:1.1rem;'>
+                    💳 Enregistrer ma carte (0€)
+                </a>
+                
+                <div style='margin-top:20px;'>
+                    <a href='/declare' style='color:#64748b; font-size:0.9rem;'>← Annuler et revenir au formulaire</a>
+                </div>
+            </div>
+            """ + FOOTER
         
         return redirect(session_stripe.url, code=303)
     
     except Exception as e:
-        return f"Erreur Stripe: {e}<br><a href='/'>Retour</a>"
+        DEBUG_LOGS.append(f"❌ Erreur Stripe setup-payment: {str(e)}")
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Erreur de paiement</h1>
+            <p>Une erreur est survenue lors de la configuration du paiement.</p>
+            <p style='color:#dc2626; font-size:0.9rem;'>{str(e)[:100]}</p>
+            <br>
+            <a href='/' class='btn-success'>Retour à l'accueil</a>
+        </div>
+        """ + FOOTER
 
 @app.route("/success")
 def success_page():
@@ -3747,16 +3838,255 @@ def success_page():
     if not user or not user.refresh_token:
         return "Erreur : utilisateur non trouvé ou pas de refresh token"
     
+    # ════════════════════════════════════════════════════════════════
+    # 🔄 CALLBACK FLUX MANUEL - Traitement d'un litige en attente
+    # ════════════════════════════════════════════════════════════════
+    
+    pending_litige = session.get('pending_manual_litige')
+    
+    if pending_litige:
+        DEBUG_LOGS.append(f"🔄 Callback: Traitement du litige manuel en attente pour {pending_litige.get('company')}")
+        
+        try:
+            # Récupérer les données sauvegardées
+            company = pending_litige.get('company', '')
+            url_site = pending_litige.get('url_site', '')
+            order_id = pending_litige.get('order_id', '')
+            order_date_str = pending_litige.get('order_date_str', '')
+            amount_str = pending_litige.get('amount_str', '0')
+            problem_type = pending_litige.get('problem_type', '')
+            description = pending_litige.get('description', '')
+            
+            # Parser la date
+            order_date = None
+            if order_date_str:
+                try:
+                    order_date = datetime.strptime(order_date_str, "%Y-%m-%d").date()
+                except:
+                    pass
+            
+            # Parser le montant
+            try:
+                amount_float = float(amount_str.replace(",", "."))
+            except:
+                amount_float = 0
+            
+            # Déterminer la loi applicable
+            problem_to_law = {
+                "non_recu": "Article L.216-6 du Code de la consommation",
+                "defectueux": "Articles L.217-3 et suivants (Garantie légale)",
+                "non_conforme": "Article L.217-4 du Code de la consommation",
+                "retour_refuse": "Article L.221-18 (Droit de rétractation)",
+                "contrefacon": "Code de la Propriété Intellectuelle (L.716-1)",
+                "retard": "Article L.216-1 du Code de la consommation",
+                "annulation_refusee": "Articles L.221-18 et L.121-20",
+                "autre": "Article 1103 du Code Civil"
+            }
+            law = problem_to_law.get(problem_type, "le Code de la consommation")
+            
+            # Créer le résumé
+            problem_labels = {p[0]: p[1] for p in PROBLEM_TYPES}
+            problem_label = problem_labels.get(problem_type, "Litige")
+            subject = f"{problem_label} - {description[:100]}..."
+            
+            # Créer l'entrée en base de données
+            new_case = Litigation(
+                user_email=session['email'],
+                company=company.lower().strip(),
+                amount=f"{amount_float:.2f}€",
+                amount_float=amount_float,
+                law=law,
+                subject=subject,
+                source="MANUAL",
+                url_site=url_site,
+                order_id=order_id,
+                order_date=order_date,
+                problem_type=problem_type,
+                description=description,
+                status="En attente d'analyse"
+            )
+            
+            db.session.add(new_case)
+            db.session.commit()
+            
+            DEBUG_LOGS.append(f"✅ Callback: Dossier #{new_case.id} créé pour {company}")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 🕵️ AGENT DÉTECTIVE
+            # ═══════════════════════════════════════════════════════════════
+            
+            merchant_result = {"email": None, "source": None}
+            detective_status = "non_lance"
+            
+            if url_site:
+                DEBUG_LOGS.append(f"🕵️ Callback: Lancement Agent Détective pour {url_site}")
+                merchant_result = find_merchant_email(url_site)
+                
+                if merchant_result["email"]:
+                    new_case.merchant_email = merchant_result["email"]
+                    new_case.merchant_email_source = merchant_result["source"]
+                    db.session.commit()
+                    detective_status = "succes"
+                    DEBUG_LOGS.append(f"🕵️ Callback: ✅ Email trouvé: {merchant_result['email']}")
+                else:
+                    detective_status = "echec"
+                    DEBUG_LOGS.append("🕵️ Callback: ❌ Aucun email trouvé")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # ⚖️ AGENT AVOCAT
+            # ═══════════════════════════════════════════════════════════════
+            
+            legal_notice_result = {"success": False, "message": "Non lancé"}
+            
+            if merchant_result["email"]:
+                DEBUG_LOGS.append(f"⚖️ Callback: Lancement Agent Avocat")
+                legal_notice_result = send_legal_notice(new_case, user)
+                
+                if legal_notice_result["success"]:
+                    DEBUG_LOGS.append("⚖️ Callback: ✅ Mise en demeure envoyée!")
+                else:
+                    DEBUG_LOGS.append(f"⚖️ Callback: ❌ {legal_notice_result['message']}")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 📱 NOTIFICATION TELEGRAM
+            # ═══════════════════════════════════════════════════════════════
+            
+            detective_notif = ""
+            if merchant_result["email"]:
+                detective_notif = f"\n\n🕵️ EMAIL: {merchant_result['email']}"
+                if legal_notice_result["success"]:
+                    detective_notif += "\n⚖️ MISE EN DEMEURE ENVOYÉE ✅"
+            else:
+                detective_notif = "\n\n🕵️ Email non trouvé"
+            
+            send_telegram_notif(f"📝 LITIGE MANUEL (post-paiement) 📝\n\n🏪 {company.upper()}\n💰 {amount_float:.2f}€\n📋 N° {order_id}\n⚠️ {problem_label}\n👤 {session['email']}{detective_notif}")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 🧹 NETTOYER LA SESSION
+            # ═══════════════════════════════════════════════════════════════
+            
+            session.pop('pending_manual_litige', None)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # 🎉 PAGE DE SUCCÈS
+            # ═══════════════════════════════════════════════════════════════
+            
+            # Préparer les badges
+            detective_html = ""
+            if detective_status == "succes":
+                detective_html = f"""
+                <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                            padding:15px; border-radius:10px; margin-bottom:15px;
+                            border-left:4px solid #10b981;'>
+                    <p style='margin:0; color:#065f46;'>
+                        <b>🕵️ Agent Détective :</b> Email trouvé !<br>
+                        <span style='font-family:monospace; background:#ecfdf5; padding:3px 8px; border-radius:4px;'>
+                            {merchant_result['email']}
+                        </span>
+                    </p>
+                </div>
+                """
+            elif detective_status == "echec":
+                detective_html = """
+                <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:15px;
+                            border-left:4px solid #f59e0b;'>
+                    <p style='margin:0; color:#92400e; font-size:0.9rem;'>
+                        <b>🕵️ Agent Détective :</b> Aucun email trouvé automatiquement.
+                    </p>
+                </div>
+                """
+            
+            legal_html = ""
+            if legal_notice_result["success"]:
+                legal_html = f"""
+                <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                            padding:15px; border-radius:10px; margin-bottom:15px;
+                            border-left:4px solid #10b981;'>
+                    <p style='margin:0; color:#065f46;'>
+                        <b>⚖️ Agent Avocat :</b> Mise en demeure ENVOYÉE !<br>
+                        <span style='font-size:0.85rem;'>Copie dans votre boîte mail</span>
+                    </p>
+                </div>
+                """
+            
+            # Titre dynamique
+            if legal_notice_result["success"]:
+                success_icon = "✅"
+                success_title = "Mise en demeure envoyée !"
+                success_subtitle = "Le marchand a reçu votre réclamation officielle."
+            elif merchant_result["email"]:
+                success_icon = "⚡"
+                success_title = "Procédure lancée !"
+                success_subtitle = "L'envoi est en préparation."
+            else:
+                success_icon = "📋"
+                success_title = "Dossier créé !"
+                success_subtitle = "Nous recherchons le contact du marchand."
+            
+            return STYLE + f"""
+            <div style='max-width:500px; margin:0 auto; text-align:center; padding:30px;'>
+                <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                            padding:30px; border-radius:20px; margin-bottom:25px;'>
+                    <div style='font-size:4rem; margin-bottom:15px;'>{success_icon}</div>
+                    <h1 style='color:#065f46; margin:0 0 10px 0;'>{success_title}</h1>
+                    <p style='color:#047857; margin:0;'>{success_subtitle}</p>
+                </div>
+                
+                <div style='background:#ecfdf5; padding:15px; border-radius:10px; margin-bottom:20px;
+                            border-left:4px solid #10b981;'>
+                    <p style='margin:0; color:#065f46; font-size:0.9rem;'>
+                        <b>💳 Paiement sécurisé !</b><br>
+                        Votre carte est enregistrée. Commission uniquement sur résultat.
+                    </p>
+                </div>
+                
+                {detective_html}
+                {legal_html}
+                
+                <div style='background:white; padding:25px; border-radius:15px; text-align:left;
+                            box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:25px;'>
+                    <h3 style='margin-top:0; color:#1e293b;'>📋 Récapitulatif</h3>
+                    <p><b>🏪 Entreprise :</b> {company.upper()}</p>
+                    <p><b>💰 Montant :</b> {amount_float:.2f}€</p>
+                    <p><b>📋 N° Commande :</b> {order_id}</p>
+                    <p><b>⚖️ Base légale :</b> {law}</p>
+                    <p><b>📊 Statut :</b> <span style='background:#3b82f6; color:white; padding:3px 8px; border-radius:5px;'>{new_case.status}</span></p>
+                </div>
+                
+                <a href='/dashboard' class='btn-success' style='display:inline-block; padding:15px 30px;'>
+                    📂 Suivre mon dossier
+                </a>
+            </div>
+            """ + FOOTER
+            
+        except Exception as e:
+            DEBUG_LOGS.append(f"❌ Callback: Erreur traitement litige manuel: {str(e)}")
+            session.pop('pending_manual_litige', None)
+            return STYLE + f"""
+            <div style='text-align:center; padding:50px;'>
+                <h1>❌ Erreur</h1>
+                <p>Une erreur est survenue lors du traitement de votre dossier.</p>
+                <p style='color:#dc2626; font-size:0.9rem;'>{str(e)[:100]}</p>
+                <br>
+                <a href='/declare' class='btn-success'>Réessayer</a>
+            </div>
+            """ + FOOTER
+    
+    # ════════════════════════════════════════════════════════════════
+    # FLUX NORMAL - Traitement des litiges SCAN
+    # ════════════════════════════════════════════════════════════════
+    
     # Récupérer les litiges détectés depuis la session
     detected_litigations = session.get('detected_litigations', [])
     
     if not detected_litigations:
         return STYLE + """
         <div style='text-align:center; padding:50px;'>
-            <h1>⚠️ Aucun litige à traiter</h1>
-            <p>Veuillez d'abord scanner votre boîte mail.</p>
+            <h1>✅ Paiement enregistré</h1>
+            <p>Votre carte a été enregistrée avec succès.</p>
             <br>
-            <a href='/scan' class='btn-success'>🔍 SCANNER</a>
+            <a href='/dashboard' class='btn-success' style='margin-right:10px;'>📂 Mes dossiers</a>
+            <a href='/declare' class='btn-success' style='background:#10b981;'>✍️ Déclarer un litige</a>
         </div>
         """ + FOOTER
     
