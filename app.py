@@ -5618,6 +5618,12 @@ def admin_panel():
                     {case.status[:20]}
                 </span>
             </td>
+            <td style='padding:10px;'>
+                <a href='/admin/case/{case.id}' style='background:#8b5cf6; color:white; padding:5px 10px; 
+                   border-radius:5px; font-size:0.75rem; text-decoration:none;'>
+                    ⚡ Gérer
+                </a>
+            </td>
         </tr>
         """
     
@@ -5676,7 +5682,7 @@ def admin_panel():
         <div style='background:white; padding:20px; border-radius:15px; margin-bottom:25px; box-shadow:0 2px 10px rgba(0,0,0,0.05);'>
             <h3 style='margin-top:0;'>⚡ Actions Rapides</h3>
             <div style='display:flex; gap:10px; flex-wrap:wrap;'>
-                <a href='/check-refunds?token={SCAN_TOKEN or ""}' target='_blank' class='btn-success' style='padding:10px 20px;'>
+                <a href='/cron/check-refunds?token={SCAN_TOKEN or ""}' target='_blank' class='btn-success' style='padding:10px 20px;'>
                     💰 Lancer le Cron (Encaisseur)
                 </a>
                 <a href='/debug-logs' target='_blank' class='btn-success' style='background:#6366f1; padding:10px 20px;'>
@@ -5703,10 +5709,11 @@ def admin_panel():
                             <th style='padding:10px; text-align:left; font-size:0.85rem;'>Entreprise</th>
                             <th style='padding:10px; text-align:left; font-size:0.85rem;'>Montant</th>
                             <th style='padding:10px; text-align:left; font-size:0.85rem;'>Statut</th>
+                            <th style='padding:10px; text-align:left; font-size:0.85rem;'>Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {recent_html or "<tr><td colspan='5' style='padding:20px; text-align:center; color:#94a3b8;'>Aucun litige</td></tr>"}
+                        {recent_html or "<tr><td colspan='6' style='padding:20px; text-align:center; color:#94a3b8;'>Aucun litige</td></tr>"}
                     </tbody>
                 </table>
             </div>
@@ -5732,6 +5739,306 @@ def admin_logout():
     """Déconnexion de l'admin panel"""
     session.pop('admin_authenticated', None)
     return redirect("/admin_panel")
+
+# ========================================
+# 🔱 GOD MODE - Gestion Admin des Dossiers
+# ========================================
+
+@app.route("/admin/case/<int:case_id>", methods=["GET", "POST"])
+def admin_case_edit(case_id):
+    """
+    🔱 GOD MODE - Gérer un dossier client depuis l'admin
+    
+    Permet à l'admin de :
+    - Modifier l'email marchand
+    - Modifier le montant
+    - Envoyer la mise en demeure AU NOM DU CLIENT
+    """
+    
+    # Vérifier l'authentification admin
+    if session.get('admin_authenticated') != True:
+        return redirect("/admin_panel")
+    
+    # Récupérer le dossier
+    case = Litigation.query.get(case_id)
+    if not case:
+        return STYLE + """
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Dossier introuvable</h1>
+            <p>Ce dossier n'existe pas.</p>
+            <a href='/admin_panel' class='btn-success'>Retour Admin</a>
+        </div>
+        """ + FOOTER
+    
+    # Récupérer l'utilisateur associé
+    user = User.query.filter_by(email=case.user_email).first()
+    
+    # ════════════════════════════════════════════════════════════════
+    # TRAITEMENT DU FORMULAIRE (POST)
+    # ════════════════════════════════════════════════════════════════
+    
+    if request.method == "POST":
+        action = request.form.get("action", "")
+        
+        # Mise à jour des champs
+        new_merchant_email = request.form.get("merchant_email", "").strip()
+        new_amount = request.form.get("amount", "").strip()
+        new_status = request.form.get("status", "").strip()
+        
+        # Mettre à jour l'email marchand
+        if new_merchant_email and '@' in new_merchant_email:
+            old_email = case.merchant_email
+            case.merchant_email = new_merchant_email
+            case.merchant_email_source = "Admin (God Mode)"
+            DEBUG_LOGS.append(f"🔱 ADMIN: Email modifié pour dossier #{case_id}: {old_email} → {new_merchant_email}")
+        
+        # Mettre à jour le montant
+        if new_amount:
+            try:
+                amount_clean = new_amount.replace('€', '').replace(',', '.').strip()
+                amount_float = float(amount_clean)
+                case.amount = f"{amount_float:.2f}€"
+                case.amount_float = amount_float
+                DEBUG_LOGS.append(f"🔱 ADMIN: Montant modifié pour dossier #{case_id} → {amount_float:.2f}€")
+            except:
+                pass
+        
+        # Mettre à jour le statut
+        if new_status:
+            old_status = case.status
+            case.status = new_status
+            DEBUG_LOGS.append(f"🔱 ADMIN: Statut modifié pour dossier #{case_id}: {old_status} → {new_status}")
+        
+        db.session.commit()
+        
+        # ════════════════════════════════════════════════════════════════
+        # ACTION : ENVOYER LA MISE EN DEMEURE (Au nom du client)
+        # ════════════════════════════════════════════════════════════════
+        
+        notice_result = None
+        if action == "send_notice":
+            if not case.merchant_email:
+                notice_result = {"success": False, "message": "Email marchand manquant"}
+            elif not user:
+                notice_result = {"success": False, "message": "Utilisateur introuvable"}
+            elif not user.refresh_token:
+                notice_result = {"success": False, "message": "Utilisateur sans refresh_token Gmail"}
+            else:
+                DEBUG_LOGS.append(f"🔱 GOD MODE: Envoi mise en demeure au nom de {user.email} pour dossier #{case_id}")
+                
+                # 🎯 LA MAGIE : On utilise les credentials du CLIENT
+                notice_result = send_legal_notice(case, user)
+                
+                if notice_result["success"]:
+                    # Notification Telegram
+                    send_telegram_notif(f"🔱 GOD MODE 🔱\n\n📧 Mise en demeure envoyée!\n\n🏪 {case.company.upper()}\n💰 {case.amount}\n📧 → {case.merchant_email}\n👤 Au nom de: {user.email}\n\n⚡ Envoyé par Admin")
+        
+        # Message de résultat
+        if notice_result:
+            if notice_result["success"]:
+                result_html = f"""
+                <div style='background:#d1fae5; padding:20px; border-radius:10px; margin-bottom:20px; border-left:4px solid #10b981;'>
+                    <h3 style='margin:0 0 10px 0; color:#065f46;'>✅ Mise en demeure envoyée !</h3>
+                    <p style='margin:0; color:#047857;'>
+                        Destinataire : <b>{case.merchant_email}</b><br>
+                        Au nom de : <b>{user.name if user else 'N/A'}</b> ({case.user_email})<br>
+                        Message ID : {notice_result.get('message_id', 'N/A')}
+                    </p>
+                </div>
+                """
+            else:
+                result_html = f"""
+                <div style='background:#fef2f2; padding:20px; border-radius:10px; margin-bottom:20px; border-left:4px solid #dc2626;'>
+                    <h3 style='margin:0 0 10px 0; color:#991b1b;'>❌ Échec de l'envoi</h3>
+                    <p style='margin:0; color:#7f1d1d;'>{notice_result['message']}</p>
+                </div>
+                """
+        else:
+            result_html = """
+            <div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px; border-left:4px solid #3b82f6;'>
+                <p style='margin:0; color:#1e40af;'>💾 Modifications enregistrées.</p>
+            </div>
+            """
+        
+        # Rediriger vers la même page avec le résultat
+        return STYLE + f"""
+        <div style='max-width:600px; margin:0 auto; padding:20px;'>
+            <h1>🔱 God Mode - Dossier #{case_id}</h1>
+            {result_html}
+            <div style='display:flex; gap:10px;'>
+                <a href='/admin/case/{case_id}' class='btn-success'>🔄 Recharger</a>
+                <a href='/admin_panel' class='btn-logout'>← Retour Admin</a>
+            </div>
+        </div>
+        """ + FOOTER
+    
+    # ════════════════════════════════════════════════════════════════
+    # AFFICHAGE DU FORMULAIRE (GET)
+    # ════════════════════════════════════════════════════════════════
+    
+    # Statuts possibles
+    status_options = [
+        "Détecté",
+        "En attente d'analyse",
+        "En attente de remboursement",
+        "En cours juridique",
+        "Envoyé",
+        "Remboursé",
+        "Annulé (sans débit)"
+    ]
+    
+    status_select = ""
+    for status in status_options:
+        selected = "selected" if case.status == status else ""
+        status_select += f"<option value='{status}' {selected}>{status}</option>"
+    
+    # Couleur du statut actuel
+    status_color = "#94a3b8"
+    if case.status == "Remboursé":
+        status_color = "#10b981"
+    elif case.status == "En cours juridique":
+        status_color = "#3b82f6"
+    elif "En attente" in case.status:
+        status_color = "#f59e0b"
+    
+    # Info utilisateur
+    user_info = ""
+    if user:
+        has_token = "✅ Oui" if user.refresh_token else "❌ Non"
+        has_card = "✅ Oui" if user.stripe_customer_id else "❌ Non"
+        user_info = f"""
+        <div style='background:#f8fafc; padding:15px; border-radius:10px; margin-bottom:20px;'>
+            <h4 style='margin:0 0 10px 0;'>👤 Client Associé</h4>
+            <p style='margin:5px 0; font-size:0.9rem;'><b>Nom :</b> {user.name or 'N/A'}</p>
+            <p style='margin:5px 0; font-size:0.9rem;'><b>Email :</b> {user.email}</p>
+            <p style='margin:5px 0; font-size:0.9rem;'><b>Refresh Token :</b> {has_token}</p>
+            <p style='margin:5px 0; font-size:0.9rem;'><b>Carte Stripe :</b> {has_card}</p>
+        </div>
+        """
+    else:
+        user_info = """
+        <div style='background:#fef2f2; padding:15px; border-radius:10px; margin-bottom:20px; border-left:4px solid #dc2626;'>
+            <p style='margin:0; color:#991b1b;'>⚠️ <b>Utilisateur introuvable !</b> Impossible d'envoyer la mise en demeure.</p>
+        </div>
+        """
+    
+    # Info mise en demeure
+    legal_notice_info = ""
+    if case.legal_notice_sent and case.legal_notice_date:
+        date_str = case.legal_notice_date.strftime("%d/%m/%Y à %H:%M")
+        legal_notice_info = f"""
+        <div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px; border-left:4px solid #3b82f6;'>
+            <p style='margin:0; color:#1e40af; font-size:0.9rem;'>
+                <b>⚖️ Mise en demeure déjà envoyée</b><br>
+                Le {date_str} à {case.merchant_email}<br>
+                <span style='font-size:0.8rem;'>Message ID: {case.legal_notice_message_id or 'N/A'}</span>
+            </p>
+        </div>
+        """
+    
+    # Bouton envoi disponible ?
+    can_send = user and user.refresh_token and case.merchant_email
+    send_button_style = "" if can_send else "opacity:0.5; cursor:not-allowed;"
+    send_button_disabled = "" if can_send else "disabled"
+    
+    return STYLE + f"""
+    <div style='max-width:600px; margin:0 auto; padding:20px;'>
+        <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;'>
+            <h1 style='margin:0;'>🔱 God Mode</h1>
+            <a href='/admin_panel' style='color:#64748b;'>← Retour Admin</a>
+        </div>
+        
+        <!-- Résumé du dossier -->
+        <div style='background:white; padding:25px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); margin-bottom:20px;'>
+            <div style='display:flex; justify-content:space-between; align-items:start; margin-bottom:15px;'>
+                <div>
+                    <h2 style='margin:0 0 5px 0; color:#1e293b;'>🏪 {case.company.upper()}</h2>
+                    <p style='margin:0; color:#64748b; font-size:0.85rem;'>Dossier #{case.id} | Créé le {case.created_at.strftime("%d/%m/%Y") if case.created_at else "N/A"}</p>
+                </div>
+                <span style='background:{status_color}20; color:{status_color}; padding:5px 12px; border-radius:8px; font-weight:600;'>
+                    {case.status}
+                </span>
+            </div>
+            
+            <div style='background:#f8fafc; padding:15px; border-radius:10px; margin-bottom:15px;'>
+                <p style='margin:5px 0; font-size:0.9rem;'><b>📋 Sujet :</b> {case.subject[:100]}...</p>
+                <p style='margin:5px 0; font-size:0.9rem;'><b>⚖️ Base légale :</b> {case.law}</p>
+                <p style='margin:5px 0; font-size:0.9rem;'><b>🔗 Source :</b> {case.merchant_email_source or 'N/A'}</p>
+            </div>
+            
+            {user_info}
+            {legal_notice_info}
+        </div>
+        
+        <!-- Formulaire d'édition -->
+        <div style='background:white; padding:25px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1);'>
+            <h3 style='margin-top:0;'>✏️ Modifier le Dossier</h3>
+            
+            <form method='POST'>
+                <!-- Email marchand -->
+                <div style='margin-bottom:20px;'>
+                    <label style='font-weight:bold; color:#1e293b; display:block; margin-bottom:8px;'>
+                        📧 Email du marchand
+                    </label>
+                    <input type='email' name='merchant_email' 
+                           value='{case.merchant_email or ""}'
+                           placeholder='contact@marchand.com'
+                           style='width:100%; padding:12px; border:2px solid #e2e8f0; border-radius:8px;
+                                  font-size:1rem; box-sizing:border-box;'>
+                </div>
+                
+                <!-- Montant -->
+                <div style='margin-bottom:20px;'>
+                    <label style='font-weight:bold; color:#1e293b; display:block; margin-bottom:8px;'>
+                        💰 Montant
+                    </label>
+                    <input type='text' name='amount' 
+                           value='{case.amount.replace("€", "") if case.amount else ""}'
+                           placeholder='150.00'
+                           style='width:100%; padding:12px; border:2px solid #e2e8f0; border-radius:8px;
+                                  font-size:1rem; box-sizing:border-box;'>
+                </div>
+                
+                <!-- Statut -->
+                <div style='margin-bottom:20px;'>
+                    <label style='font-weight:bold; color:#1e293b; display:block; margin-bottom:8px;'>
+                        📊 Statut
+                    </label>
+                    <select name='status' style='width:100%; padding:12px; border:2px solid #e2e8f0; 
+                                                  border-radius:8px; font-size:1rem; box-sizing:border-box;'>
+                        {status_select}
+                    </select>
+                </div>
+                
+                <!-- Boutons -->
+                <div style='display:flex; gap:10px; margin-bottom:20px;'>
+                    <button type='submit' name='action' value='save' class='btn-success' 
+                            style='flex:1; padding:15px; border:none; cursor:pointer;'>
+                        💾 Enregistrer
+                    </button>
+                </div>
+                
+                <!-- Bouton GOD MODE : Envoyer la mise en demeure -->
+                <div style='background:linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%); 
+                            padding:20px; border-radius:10px; text-align:center;'>
+                    <p style='margin:0 0 15px 0; color:white; font-size:0.9rem;'>
+                        🔱 <b>Action Admin Spéciale</b><br>
+                        <span style='font-size:0.8rem; opacity:0.8;'>
+                            Envoie un email juridique au nom du client, depuis SON compte Gmail.
+                        </span>
+                    </p>
+                    <button type='submit' name='action' value='send_notice' {send_button_disabled}
+                            style='background:#fbbf24; color:#1e293b; padding:15px 30px; border:none; 
+                                   border-radius:8px; font-size:1rem; font-weight:bold; cursor:pointer;
+                                   {send_button_style}'>
+                        🚀 ENVOYER LA MISE EN DEMEURE (Au nom du client)
+                    </button>
+                    {"<p style='margin:10px 0 0 0; color:#fecaca; font-size:0.8rem;'>⚠️ Prérequis manquant (email/token)</p>" if not can_send else ""}
+                </div>
+            </form>
+        </div>
+    </div>
+    """ + FOOTER
 
 @app.route("/verif-user")
 def verif_user():
