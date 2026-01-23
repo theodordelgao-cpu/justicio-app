@@ -2294,122 +2294,298 @@ def send_litigation_email(creds, target_email, subject, body_text):
 # ========================================
 
 STYLE = """<style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+    --primary: #4f46e5;
+    --primary-dark: #3730a3;
+    --secondary: #0ea5e9;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --gold: #fbbf24;
+    --dark: #0f172a;
+    --card-bg: rgba(255,255,255,0.95);
+}
+
+* {
+    box-sizing: border-box;
+}
+
 body {
     font-family: 'Outfit', sans-serif;
-    background: #f8fafc;
-    padding: 40px 20px;
-    padding-bottom: 120px;
+    background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+    min-height: 100vh;
+    padding: 30px 20px 150px 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
     color: #1e293b;
     margin: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   CARDS PREMIUM
+═══════════════════════════════════════════════════════════════ */
+
 .card {
-    background: white;
-    border-radius: 20px;
+    background: var(--card-bg);
+    border-radius: 24px;
     padding: 30px;
     margin: 15px;
     width: 100%;
     max-width: 550px;
-    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
-    border-left: 8px solid #ef4444;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 
+                0 0 0 1px rgba(255,255,255,0.1);
+    border-left: 6px solid var(--danger);
     position: relative;
+    backdrop-filter: blur(10px);
 }
+
+.card-glass {
+    background: rgba(255,255,255,0.1);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 24px;
+    padding: 30px;
+    color: white;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ACTION CARDS (Page d'accueil)
+═══════════════════════════════════════════════════════════════ */
+
+.action-card {
+    background: var(--card-bg);
+    border-radius: 24px;
+    padding: 35px 30px;
+    width: 100%;
+    max-width: 320px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    position: relative;
+    overflow: hidden;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    text-decoration: none;
+    display: block;
+    color: #1e293b;
+}
+
+.action-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 5px;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+}
+
+.action-card:hover {
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 35px 60px -15px rgba(0, 0, 0, 0.35);
+}
+
+.action-card.travel::before {
+    background: linear-gradient(90deg, var(--gold), #f97316);
+}
+
+.action-card .icon {
+    font-size: 3.5rem;
+    margin-bottom: 15px;
+}
+
+.action-card .title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #0f172a;
+}
+
+.action-card .description {
+    font-size: 0.95rem;
+    color: #64748b;
+    line-height: 1.5;
+    margin-bottom: 15px;
+}
+
+.action-card .badge {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 50px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.badge-fast {
+    background: linear-gradient(135deg, #dbeafe, #e0e7ff);
+    color: #3730a3;
+}
+
+.badge-premium {
+    background: linear-gradient(135deg, #fef3c7, #fde68a);
+    color: #92400e;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BUTTONS PREMIUM
+═══════════════════════════════════════════════════════════════ */
+
+.btn-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    padding: 16px 40px;
+    border-radius: 50px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.1rem;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4);
+    border: none;
+    cursor: pointer;
+    display: inline-block;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-success::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(45deg, transparent, rgba(255,255,255,0.2), transparent);
+    transform: rotate(45deg);
+    transition: all 0.5s;
+}
+
+.btn-success:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 15px 40px rgba(16, 185, 129, 0.5);
+}
+
+.btn-success:hover::after {
+    left: 100%;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
+    box-shadow: 0 10px 30px rgba(79, 70, 229, 0.4);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 15px 40px rgba(79, 70, 229, 0.5);
+}
+
+.btn-gold {
+    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+    color: #1e293b;
+    box-shadow: 0 10px 30px rgba(251, 191, 36, 0.4);
+}
+
+.btn-gold:hover {
+    box-shadow: 0 15px 40px rgba(251, 191, 36, 0.5);
+}
+
+.btn-logout {
+    background: rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    padding: 10px 20px;
+    font-size: 0.9rem;
+    border-radius: 12px;
+    color: white;
+    text-decoration: none;
+    border: 1px solid rgba(255,255,255,0.2);
+    transition: all 0.3s;
+}
+
+.btn-logout:hover {
+    background: rgba(255,255,255,0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   AMOUNT & BADGES
+═══════════════════════════════════════════════════════════════ */
+
 .amount-badge {
     position: absolute;
     top: 30px;
     right: 30px;
     font-size: 1.5rem;
-    font-weight: bold;
+    font-weight: 700;
     color: #10b981;
 }
+
 .amount-input {
     position: absolute;
     top: 30px;
     right: 30px;
-    padding: 10px;
+    padding: 12px;
     border: 2px solid #ef4444;
-    border-radius: 10px;
-    width: 100px;
-    font-weight: bold;
+    border-radius: 12px;
+    width: 110px;
+    font-weight: 700;
     font-size: 1.1rem;
     color: #ef4444;
     z-index: 10;
+    background: white;
 }
+
 .amount-hint {
     color: #f59e0b;
     font-size: 0.75rem;
-    margin-top: 5px;
     position: absolute;
-    top: 70px;
+    top: 75px;
     right: 30px;
     width: 120px;
     text-align: right;
 }
+
 .radar-tag {
-    background: #e0f2fe;
-    color: #0284c7;
-    padding: 4px 10px;
+    background: linear-gradient(135deg, #e0f2fe, #dbeafe);
+    color: #0369a1;
+    padding: 5px 12px;
     border-radius: 8px;
     font-size: 0.8rem;
-    font-weight: bold;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
 }
+
 .proof-text {
-    background: #fef3c7;
-    padding: 12px 15px;
-    border-radius: 8px;
+    background: linear-gradient(135deg, #fef3c7, #fef9c3);
+    padding: 15px;
+    border-radius: 12px;
     border-left: 4px solid #f59e0b;
     margin: 15px 0;
     font-size: 0.95rem;
     color: #92400e;
-    line-height: 1.5;
+    line-height: 1.6;
 }
-.btn-success {
-    background: #10b981;
-    color: white;
-    padding: 15px 40px;
-    border-radius: 50px;
-    text-decoration: none;
-    font-weight: bold;
-    font-size: 1.2rem;
-    transition: 0.3s;
-    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
-    border: none;
-    cursor: pointer;
-    display: inline-block;
-}
-.btn-success:hover {
-    background: #059669;
-    transform: translateY(-2px);
-}
-.btn-logout {
-    background: #94a3b8;
-    padding: 8px 16px;
-    font-size: 0.8rem;
-    border-radius: 8px;
-    color: white;
-    text-decoration: none;
-    margin-top: 15px;
-    display: inline-block;
-}
+
+/* ═══════════════════════════════════════════════════════════════
+   STICKY FOOTER & SUPPORT
+═══════════════════════════════════════════════════════════════ */
+
 .sticky-footer {
     position: fixed;
     bottom: 0;
     left: 0;
     width: 100%;
-    background: white;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(20px);
     padding: 20px;
-    box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.3);
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 100;
+    border-top: 1px solid rgba(255,255,255,0.1);
 }
-/* BOUTON SUPPORT FLOTTANT */
+
 .support-float {
     position: fixed;
     bottom: 100px;
@@ -2417,10 +2593,10 @@ body {
     background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
     color: #FFF;
     border-radius: 50px;
-    padding: 12px 20px;
+    padding: 14px 22px;
     font-size: 0.9rem;
     font-weight: 600;
-    box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
+    box-shadow: 0 10px 30px rgba(79, 70, 229, 0.5);
     z-index: 100;
     text-decoration: none;
     display: flex;
@@ -2428,49 +2604,308 @@ body {
     gap: 8px;
     transition: all 0.3s;
 }
+
 .support-float:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.5);
+    transform: translateY(-3px) scale(1.05);
 }
+
 .whatsapp-float {
     position: fixed;
     width: 60px;
     height: 60px;
-    bottom: 160px;
+    bottom: 170px;
     right: 20px;
-    background-color: #25d366;
+    background: linear-gradient(135deg, #25d366, #128c7e);
     color: #FFF;
-    border-radius: 50px;
+    border-radius: 50%;
     text-align: center;
-    font-size: 30px;
-    box-shadow: 2px 2px 3px #999;
+    font-size: 28px;
+    box-shadow: 0 10px 30px rgba(37, 211, 102, 0.4);
     z-index: 100;
     display: flex;
     align-items: center;
     justify-content: center;
     text-decoration: none;
+    transition: all 0.3s;
 }
+
+.whatsapp-float:hover {
+    transform: scale(1.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FOOTER & DEBUG
+═══════════════════════════════════════════════════════════════ */
+
 footer {
-    margin-top: 50px;
-    font-size: 0.8rem;
+    margin-top: 60px;
+    font-size: 0.85rem;
     text-align: center;
-    color: #94a3b8;
+    color: rgba(255,255,255,0.5);
 }
+
 footer a {
-    color: #4f46e5;
+    color: rgba(255,255,255,0.7);
     text-decoration: none;
-    margin: 0 10px;
+    margin: 0 12px;
+    transition: color 0.3s;
 }
+
+footer a:hover {
+    color: white;
+}
+
 .debug-section {
     margin-top: 50px;
     color: #64748b;
-    background: #e2e8f0;
-    padding: 20px;
-    border-radius: 10px;
+    background: rgba(255,255,255,0.9);
+    padding: 25px;
+    border-radius: 16px;
     max-width: 800px;
     font-size: 0.85rem;
 }
-</style>"""
+
+/* ═══════════════════════════════════════════════════════════════
+   🌟 LOADING OVERLAY - "Matrix Money" Effect
+═══════════════════════════════════════════════════════════════ */
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(10px);
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+}
+
+.loading-overlay.active {
+    display: flex;
+}
+
+.loading-radar {
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    position: relative;
+    margin-bottom: 40px;
+}
+
+.loading-radar::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 3px solid rgba(79, 70, 229, 0.3);
+}
+
+.loading-radar::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: #4f46e5;
+    animation: radar-spin 1s linear infinite;
+}
+
+.loading-radar .pulse {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(79, 70, 229, 0.3) 0%, transparent 70%);
+    animation: radar-pulse 2s ease-out infinite;
+}
+
+.loading-radar .icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 3rem;
+    animation: icon-bounce 1s ease-in-out infinite;
+}
+
+@keyframes radar-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes radar-pulse {
+    0% { transform: scale(0.8); opacity: 1; }
+    100% { transform: scale(1.5); opacity: 0; }
+}
+
+@keyframes icon-bounce {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+    50% { transform: translate(-50%, -50%) scale(1.1); }
+}
+
+.loading-text {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+.loading-subtext {
+    font-size: 1rem;
+    color: rgba(255,255,255,0.6);
+    text-align: center;
+    max-width: 300px;
+}
+
+/* Money rain effect */
+.money-rain {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.money {
+    position: absolute;
+    font-size: 2rem;
+    animation: money-fall linear infinite;
+    opacity: 0.3;
+}
+
+@keyframes money-fall {
+    0% {
+        transform: translateY(-100px) rotate(0deg);
+        opacity: 0;
+    }
+    10% { opacity: 0.3; }
+    90% { opacity: 0.3; }
+    100% {
+        transform: translateY(100vh) rotate(360deg);
+        opacity: 0;
+    }
+}
+
+/* Progress bar */
+.loading-progress {
+    width: 280px;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 10px;
+    margin-top: 30px;
+    overflow: hidden;
+}
+
+.loading-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4f46e5, #06b6d4, #10b981);
+    border-radius: 10px;
+    animation: progress-animate 8s ease-in-out forwards;
+}
+
+@keyframes progress-animate {
+    0% { width: 0%; }
+    20% { width: 25%; }
+    50% { width: 60%; }
+    80% { width: 85%; }
+    100% { width: 100%; }
+}
+
+</style>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     LOADING OVERLAY HTML
+═══════════════════════════════════════════════════════════════ -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="money-rain" id="moneyRain"></div>
+    
+    <div class="loading-radar">
+        <div class="pulse"></div>
+        <div class="icon" id="loadingIcon">🔍</div>
+    </div>
+    
+    <div class="loading-text" id="loadingText">Connexion à Gmail...</div>
+    <div class="loading-subtext" id="loadingSubtext">Veuillez patienter quelques instants</div>
+    
+    <div class="loading-progress">
+        <div class="loading-progress-bar"></div>
+    </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// LOADING SCREEN CONTROLLER
+// ═══════════════════════════════════════════════════════════════
+
+const loadingMessages = [
+    { text: "Connexion à Gmail...", sub: "Authentification sécurisée", icon: "🔐" },
+    { text: "Recherche de transactions...", sub: "Analyse de votre boîte mail", icon: "📧" },
+    { text: "Identification des marchands...", sub: "Amazon, SNCF, Booking...", icon: "🏪" },
+    { text: "Analyse juridique en cours...", sub: "Vérification des lois applicables", icon: "⚖️" },
+    { text: "Calcul des indemnités...", sub: "Estimation de vos droits", icon: "💰" },
+    { text: "Litiges détectés !", sub: "Préparation des résultats...", icon: "🎯" }
+];
+
+function showLoading(type = 'ecommerce') {
+    const overlay = document.getElementById('loadingOverlay');
+    const textEl = document.getElementById('loadingText');
+    const subEl = document.getElementById('loadingSubtext');
+    const iconEl = document.getElementById('loadingIcon');
+    
+    overlay.classList.add('active');
+    
+    // Create money rain
+    createMoneyRain();
+    
+    // Cycle through messages
+    let index = 0;
+    const interval = setInterval(() => {
+        if (index < loadingMessages.length) {
+            textEl.textContent = loadingMessages[index].text;
+            subEl.textContent = loadingMessages[index].sub;
+            iconEl.textContent = loadingMessages[index].icon;
+            index++;
+        } else {
+            clearInterval(interval);
+        }
+    }, 1500);
+}
+
+function createMoneyRain() {
+    const container = document.getElementById('moneyRain');
+    container.innerHTML = '';
+    const emojis = ['💶', '💵', '💴', '💷', '🪙', '💰'];
+    
+    for (let i = 0; i < 20; i++) {
+        const money = document.createElement('div');
+        money.className = 'money';
+        money.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+        money.style.left = Math.random() * 100 + '%';
+        money.style.animationDuration = (3 + Math.random() * 4) + 's';
+        money.style.animationDelay = Math.random() * 3 + 's';
+        container.appendChild(money);
+    }
+}
+
+// Auto-show loading on scan links
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('a[href*="/scan"]').forEach(link => {
+        link.addEventListener('click', function(e) {
+            showLoading();
+        });
+    });
+});
+</script>
+"""
 
 # Email de support
 SUPPORT_EMAIL = "support@justicio.fr"
@@ -2495,31 +2930,124 @@ WA_BTN = f"""<a href="https://wa.me/{WHATSAPP_NUMBER}" class="whatsapp-float" ta
 
 @app.route("/")
 def index():
-    """Page d'accueil"""
+    """Page d'accueil - Design Premium V2"""
     if "credentials" not in session:
         return redirect("/login")
     
     active_count = Litigation.query.filter_by(user_email=session['email']).count()
-    badge = f"<span style='background:red; color:white; padding:2px 8px; border-radius:50px; font-size:0.8rem; vertical-align:top;'>{active_count}</span>" if active_count > 0 else ""
+    badge = f"<span style='background:linear-gradient(135deg, #ef4444, #dc2626); color:white; padding:4px 12px; border-radius:50px; font-size:0.85rem; font-weight:600; margin-left:8px;'>{active_count}</span>" if active_count > 0 else ""
+    
+    # Calculer les gains potentiels
+    total_potential = 0
+    for lit in Litigation.query.filter_by(user_email=session['email']).all():
+        try:
+            total_potential += extract_numeric_amount(lit.amount)
+        except:
+            pass
     
     return STYLE + f"""
-    <div style='text-align:center; margin-top:50px;'>
-        <div style='font-size:3rem; margin-bottom:10px;'>⚖️</div>
-        <h1 style='margin-bottom:5px;'>JUSTICIO</h1>
-        <p style='color:#64748b; margin-bottom:40px;'>Bienvenue, <b>{session.get('name')}</b></p>
+    <div style='max-width:800px; margin:0 auto; text-align:center;'>
         
-        <a href='/scan' class='btn-success' style='display:block; max-width:300px; margin:0 auto 20px auto; background:#4f46e5; box-shadow:0 10px 20px rgba(79, 70, 229, 0.3);'>
-            🔍 LANCER UN SCAN
+        <!-- HEADER PREMIUM -->
+        <div style='margin-bottom:40px;'>
+            <div style='font-size:4rem; margin-bottom:15px; 
+                        text-shadow: 0 0 30px rgba(79, 70, 229, 0.5);'>⚖️</div>
+            <h1 style='color:white; font-size:2.8rem; font-weight:800; margin:0 0 10px 0;
+                       background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+                       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                       background-clip: text;'>JUSTICIO</h1>
+            <p style='color:rgba(255,255,255,0.7); font-size:1.1rem; margin:0 0 5px 0;'>
+                Bienvenue, <b style='color:white;'>{session.get('name')}</b>
+            </p>
+        </div>
+        
+        <!-- TAGLINE MARKETING -->
+        <div style='background: linear-gradient(135deg, rgba(251, 191, 36, 0.2), rgba(245, 158, 11, 0.1));
+                    border: 1px solid rgba(251, 191, 36, 0.3);
+                    border-radius: 16px; padding: 20px; margin-bottom: 40px;'>
+            <p style='color: #fbbf24; font-size: 1.25rem; font-weight: 600; margin: 0;'>
+                💰 L'IA qui transforme vos galères en argent
+            </p>
+            <p style='color: rgba(255,255,255,0.6); font-size: 0.95rem; margin: 8px 0 0 0;'>
+                0€ d'avance • Commission uniquement au succès
+            </p>
+        </div>
+        
+        <!-- CARTES D'ACTION -->
+        <div style='display:flex; flex-wrap:wrap; justify-content:center; gap:25px; margin-bottom:40px;'>
+            
+            <!-- CARTE E-COMMERCE -->
+            <a href='/scan' class='action-card'>
+                <div class='icon'>📦</div>
+                <div class='title'>SCAN E-COMMERCE</div>
+                <div class='description'>
+                    Colis perdus, retours refusés, produits défectueux...<br>
+                    <b>Amazon, Zalando, Fnac, AliExpress...</b>
+                </div>
+                <span class='badge badge-fast'>⚡ Rapide • 30 jours</span>
+            </a>
+            
+            <!-- CARTE VOYAGES -->
+            <a href='/scan-travel' class='action-card travel'>
+                <div class='icon'>✈️</div>
+                <div class='title'>SCAN VOYAGES</div>
+                <div class='description'>
+                    Retards, annulations, bagages perdus...<br>
+                    <b>SNCF, Air France, EasyJet, Eurostar...</b>
+                </div>
+                <span class='badge badge-premium'>💎 Jusqu'à 600€/dossier</span>
+            </a>
+            
+        </div>
+        
+        <!-- BOUTON DASHBOARD -->
+        <a href='/dashboard' style='display:inline-flex; align-items:center; gap:10px;
+                                     padding:18px 35px; background:rgba(255,255,255,0.1);
+                                     backdrop-filter:blur(10px); color:white; 
+                                     text-decoration:none; border-radius:50px; 
+                                     font-weight:600; font-size:1.1rem;
+                                     border:1px solid rgba(255,255,255,0.2);
+                                     transition:all 0.3s; margin-bottom:25px;'>
+            📂 MES DOSSIERS {badge}
         </a>
         
-        <a href='/dashboard' style='display:block; max-width:300px; margin:0 auto; padding:15px; background:white; color:#334155; text-decoration:none; border-radius:50px; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.05);'>
-            📂 SUIVRE MES LITIGES {badge}
-        </a>
+        <!-- STATS RAPIDES -->
+        {"<div style='background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:12px; padding:15px 25px; display:inline-block; margin-bottom:30px;'><span style=color:#10b981; font-weight:600;>💰 " + f"{total_potential:.0f}€" + " en litiges détectés</span></div>" if total_potential > 0 else ""}
         
-        <br><br>
-        <a href='/logout' class='btn-logout'>Se déconnecter</a>
-        <br><br>
-        <a href='/force-reset' style='color:red; font-size:0.8rem;'>⚠️ Réinitialiser la base (Debug)</a>
+        <!-- DÉCLARATION MANUELLE -->
+        <div style='margin-bottom:30px;'>
+            <a href='/declare' style='color:rgba(255,255,255,0.6); font-size:0.95rem; text-decoration:none;
+                                       display:inline-flex; align-items:center; gap:8px;
+                                       padding:12px 20px; border-radius:10px;
+                                       transition:all 0.3s;'>
+                ✍️ Déclarer un litige manuellement
+            </a>
+        </div>
+        
+        <!-- FOOTER LINKS -->
+        <div style='margin-top:20px;'>
+            <a href='/logout' class='btn-logout'>Se déconnecter</a>
+        </div>
+        
+        <!-- SOCIAL PROOF -->
+        <div style='margin-top:50px; padding:30px; background:rgba(255,255,255,0.05); 
+                    border-radius:20px; border:1px solid rgba(255,255,255,0.1);'>
+            <div style='display:flex; justify-content:center; gap:40px; flex-wrap:wrap;'>
+                <div style='text-align:center;'>
+                    <div style='font-size:2rem; font-weight:700; color:#10b981;'>2,847€</div>
+                    <div style='font-size:0.85rem; color:rgba(255,255,255,0.5);'>Récupéré ce mois</div>
+                </div>
+                <div style='text-align:center;'>
+                    <div style='font-size:2rem; font-weight:700; color:#fbbf24;'>89%</div>
+                    <div style='font-size:0.85rem; color:rgba(255,255,255,0.5);'>Taux de succès</div>
+                </div>
+                <div style='text-align:center;'>
+                    <div style='font-size:2rem; font-weight:700; color:#a78bfa;'>< 48h</div>
+                    <div style='font-size:0.85rem; color:rgba(255,255,255,0.5);'>Temps de réponse</div>
+                </div>
+            </div>
+        </div>
+        
     </div>
     """ + WA_BTN + FOOTER
 
@@ -2992,6 +3520,279 @@ def scan():
             """ + debug_html + FOOTER
         else:
             return STYLE + "<h1>Aucun litige détecté</h1><p>Votre boîte mail ne contient pas de litiges identifiables.</p>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>" + FOOTER
+
+# ========================================
+# ✈️ SCAN VOYAGES - Historique 1 AN
+# ========================================
+
+@app.route("/scan-travel")
+def scan_travel():
+    """
+    ✈️ SCANNER VOYAGES - Analyse rétroactive sur 1 AN
+    
+    Cible : SNCF, Air France, EasyJet, Ryanair, etc.
+    Recherche : Retards, annulations, indemnisations EC 261
+    """
+    if "credentials" not in session:
+        return redirect("/login")
+    
+    try:
+        creds = Credentials(**session["credentials"])
+        service = build('gmail', 'v1', credentials=creds)
+    except Exception as e:
+        return f"Erreur d'authentification Gmail : {e}<br><a href='/login'>Se reconnecter</a>"
+    
+    # Calcul de la date il y a 1 an
+    from datetime import timedelta
+    one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y/%m/%d")
+    
+    # Requête Gmail spécifique aux voyages
+    query = f"""
+    label:INBOX 
+    after:{one_year_ago}
+    (retard OR annulation OR delay OR cancelled OR annulé OR compensation OR 
+     indemnisation OR remboursement OR refund OR bagage OR baggage OR perdu OR lost)
+    (sncf OR "air france" OR airfrance OR easyjet OR ryanair OR transavia OR 
+     vueling OR volotea OR lufthansa OR "british airways" OR klm OR eurostar OR 
+     ouigo OR thalys OR trenitalia OR uber OR bolt OR blablacar OR flixbus OR
+     booking OR expedia OR "hotels.com" OR airbnb)
+    -category:promotions -category:social
+    -subject:"MISE EN DEMEURE"
+    """
+    
+    DEBUG_LOGS.append(f"✈️ SCAN VOYAGE lancé - Période: {one_year_ago} à aujourd'hui")
+    
+    try:
+        results = service.users().messages().list(userId='me', q=query, maxResults=100).execute()
+        messages = results.get('messages', [])
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ Erreur lecture Gmail Voyage: {str(e)}")
+        return f"Erreur lecture Gmail : {e}"
+    
+    total_gain = 0
+    new_cases_count = 0
+    html_cards = ""
+    debug_rejected = ["<h3>📋 Rapport d'Analyse Voyages (1 an)</h3>"]
+    
+    # Compteurs
+    emails_scanned = 0
+    emails_filtered_free = 0
+    emails_sent_to_ai = 0
+    
+    # Anti-doublon
+    existing_message_ids = set()
+    existing_company_amounts_dict = {}
+    
+    for lit in Litigation.query.filter_by(user_email=session['email']).all():
+        if lit.message_id:
+            existing_message_ids.add(lit.message_id)
+        company_key = lit.company.lower().strip() if lit.company else ""
+        amount_value = extract_numeric_amount(lit.amount) if lit.amount else 0
+        if company_key not in existing_company_amounts_dict:
+            existing_company_amounts_dict[company_key] = []
+        existing_company_amounts_dict[company_key].append(amount_value)
+    
+    DEBUG_LOGS.append(f"✈️ {len(messages)} emails voyage trouvés sur 1 an")
+    
+    detected_litigations = []
+    
+    for msg in messages:
+        emails_scanned += 1
+        msg_id = msg['id']
+        
+        if msg_id in existing_message_ids:
+            debug_rejected.append(f"<p style='color:#f59e0b;'>⏭️ Email déjà traité (ID connu)</p>")
+            continue
+        
+        try:
+            msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+            headers = msg_data.get('payload', {}).get('headers', [])
+            
+            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'Sans sujet')
+            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Inconnu')
+            
+            body_snippet = msg_data.get('snippet', '')
+            
+            # Filtrage spam basique
+            if is_spam(sender, subject, body_snippet):
+                emails_filtered_free += 1
+                continue
+            
+            # Extraction du body complet (limité)
+            body_text = ""
+            payload = msg_data.get('payload', {})
+            
+            if 'parts' in payload:
+                for part in payload['parts']:
+                    if part.get('mimeType') == 'text/plain':
+                        data = part.get('body', {}).get('data', '')
+                        if data:
+                            import base64
+                            try:
+                                body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:3000]
+                            except:
+                                pass
+                            break
+            else:
+                data = payload.get('body', {}).get('data', '')
+                if data:
+                    import base64
+                    try:
+                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:3000]
+                    except:
+                        pass
+            
+            if not body_text:
+                body_text = body_snippet
+            
+            emails_sent_to_ai += 1
+            
+            # Analyse IA avec prompt spécifique voyages
+            prompt_travel = f"""Tu es un expert en droit des transports et règlement EC 261/2004.
+Analyse cet email concernant un VOYAGE (train, avion, VTC) et détermine s'il y a un litige indemnisable.
+
+EXPÉDITEUR: {sender}
+SUJET: {subject}
+CONTENU: {body_text[:2000]}
+
+INDEMNISATIONS EC 261/2004 (vols):
+- Retard ≥3h: 250€ à 600€ selon distance
+- Annulation <14j: 250€ à 600€
+- Surbooking: 250€ à 600€
+
+INDEMNISATIONS SNCF:
+- Retard TGV ≥30min: 25% à 75% du billet
+- Annulation: 100% remboursement
+
+Réponds UNIQUEMENT en JSON:
+{{"litige": true/false, "company": "nom", "amount": "montant€", "law": "article de loi", "proof": "résumé preuve"}}
+
+Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), réponds:
+{{"litige": false}}"""
+
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt_travel}],
+                    max_tokens=300,
+                    temperature=0.1
+                )
+                
+                ai_response = response.choices[0].message.content.strip()
+                
+                # Parser JSON
+                import json
+                json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+                if json_match:
+                    analysis = json.loads(json_match.group())
+                else:
+                    continue
+                
+                if analysis.get("litige") == True:
+                    company = analysis.get("company", "Transporteur")
+                    amount = analysis.get("amount", "0€")
+                    law = analysis.get("law", "EC 261/2004")
+                    proof = analysis.get("proof", subject)
+                    
+                    # Vérifier doublon company + montant
+                    company_key = company.lower().strip()
+                    amount_numeric = extract_numeric_amount(amount)
+                    
+                    is_duplicate = False
+                    if company_key in existing_company_amounts_dict:
+                        for existing_amount in existing_company_amounts_dict[company_key]:
+                            if abs(existing_amount - amount_numeric) <= 5:
+                                is_duplicate = True
+                                break
+                    
+                    if is_duplicate:
+                        debug_rejected.append(f"<p style='color:#f59e0b;'>🔄 Doublon ignoré: {company} ({amount})</p>")
+                        continue
+                    
+                    # Ajouter le litige
+                    new_cases_count += 1
+                    total_gain += amount_numeric
+                    
+                    detected_litigations.append({
+                        "company": company,
+                        "amount": amount,
+                        "law": law,
+                        "subject": f"✈️ {proof[:100]}",
+                        "message_id": msg_id,
+                        "proof": proof
+                    })
+                    
+                    # Carte HTML
+                    html_cards += f"""
+                    <div class='card' style='border-left-color:#f59e0b;'>
+                        <span class='radar-tag' style='background:#fef3c7; color:#92400e;'>✈️ VOYAGE</span>
+                        <h3 style='margin-top:15px;'>{company.upper()}</h3>
+                        <div class='proof-text'>{proof[:150]}...</div>
+                        <p>⚖️ <b>{law}</b></p>
+                        <div class='amount-badge' style='color:#f59e0b;'>{amount}</div>
+                    </div>
+                    """
+                    
+            except Exception as e:
+                DEBUG_LOGS.append(f"❌ Erreur IA voyage: {str(e)[:50]}")
+                continue
+                
+        except Exception as e:
+            continue
+    
+    # Stocker en session
+    session['detected_litigations'] = detected_litigations
+    
+    # Debug HTML
+    debug_html = f"""
+    <div class='debug-section'>
+        <h4>📊 Statistiques Scan Voyage (1 an)</h4>
+        <p>📧 Emails scannés: {emails_scanned}</p>
+        <p>🚫 Filtrés (spam): {emails_filtered_free}</p>
+        <p>🤖 Analysés par IA: {emails_sent_to_ai}</p>
+        <p>✅ Litiges détectés: {new_cases_count}</p>
+        {''.join(debug_rejected[:20])}
+    </div>
+    """
+    
+    if new_cases_count > 0:
+        return STYLE + f"""
+        <div style='text-align:center; padding:30px;'>
+            <h1 style='color:white;'>✈️ Résultat Scan Voyage (1 an)</h1>
+            <p style='color:#fbbf24; font-size:1.3rem; font-weight:600;'>
+                {new_cases_count} litige(s) transport détecté(s) !
+            </p>
+            <p style='color:rgba(255,255,255,0.7);'>
+                💰 Gain potentiel estimé: <b style='color:#10b981; font-size:1.5rem;'>{total_gain:.0f}€</b>
+            </p>
+        </div>
+        
+        <div style='max-width:600px; margin:0 auto;'>
+            {html_cards}
+        </div>
+        
+        <div style='text-align:center; margin:40px 0;'>
+            <a href='/setup-payment' class='btn-gold' style='padding:18px 50px; font-size:1.2rem;'>
+                🚀 RÉCUPÉRER MES {total_gain:.0f}€
+            </a>
+            <p style='color:rgba(255,255,255,0.5); margin-top:15px; font-size:0.9rem;'>
+                Commission 25% uniquement en cas de succès
+            </p>
+        </div>
+        """ + debug_html + FOOTER
+    else:
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <div style='font-size:4rem; margin-bottom:20px;'>✈️</div>
+            <h1 style='color:white;'>Aucun litige voyage détecté</h1>
+            <p style='color:rgba(255,255,255,0.6);'>
+                Nous avons analysé vos emails de transport sur les 12 derniers mois.<br>
+                Aucune indemnisation réclamable n'a été identifiée.
+            </p>
+            <br>
+            <a href='/' class='btn-success'>Retour à l'accueil</a>
+        </div>
+        """ + debug_html + FOOTER
 
 # ========================================
 # MISE À JOUR MONTANT EN SESSION (avant paiement)
