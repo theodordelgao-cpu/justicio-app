@@ -3395,13 +3395,64 @@ def scan():
             # Afficher la PREUVE au lieu du snippet générique
             proof_display = proof_sentence[:200] + "..." if len(proof_sentence) > 200 else proof_sentence
             
+            # Badge de confiance basé sur le montant et la clarté
+            confidence_badge = ""
+            if extracted_amount > 50:
+                confidence_badge = """
+                <div style='position:absolute; top:15px; left:15px; background:linear-gradient(135deg, #10b981, #059669);
+                            color:white; padding:5px 12px; border-radius:20px; font-size:0.7rem; font-weight:600;
+                            display:flex; align-items:center; gap:5px;'>
+                    ✓ Confiance élevée
+                </div>
+                """
+            
             html_cards += f"""
-            <div class='card'>
-                {amount_display}
-                <span class='radar-tag'>{company_normalized.upper()}</span>
-                <h3>{subject}</h3>
-                <p class='proof-text'><i>📝 "{proof_display}"</i></p>
-                <small>⚖️ {law_final}</small>
+            <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
+                        max-width:550px; position:relative; 
+                        box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
+                        border-left:5px solid #ef4444;'>
+                
+                {confidence_badge}
+                
+                <!-- Montant en gros -->
+                <div style='position:absolute; top:25px; right:25px; text-align:right;'>
+                    <div style='font-size:1.8rem; font-weight:700; color:#10b981;'>
+                        {extracted_amount:.0f}€
+                    </div>
+                    <div style='font-size:0.75rem; color:#64748b;'>à récupérer</div>
+                </div>
+                
+                <!-- Entreprise -->
+                <div style='margin-top:10px;'>
+                    <span style='background:linear-gradient(135deg, #e0f2fe, #dbeafe); 
+                                 color:#0369a1; padding:6px 14px; border-radius:8px;
+                                 font-size:0.8rem; font-weight:600; text-transform:uppercase;
+                                 letter-spacing:0.5px;'>
+                        {company_normalized.upper()}
+                    </span>
+                </div>
+                
+                <!-- Sujet -->
+                <h3 style='margin:20px 0 15px 0; font-size:1.1rem; color:#1e293b; 
+                           padding-right:100px; line-height:1.4;'>
+                    {subject[:80]}{"..." if len(subject) > 80 else ""}
+                </h3>
+                
+                <!-- Preuve -->
+                <div style='background:linear-gradient(135deg, #fef3c7, #fef9c3);
+                            padding:15px; border-radius:12px; border-left:4px solid #f59e0b;
+                            margin:15px 0;'>
+                    <p style='margin:0; font-size:0.9rem; color:#92400e; line-height:1.5; font-style:italic;'>
+                        📝 "{proof_display}"
+                    </p>
+                </div>
+                
+                <!-- Base légale -->
+                <div style='display:flex; align-items:center; gap:8px; margin-top:15px;'>
+                    <span style='font-size:1.1rem;'>⚖️</span>
+                    <span style='font-size:0.85rem; color:#64748b;'>{law_final}</span>
+                </div>
+                
             </div>
             """
             new_cases_count += 1
@@ -3493,7 +3544,23 @@ def scan():
     </div>
     """
     
-    debug_html = stats_html + "<div class='debug-section'>" + "".join(debug_rejected) + "</div>"
+    # Logs cachés dans une balise <details> pour ne pas polluer l'interface
+    debug_html = f"""
+    <details style='margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;'>
+        <summary style='cursor:pointer; color:rgba(255,255,255,0.5); font-size:0.85rem; 
+                        padding:15px; background:rgba(255,255,255,0.05); border-radius:10px;
+                        list-style:none; text-align:center;'>
+            🔧 Voir les détails techniques (Debug)
+        </summary>
+        <div style='margin-top:15px; background:rgba(255,255,255,0.95); padding:20px; 
+                    border-radius:12px; color:#334155; font-size:0.85rem;'>
+            {stats_html}
+            <div style='max-height:400px; overflow-y:auto; margin-top:15px;'>
+                {"".join(debug_rejected)}
+            </div>
+        </div>
+    </details>
+    """
     
     # Ajouter info sur les dossiers existants pour debug
     existing_info = ""
@@ -3504,22 +3571,55 @@ def scan():
         existing_info += "</ul></div>"
     
     if new_cases_count > 0:
-        return STYLE + f"<h1>✅ {new_cases_count} Litige(s) Détecté(s)</h1>" + html_cards + action_btn + debug_html + existing_info + script_js + WA_BTN + FOOTER
+        # Page de résultats premium
+        return STYLE + f"""
+        <div style='text-align:center; padding:30px;'>
+            <div style='font-size:4rem; margin-bottom:15px;'>🎉</div>
+            <h1 style='color:white; font-size:2.2rem; margin-bottom:10px;'>
+                {new_cases_count} Litige{"s" if new_cases_count > 1 else ""} Détecté{"s" if new_cases_count > 1 else ""} !
+            </h1>
+            <p style='color:#10b981; font-size:1.3rem; font-weight:600;'>
+                💰 Gain potentiel : {total_gain:.0f}€
+            </p>
+        </div>
+        
+        <div style='max-width:600px; margin:0 auto;'>
+            {html_cards}
+        </div>
+        
+        {action_btn}
+        {debug_html}
+        {script_js}
+        """ + WA_BTN + FOOTER
     else:
         # Vérifier s'il y a des dossiers en cours
         existing_count = Litigation.query.filter_by(user_email=session['email']).count()
         if existing_count > 0:
             return STYLE + f"""
             <div style='text-align:center; padding:50px;'>
-                <h1>✅ Aucun nouveau litige</h1>
-                <p>Vous avez déjà <b>{existing_count} dossier(s)</b> en cours de traitement.</p>
-                {existing_info}
+                <div style='font-size:4rem; margin-bottom:20px;'>✅</div>
+                <h1 style='color:white;'>Aucun nouveau litige</h1>
+                <p style='color:rgba(255,255,255,0.7);'>
+                    Vous avez déjà <b style='color:#10b981;'>{existing_count} dossier(s)</b> en cours de traitement.
+                </p>
                 <br>
                 <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
             </div>
-            """ + debug_html + FOOTER
+            {debug_html}
+            """ + FOOTER
         else:
-            return STYLE + "<h1>Aucun litige détecté</h1><p>Votre boîte mail ne contient pas de litiges identifiables.</p>" + debug_html + "<br><a href='/' class='btn-success'>Retour</a>" + FOOTER
+            return STYLE + f"""
+            <div style='text-align:center; padding:50px;'>
+                <div style='font-size:4rem; margin-bottom:20px;'>🔍</div>
+                <h1 style='color:white;'>Aucun litige détecté</h1>
+                <p style='color:rgba(255,255,255,0.6);'>
+                    Votre boîte mail ne contient pas de litiges identifiables pour le moment.
+                </p>
+                <br>
+                <a href='/' class='btn-success'>Retour à l'accueil</a>
+            </div>
+            {debug_html}
+            """ + FOOTER
 
 # ========================================
 # ✈️ SCAN VOYAGES - Historique 1 AN
@@ -3722,14 +3822,53 @@ Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), ré
                         "proof": proof
                     })
                     
-                    # Carte HTML
+                    # Carte HTML Premium pour voyages
                     html_cards += f"""
-                    <div class='card' style='border-left-color:#f59e0b;'>
-                        <span class='radar-tag' style='background:#fef3c7; color:#92400e;'>✈️ VOYAGE</span>
-                        <h3 style='margin-top:15px;'>{company.upper()}</h3>
-                        <div class='proof-text'>{proof[:150]}...</div>
-                        <p>⚖️ <b>{law}</b></p>
-                        <div class='amount-badge' style='color:#f59e0b;'>{amount}</div>
+                    <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
+                                max-width:550px; position:relative; 
+                                box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
+                                border-left:5px solid #f59e0b;'>
+                        
+                        <!-- Badge voyage -->
+                        <div style='position:absolute; top:15px; left:15px; 
+                                    background:linear-gradient(135deg, #fbbf24, #f59e0b);
+                                    color:white; padding:5px 12px; border-radius:20px; 
+                                    font-size:0.7rem; font-weight:600;'>
+                            ✈️ TRANSPORT
+                        </div>
+                        
+                        <!-- Montant -->
+                        <div style='position:absolute; top:25px; right:25px; text-align:right;'>
+                            <div style='font-size:1.8rem; font-weight:700; color:#f59e0b;'>
+                                {amount}
+                            </div>
+                            <div style='font-size:0.75rem; color:#64748b;'>indemnité</div>
+                        </div>
+                        
+                        <!-- Entreprise -->
+                        <div style='margin-top:35px;'>
+                            <span style='background:linear-gradient(135deg, #fef3c7, #fde68a); 
+                                         color:#92400e; padding:6px 14px; border-radius:8px;
+                                         font-size:0.9rem; font-weight:700; text-transform:uppercase;'>
+                                {company.upper()}
+                            </span>
+                        </div>
+                        
+                        <!-- Preuve -->
+                        <div style='background:linear-gradient(135deg, #fef3c7, #fef9c3);
+                                    padding:15px; border-radius:12px; border-left:4px solid #f59e0b;
+                                    margin:20px 0;'>
+                            <p style='margin:0; font-size:0.9rem; color:#92400e; line-height:1.5;'>
+                                {proof[:150]}...
+                            </p>
+                        </div>
+                        
+                        <!-- Base légale -->
+                        <div style='display:flex; align-items:center; gap:8px;'>
+                            <span style='font-size:1.1rem;'>⚖️</span>
+                            <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{law}</span>
+                        </div>
+                        
                     </div>
                     """
                     
@@ -3743,16 +3882,26 @@ Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), ré
     # Stocker en session
     session['detected_litigations'] = detected_litigations
     
-    # Debug HTML
+    # Debug HTML caché dans <details>
     debug_html = f"""
-    <div class='debug-section'>
-        <h4>📊 Statistiques Scan Voyage (1 an)</h4>
-        <p>📧 Emails scannés: {emails_scanned}</p>
-        <p>🚫 Filtrés (spam): {emails_filtered_free}</p>
-        <p>🤖 Analysés par IA: {emails_sent_to_ai}</p>
-        <p>✅ Litiges détectés: {new_cases_count}</p>
-        {''.join(debug_rejected[:20])}
-    </div>
+    <details style='margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;'>
+        <summary style='cursor:pointer; color:rgba(255,255,255,0.5); font-size:0.85rem; 
+                        padding:15px; background:rgba(255,255,255,0.05); border-radius:10px;
+                        list-style:none; text-align:center;'>
+            🔧 Voir les détails techniques (Debug)
+        </summary>
+        <div style='margin-top:15px; background:rgba(255,255,255,0.95); padding:20px; 
+                    border-radius:12px; color:#334155; font-size:0.85rem;'>
+            <h4>📊 Statistiques Scan Voyage (1 an)</h4>
+            <p>📧 Emails scannés: {emails_scanned}</p>
+            <p>🚫 Filtrés (spam): {emails_filtered_free}</p>
+            <p>🤖 Analysés par IA: {emails_sent_to_ai}</p>
+            <p>✅ Litiges détectés: {new_cases_count}</p>
+            <div style='max-height:300px; overflow-y:auto; margin-top:10px;'>
+                {''.join(debug_rejected[:20])}
+            </div>
+        </div>
+    </details>
     """
     
     if new_cases_count > 0:
@@ -6225,39 +6374,269 @@ Ta réponse (UNE SEULE LIGNE) :"""
 @app.route("/cgu")
 def cgu():
     return STYLE + """
-    <div class='legal-content' style='max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; margin:0 auto;'>
-        <h1>Conditions Générales d'Utilisation</h1>
-        <p><b>1. Objet :</b> Justicio SAS automatise vos réclamations juridiques auprès des entreprises.</p>
-        <p><b>2. Honoraires :</b> Commission de 30% TTC prélevée uniquement sur les sommes effectivement récupérées.</p>
-        <p><b>3. Protection :</b> Aucune avance de frais. Vous ne payez que si nous gagnons.</p>
-        <br>
-        <a href='/' class='btn-logout'>Retour</a>
+    <div style='max-width:900px; margin:0 auto; padding:20px;'>
+        <div style='background:white; padding:50px; border-radius:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.15);'>
+            
+            <h1 style='color:#1e293b; margin-bottom:30px; font-size:2rem;'>
+                📜 Conditions Générales d'Utilisation
+            </h1>
+            <p style='color:#64748b; margin-bottom:30px;'>Dernière mise à jour : Janvier 2026</p>
+            
+            <div style='line-height:1.8; color:#334155;'>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 1 - Objet du Service</h2>
+                <p>Justicio est une plateforme de <b>recouvrement amiable automatisé</b> qui aide les consommateurs à faire valoir leurs droits face aux entreprises en cas de litige commercial (colis non livré, produit défectueux, retard de transport, etc.).</p>
+                <p>Le service agit en tant que <b>mandataire du client</b> pour l'envoi de mises en demeure et le suivi des réclamations. Justicio n'est pas un cabinet d'avocats et ne fournit pas de conseil juridique personnalisé.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 2 - Inscription et Accès</h2>
+                <p>L'inscription au service est <b>gratuite</b> et s'effectue via l'authentification Google (OAuth 2.0). L'utilisateur autorise Justicio à analyser ses emails pour détecter les transactions potentiellement litigieuses.</p>
+                <p>L'utilisateur doit être majeur et disposer de la capacité juridique pour contracter.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 3 - Tarification ("No Win, No Fee")</h2>
+                <div style='background:#f0fdf4; padding:20px; border-radius:12px; border-left:4px solid #10b981; margin:20px 0;'>
+                    <p style='margin:0;'><b>✅ Inscription :</b> Gratuite</p>
+                    <p style='margin:10px 0;'><b>✅ Analyse des emails :</b> Gratuite</p>
+                    <p style='margin:10px 0;'><b>✅ Envoi des mises en demeure :</b> Gratuit</p>
+                    <p style='margin:0;'><b>💰 Commission de succès :</b> 30% TTC du montant effectivement récupéré</p>
+                </div>
+                <p><b>Important :</b> La commission n'est prélevée QUE si le client obtient un remboursement. En l'absence de remboursement, le client ne paie rien ("No win, no fee").</p>
+                <p>Le prélèvement s'effectue automatiquement via la carte bancaire enregistrée, dans les 48h suivant la détection du remboursement sur le compte du client.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 4 - Obligation de Moyens</h2>
+                <p>Justicio s'engage à mettre en œuvre tous les moyens raisonnables pour obtenir le remboursement des sommes dues au client. Cependant, <b>Justicio a une obligation de moyens et non de résultat</b>.</p>
+                <p>Le succès d'une réclamation dépend de nombreux facteurs externes (réponse de l'entreprise, validité juridique du litige, preuves disponibles, etc.) sur lesquels Justicio n'a pas de contrôle total.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 5 - Responsabilité</h2>
+                <p>Justicio ne peut être tenu responsable :</p>
+                <ul style='margin-left:20px;'>
+                    <li>Des décisions prises par les entreprises tierces</li>
+                    <li>Des retards de remboursement imputables aux entreprises</li>
+                    <li>Des erreurs de détection liées à des informations incomplètes dans les emails</li>
+                    <li>Des interruptions de service dues à des maintenances ou problèmes techniques</li>
+                </ul>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 6 - Résiliation</h2>
+                <p>L'utilisateur peut résilier son compte à tout moment en envoyant un email à <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a>.</p>
+                <p>Les dossiers en cours restent actifs jusqu'à leur conclusion. Les commissions dues sur les remboursements déjà obtenus restent exigibles.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 7 - Droit Applicable</h2>
+                <p>Les présentes CGU sont régies par le <b>droit français</b>. En cas de litige, les tribunaux de Paris seront seuls compétents.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>Article 8 - Contact</h2>
+                <p>Pour toute question relative aux présentes CGU :</p>
+                <p>📧 Email : <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
+                
+            </div>
+            
+            <div style='margin-top:40px; text-align:center;'>
+                <a href='/' class='btn-logout' style='padding:12px 30px;'>← Retour à l'accueil</a>
+            </div>
+            
+        </div>
     </div>
     """ + FOOTER
 
 @app.route("/confidentialite")
 def confidentialite():
     return STYLE + """
-    <div class='legal-content' style='max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; margin:0 auto;'>
-        <h1>Politique de Confidentialité</h1>
-        <p>Vos emails sont analysés par notre IA sécurisée sans stockage permanent.</p>
-        <p>Seules les métadonnées des litiges (montant, entreprise, loi) sont conservées.</p>
-        <p>Conformité RGPD totale.</p>
-        <br>
-        <a href='/' class='btn-logout'>Retour</a>
+    <div style='max-width:900px; margin:0 auto; padding:20px;'>
+        <div style='background:white; padding:50px; border-radius:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.15);'>
+            
+            <h1 style='color:#1e293b; margin-bottom:30px; font-size:2rem;'>
+                🔒 Politique de Confidentialité
+            </h1>
+            <p style='color:#64748b; margin-bottom:30px;'>Dernière mise à jour : Janvier 2026 | Conforme RGPD</p>
+            
+            <div style='line-height:1.8; color:#334155;'>
+                
+                <!-- ENCART GOOGLE OBLIGATOIRE -->
+                <div style='background:#eff6ff; padding:25px; border-radius:12px; border:2px solid #3b82f6; margin-bottom:30px;'>
+                    <h3 style='color:#1d4ed8; margin-top:0;'>🔵 Conformité Google API</h3>
+                    <p style='margin-bottom:0;'><b>L'utilisation des données reçues des API Google respecte les <a href='https://developers.google.com/terms/api-services-user-data-policy' target='_blank' style='color:#1d4ed8;'>Google API Services User Data Policy</a>, y compris les exigences d'utilisation limitée.</b></p>
+                </div>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>1. Responsable du Traitement</h2>
+                <p><b>Justicio SAS</b> (en cours d'immatriculation)<br>
+                Directeur de la publication : Theodor Delgado<br>
+                Délégué à la Protection des Données (DPO) : <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>2. Données Collectées</h2>
+                
+                <h3 style='color:#64748b; font-size:1.1rem;'>2.1 Données d'identification</h3>
+                <ul style='margin-left:20px;'>
+                    <li>Nom et prénom (via Google)</li>
+                    <li>Adresse email (via Google)</li>
+                    <li>Photo de profil (via Google)</li>
+                </ul>
+                
+                <h3 style='color:#64748b; font-size:1.1rem;'>2.2 Données de paiement</h3>
+                <ul style='margin-left:20px;'>
+                    <li>Identifiant client Stripe (pas de numéro de carte stocké)</li>
+                    <li>Historique des transactions de commission</li>
+                </ul>
+                
+                <h3 style='color:#64748b; font-size:1.1rem;'>2.3 Données d'emails (Accès Gmail)</h3>
+                <div style='background:#fef3c7; padding:20px; border-radius:12px; border-left:4px solid #f59e0b; margin:20px 0;'>
+                    <p style='margin:0;'><b>⚠️ Important - Traitement des emails :</b></p>
+                    <p style='margin:10px 0 0 0;'>Nous <b>ne stockons pas</b> vos emails. Nous analysons temporairement les messages pour détecter les transactions éligibles à un recours. <b>Seules les données relatives aux litiges confirmés</b> (Montant, Date, Entreprise, Base légale) <b>sont conservées</b> pour le traitement du dossier.</p>
+                </div>
+                <p>L'analyse s'effectue en temps réel et les contenus des emails ne sont jamais enregistrés dans notre base de données. Seuls les métadonnées nécessaires au traitement juridique sont extraites.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>3. Finalités du Traitement</h2>
+                <table style='width:100%; border-collapse:collapse; margin:20px 0;'>
+                    <tr style='background:#f8fafc;'>
+                        <th style='padding:12px; text-align:left; border:1px solid #e2e8f0;'>Finalité</th>
+                        <th style='padding:12px; text-align:left; border:1px solid #e2e8f0;'>Base légale</th>
+                        <th style='padding:12px; text-align:left; border:1px solid #e2e8f0;'>Durée</th>
+                    </tr>
+                    <tr>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Détection des litiges</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Consentement</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Temps réel (non stocké)</td>
+                    </tr>
+                    <tr style='background:#f8fafc;'>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Gestion des dossiers</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Exécution du contrat</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>3 ans après clôture</td>
+                    </tr>
+                    <tr>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Facturation</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Obligation légale</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>10 ans</td>
+                    </tr>
+                </table>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>4. Partage des Données</h2>
+                <p>Vos données peuvent être partagées avec :</p>
+                <ul style='margin-left:20px;'>
+                    <li><b>Stripe</b> : Traitement des paiements (certifié PCI-DSS)</li>
+                    <li><b>OpenAI</b> : Analyse IA des emails (données anonymisées)</li>
+                    <li><b>Google</b> : Authentification et accès emails</li>
+                </ul>
+                <p>Nous ne vendons jamais vos données à des tiers à des fins commerciales.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>5. Vos Droits (RGPD)</h2>
+                <p>Conformément au Règlement Général sur la Protection des Données, vous disposez des droits suivants :</p>
+                <div style='display:grid; grid-template-columns:repeat(2, 1fr); gap:15px; margin:20px 0;'>
+                    <div style='background:#f8fafc; padding:15px; border-radius:8px;'>✅ Droit d'accès</div>
+                    <div style='background:#f8fafc; padding:15px; border-radius:8px;'>✅ Droit de rectification</div>
+                    <div style='background:#f8fafc; padding:15px; border-radius:8px;'>✅ Droit à l'effacement</div>
+                    <div style='background:#f8fafc; padding:15px; border-radius:8px;'>✅ Droit à la portabilité</div>
+                    <div style='background:#f8fafc; padding:15px; border-radius:8px;'>✅ Droit d'opposition</div>
+                    <div style='background:#f8fafc; padding:15px; border-radius:8px;'>✅ Droit à la limitation</div>
+                </div>
+                <p>Pour exercer ces droits, contactez notre DPO : <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>6. Sécurité des Données</h2>
+                <ul style='margin-left:20px;'>
+                    <li>Chiffrement SSL/TLS pour toutes les communications</li>
+                    <li>Authentification OAuth 2.0 (pas de mot de passe stocké)</li>
+                    <li>Hébergement sécurisé sur Render (certifié SOC 2)</li>
+                    <li>Accès restreint aux données (principe du moindre privilège)</li>
+                </ul>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>7. Cookies</h2>
+                <p>Nous utilisons uniquement des cookies techniques essentiels au fonctionnement du service (session utilisateur). Aucun cookie de tracking publicitaire n'est utilisé.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>8. Modifications</h2>
+                <p>Cette politique peut être mise à jour. Les utilisateurs seront informés par email en cas de modification substantielle.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>9. Contact & Réclamations</h2>
+                <p>📧 DPO : <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
+                <p>Vous pouvez également déposer une réclamation auprès de la <b>CNIL</b> : <a href='https://www.cnil.fr' target='_blank' style='color:#4f46e5;'>www.cnil.fr</a></p>
+                
+            </div>
+            
+            <div style='margin-top:40px; text-align:center;'>
+                <a href='/' class='btn-logout' style='padding:12px 30px;'>← Retour à l'accueil</a>
+            </div>
+            
+        </div>
     </div>
     """ + FOOTER
 
 @app.route("/mentions-legales")
 def mentions_legales():
     return STYLE + """
-    <div class='legal-content' style='max-width:800px; line-height:1.6; background:white; padding:40px; border-radius:20px; margin:0 auto;'>
-        <h1>Mentions Légales</h1>
-        <p><b>Éditeur :</b> Justicio SAS, France</p>
-        <p><b>Hébergement :</b> Render Inc.</p>
-        <p><b>Contact :</b> theodordelgao@gmail.com</p>
-        <br>
-        <a href='/' class='btn-logout'>Retour</a>
+    <div style='max-width:900px; margin:0 auto; padding:20px;'>
+        <div style='background:white; padding:50px; border-radius:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.15);'>
+            
+            <h1 style='color:#1e293b; margin-bottom:30px; font-size:2rem;'>
+                📋 Mentions Légales
+            </h1>
+            <p style='color:#64748b; margin-bottom:30px;'>Informations légales obligatoires</p>
+            
+            <div style='line-height:1.8; color:#334155;'>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>1. Éditeur du Site</h2>
+                <div style='background:#f8fafc; padding:25px; border-radius:12px; margin:20px 0;'>
+                    <p style='margin:5px 0;'><b>Raison sociale :</b> Justicio SAS (en cours d'immatriculation)</p>
+                    <p style='margin:5px 0;'><b>Forme juridique :</b> Société par Actions Simplifiée</p>
+                    <p style='margin:5px 0;'><b>Capital social :</b> En cours de constitution</p>
+                    <p style='margin:5px 0;'><b>Siège social :</b> France</p>
+                    <p style='margin:5px 0;'><b>RCS :</b> En cours d'immatriculation</p>
+                    <p style='margin:5px 0;'><b>N° TVA :</b> En cours d'attribution</p>
+                </div>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>2. Directeur de la Publication</h2>
+                <div style='background:#f8fafc; padding:25px; border-radius:12px; margin:20px 0;'>
+                    <p style='margin:5px 0;'><b>Nom :</b> Theodor Delgado</p>
+                    <p style='margin:5px 0;'><b>Qualité :</b> Président</p>
+                    <p style='margin:5px 0;'><b>Email :</b> <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
+                </div>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>3. Hébergement</h2>
+                <div style='background:#f8fafc; padding:25px; border-radius:12px; margin:20px 0;'>
+                    <p style='margin:5px 0;'><b>Hébergeur :</b> Render Inc.</p>
+                    <p style='margin:5px 0;'><b>Adresse :</b> 525 Brannan Street, Suite 300, San Francisco, CA 94107, USA</p>
+                    <p style='margin:5px 0;'><b>Site web :</b> <a href='https://render.com' target='_blank' style='color:#4f46e5;'>https://render.com</a></p>
+                    <p style='margin:5px 0;'><b>Certifications :</b> SOC 2 Type II</p>
+                </div>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>4. Propriété Intellectuelle</h2>
+                <p>L'ensemble des contenus présents sur le site Justicio (textes, images, logos, code source) sont protégés par le droit d'auteur et sont la propriété exclusive de Justicio SAS, sauf mention contraire.</p>
+                <p>Toute reproduction, représentation, modification ou exploitation non autorisée est interdite et constitue une contrefaçon sanctionnée par le Code de la propriété intellectuelle.</p>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>5. Services Tiers Utilisés</h2>
+                <table style='width:100%; border-collapse:collapse; margin:20px 0;'>
+                    <tr style='background:#f8fafc;'>
+                        <th style='padding:12px; text-align:left; border:1px solid #e2e8f0;'>Service</th>
+                        <th style='padding:12px; text-align:left; border:1px solid #e2e8f0;'>Usage</th>
+                        <th style='padding:12px; text-align:left; border:1px solid #e2e8f0;'>Société</th>
+                    </tr>
+                    <tr>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Google OAuth</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Authentification</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Google LLC</td>
+                    </tr>
+                    <tr style='background:#f8fafc;'>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Gmail API</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Lecture emails</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Google LLC</td>
+                    </tr>
+                    <tr>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Stripe</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Paiements</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Stripe Inc.</td>
+                    </tr>
+                    <tr style='background:#f8fafc;'>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>OpenAI</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>Analyse IA</td>
+                        <td style='padding:12px; border:1px solid #e2e8f0;'>OpenAI LP</td>
+                    </tr>
+                </table>
+                
+                <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>6. Contact</h2>
+                <p>Pour toute question concernant le site :</p>
+                <p>📧 Email : <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
+                
+            </div>
+            
+            <div style='margin-top:40px; text-align:center;'>
+                <a href='/' class='btn-logout' style='padding:12px 30px;'>← Retour à l'accueil</a>
+            </div>
+            
+        </div>
     </div>
     """ + FOOTER
 
