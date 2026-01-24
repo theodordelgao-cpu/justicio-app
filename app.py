@@ -15,6 +15,7 @@ from googleapiclient.discovery import build
 from openai import OpenAI
 from datetime import datetime
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from sqlalchemy.exc import IntegrityError
 from bs4 import BeautifulSoup
 
@@ -51,6 +52,621 @@ GMAIL_SCOPES = [
 
 # Email support Justicio
 SUPPORT_EMAIL = "support@justicio.fr"
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 🤖 AGENT AVOCAT VIRTUEL - Génération de Mises en Demeure via GPT-4
+# ════════════════════════════════════════════════════════════════════════════════
+
+def generate_legal_letter_gpt(company, amount, motif, law, client_name, client_email, order_ref=None):
+    """
+    ⚖️ AGENT AVOCAT VIRTUEL - Génère une mise en demeure personnalisée via GPT-4
+    
+    Args:
+        company: Nom de l'entreprise visée
+        amount: Montant réclamé (ex: "42.99€")
+        motif: Nature du litige (ex: "Colis non reçu depuis 3 semaines")
+        law: Article de loi applicable (ex: "Règlement UE 261/2004")
+        client_name: Nom du client
+        client_email: Email du client
+        order_ref: Numéro de commande (optionnel)
+    
+    Returns:
+        dict: {"success": bool, "html_body": str, "text_body": str, "subject": str, "error": str}
+    """
+    
+    if not OPENAI_API_KEY:
+        DEBUG_LOGS.append("⚖️ Agent Avocat: ❌ Pas de clé API OpenAI")
+        return {
+            "success": False,
+            "error": "API OpenAI non configurée",
+            "html_body": None,
+            "text_body": None,
+            "subject": None
+        }
+    
+    from datetime import timedelta
+    today = datetime.now()
+    today_str = today.strftime("%d/%m/%Y")
+    deadline = (today + timedelta(days=8)).strftime("%d/%m/%Y")
+    
+    # Nettoyer le montant
+    amount_clean = str(amount).replace('€', '').replace('EUR', '').strip()
+    try:
+        amount_num = float(amount_clean.replace(',', '.'))
+        amount_formatted = f"{amount_num:.2f}"
+    except:
+        amount_formatted = amount_clean
+    
+    # Référence commande
+    ref_text = f"Référence commande : {order_ref}" if order_ref else ""
+    
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    system_prompt = """Tu es un avocat tenace et expérimenté, spécialisé en droit de la consommation et droit des transports européen.
+
+TON RÔLE : Rédiger des mises en demeure formelles, professionnelles et juridiquement solides.
+
+STYLE :
+- Ton FROID et JURIDIQUE (jamais familier)
+- Phrases courtes et percutantes
+- Citations PRÉCISES des articles de loi
+- Menaces légales claires (DGCCRF, Médiateur, Tribunal)
+- Délai de réponse : 8 jours ouvrés
+
+STRUCTURE OBLIGATOIRE :
+1. Entête (Objet, Références)
+2. Rappel des faits
+3. Fondement juridique (articles PRÉCIS)
+4. Demande formelle (remboursement/livraison)
+5. Mise en demeure avec délai
+6. Conséquences en cas de non-réponse
+7. Formule de politesse sobre
+
+SIGNATURE : "L'équipe Juridique Justicio, pour le compte de [NOM CLIENT]"
+
+FORMAT : Réponds UNIQUEMENT avec le corps de la lettre en HTML bien formaté (utilise <p>, <strong>, <ul>, <li>). Pas de balises <html> ou <body>."""
+
+    user_prompt = f"""Rédige une mise en demeure formelle pour les éléments suivants :
+
+ENTREPRISE VISÉE : {company.upper()}
+MONTANT RÉCLAMÉ : {amount_formatted} €
+NATURE DU LITIGE : {motif}
+FONDEMENT JURIDIQUE : {law}
+{ref_text}
+
+CLIENT :
+- Nom : {client_name}
+- Email : {client_email}
+
+DATE : {today_str}
+DÉLAI DE RÉPONSE : {deadline}
+
+Génère une mise en demeure percutante et menaçante, avec les articles de loi précis."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # ou gpt-4 pour plus de qualité
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3,  # Consistance juridique
+            max_tokens=1500
+        )
+        
+        letter_content = response.choices[0].message.content.strip()
+        
+        DEBUG_LOGS.append(f"⚖️ Agent Avocat: ✅ Lettre générée ({len(letter_content)} chars)")
+        
+        # Construire le HTML complet
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: Georgia, serif; line-height: 1.6; color: #1e293b; max-width: 700px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #dc2626, #991b1b); color: white; padding: 25px; border-radius: 10px 10px 0 0; text-align: center; }}
+        .header h1 {{ margin: 0; font-size: 24px; letter-spacing: 2px; }}
+        .content {{ background: white; padding: 30px; border: 1px solid #e2e8f0; }}
+        .warning {{ background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 15px; margin: 20px 0; }}
+        .warning strong {{ color: #dc2626; }}
+        .footer {{ background: #1e293b; color: #94a3b8; padding: 20px; text-align: center; border-radius: 0 0 10px 10px; font-size: 12px; }}
+        .amount {{ font-size: 24px; color: #dc2626; font-weight: bold; }}
+        .deadline {{ color: #dc2626; font-weight: bold; }}
+        ul {{ margin: 10px 0; padding-left: 20px; }}
+        li {{ margin: 5px 0; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⚖️ MISE EN DEMEURE</h1>
+        <p style="margin:10px 0 0 0; font-size:14px;">Document juridique - Art. 1344 du Code Civil</p>
+    </div>
+    
+    <div class="content">
+        <p style="text-align:right; color:#64748b;">Paris, le {today_str}</p>
+        
+        <p><strong>À l'attention de :</strong> {company.upper()}</p>
+        <p><strong>Objet :</strong> Mise en demeure - {motif[:60]}...</p>
+        
+        {letter_content}
+        
+        <div class="warning">
+            <p><strong>⚠️ MISE EN DEMEURE</strong></p>
+            <p>Sans réponse satisfaisante avant le <span class="deadline">{deadline}</span>, je me réserve le droit de :</p>
+            <ul>
+                <li>Saisir le <strong>Médiateur de la Consommation</strong></li>
+                <li>Signaler cette pratique à la <strong>DGCCRF</strong></li>
+                <li>Engager une <strong>procédure judiciaire</strong></li>
+            </ul>
+        </div>
+        
+        <p>Cordialement,</p>
+        <p><strong>{client_name}</strong><br>
+        <span style="color:#64748b;">{client_email}</span></p>
+        
+        <hr style="margin:25px 0; border:none; border-top:1px solid #e2e8f0;">
+        <p style="font-size:12px; color:#64748b;">
+            <strong>Montant réclamé :</strong> <span class="amount">{amount_formatted} €</span><br>
+            <strong>Fondement juridique :</strong> {law}
+        </p>
+    </div>
+    
+    <div class="footer">
+        <p><strong style="color:#fbbf24;">Justicio.fr</strong> - Protection des droits des consommateurs</p>
+        <p>Ce document constitue une mise en demeure au sens juridique du terme.</p>
+    </div>
+</body>
+</html>"""
+
+        # Version texte brut pour fallback
+        text_body = f"""MISE EN DEMEURE
+
+Date : {today_str}
+À l'attention de : {company.upper()}
+
+{motif}
+
+Montant réclamé : {amount_formatted} €
+Fondement juridique : {law}
+
+Délai de réponse : {deadline}
+
+Sans réponse satisfaisante, je me réserve le droit de saisir le Médiateur de la Consommation, la DGCCRF, ou d'engager une procédure judiciaire.
+
+{client_name}
+{client_email}
+
+---
+Justicio.fr - Protection des droits des consommateurs
+"""
+
+        return {
+            "success": True,
+            "html_body": html_body,
+            "text_body": text_body,
+            "subject": f"⚖️ MISE EN DEMEURE - {company.upper()} - {motif[:50]}",
+            "error": None
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        DEBUG_LOGS.append(f"⚖️ Agent Avocat: ❌ Erreur GPT: {error_msg[:100]}")
+        return {
+            "success": False,
+            "error": error_msg[:100],
+            "html_body": None,
+            "text_body": None,
+            "subject": None
+        }
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📬 AGENT FACTEUR - Envoi RÉEL des emails via Gmail API
+# ════════════════════════════════════════════════════════════════════════════════
+
+def send_mise_en_demeure_gmail(user, target_email, subject, html_body, text_body=None, litigation_id=None):
+    """
+    📬 AGENT FACTEUR - Envoie la mise en demeure via Gmail API
+    
+    GARANTIES :
+    - Envoi RÉEL via service.users().messages().send()
+    - BCC à l'utilisateur pour preuve
+    - Headers professionnels (anti-spam)
+    - Gestion robuste des erreurs
+    - Logging détaillé pour admin
+    
+    Args:
+        user: Instance User avec refresh_token
+        target_email: Email du destinataire (entreprise)
+        subject: Sujet de l'email
+        html_body: Corps HTML de la mise en demeure
+        text_body: Corps texte (fallback)
+        litigation_id: ID du litige pour tracking
+    
+    Returns:
+        dict: {"success": bool, "message_id": str, "error": str, "error_type": str}
+    """
+    
+    DEBUG_LOGS.append(f"📬 Agent Facteur: Préparation envoi vers {target_email}")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # VÉRIFICATIONS PRÉALABLES
+    # ═══════════════════════════════════════════════════════════════
+    
+    if not user or not user.refresh_token:
+        DEBUG_LOGS.append("📬 ❌ Erreur: Utilisateur non authentifié ou pas de refresh_token")
+        return {
+            "success": False,
+            "message_id": None,
+            "error": "Utilisateur non authentifié. Veuillez vous reconnecter.",
+            "error_type": "AUTH_ERROR"
+        }
+    
+    if not target_email or '@' not in target_email:
+        DEBUG_LOGS.append(f"📬 ❌ Erreur: Email destinataire invalide: {target_email}")
+        return {
+            "success": False,
+            "message_id": None,
+            "error": f"Email destinataire invalide: {target_email}",
+            "error_type": "INVALID_EMAIL"
+        }
+    
+    # Nettoyer l'email destinataire
+    if '<' in target_email and '>' in target_email:
+        import re
+        match = re.search(r'<([^>]+)>', target_email)
+        if match:
+            target_email = match.group(1)
+    target_email = target_email.strip().lower()
+    
+    # ═══════════════════════════════════════════════════════════════
+    # OBTENIR LES CREDENTIALS GMAIL
+    # ═══════════════════════════════════════════════════════════════
+    
+    try:
+        creds = get_refreshed_credentials(user.refresh_token)
+        if not creds:
+            raise Exception("Impossible de rafraîchir les credentials")
+    except Exception as e:
+        error_msg = str(e)
+        DEBUG_LOGS.append(f"📬 ❌ Erreur credentials: {error_msg}")
+        
+        # Détecter le type d'erreur
+        if "token" in error_msg.lower() or "expired" in error_msg.lower():
+            return {
+                "success": False,
+                "message_id": None,
+                "error": "Session expirée. Veuillez vous reconnecter.",
+                "error_type": "TOKEN_EXPIRED"
+            }
+        return {
+            "success": False,
+            "message_id": None,
+            "error": f"Erreur d'authentification: {error_msg[:50]}",
+            "error_type": "AUTH_ERROR"
+        }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # CONSTRUIRE LE MESSAGE MIME
+    # ═══════════════════════════════════════════════════════════════
+    
+    try:
+        # Message multipart pour HTML + texte
+        message = MIMEMultipart('alternative')
+        
+        # Headers obligatoires
+        message['To'] = target_email
+        message['Subject'] = subject
+        
+        # BCC : Copie cachée à l'utilisateur (PREUVE)
+        message['Bcc'] = user.email
+        
+        # From : Format professionnel pour éviter le spam
+        user_name = user.name or user.email.split('@')[0].title()
+        message['From'] = f'"{user_name} via Justicio" <{user.email}>'
+        
+        # Headers anti-spam et tracking
+        message['X-Priority'] = '1'
+        message['Importance'] = 'high'
+        message['X-Justicio-Service'] = 'legal-notice'
+        if litigation_id:
+            message['X-Justicio-Case-ID'] = str(litigation_id)
+        message['X-Mailer'] = 'Justicio Legal Services'
+        
+        # Ajouter le corps texte (fallback)
+        if text_body:
+            part_text = MIMEText(text_body, 'plain', 'utf-8')
+            message.attach(part_text)
+        
+        # Ajouter le corps HTML (prioritaire)
+        if html_body:
+            part_html = MIMEText(html_body, 'html', 'utf-8')
+            message.attach(part_html)
+        
+        # Encoder en base64 URL-safe
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+        
+    except Exception as e:
+        DEBUG_LOGS.append(f"📬 ❌ Erreur construction MIME: {str(e)}")
+        return {
+            "success": False,
+            "message_id": None,
+            "error": f"Erreur construction email: {str(e)[:50]}",
+            "error_type": "MIME_ERROR"
+        }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ENVOI RÉEL VIA GMAIL API
+    # ═══════════════════════════════════════════════════════════════
+    
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+        
+        DEBUG_LOGS.append(f"📬 Envoi en cours: {target_email} (BCC: {user.email})")
+        
+        # ENVOI RÉEL !!!
+        result = service.users().messages().send(
+            userId='me',
+            body={'raw': raw_message}
+        ).execute()
+        
+        message_id = result.get('id')
+        
+        if message_id:
+            DEBUG_LOGS.append(f"📬 ✅ EMAIL ENVOYÉ ! Message ID: {message_id}")
+            DEBUG_LOGS.append(f"📬 ✅ Destinataire: {target_email}")
+            DEBUG_LOGS.append(f"📬 ✅ BCC (preuve): {user.email}")
+            
+            return {
+                "success": True,
+                "message_id": message_id,
+                "error": None,
+                "error_type": None
+            }
+        else:
+            DEBUG_LOGS.append("📬 ❌ Envoi échoué - Pas de message_id retourné")
+            return {
+                "success": False,
+                "message_id": None,
+                "error": "L'API Gmail n'a pas confirmé l'envoi",
+                "error_type": "NO_CONFIRMATION"
+            }
+            
+    except Exception as e:
+        error_msg = str(e)
+        DEBUG_LOGS.append(f"📬 ❌ Erreur Gmail API: {error_msg[:150]}")
+        
+        # Analyser le type d'erreur
+        error_lower = error_msg.lower()
+        
+        if "insufficient" in error_lower or "scope" in error_lower or "permission" in error_lower:
+            return {
+                "success": False,
+                "message_id": None,
+                "error": "Permissions insuffisantes. Reconnectez-vous pour autoriser l'envoi d'emails.",
+                "error_type": "INSUFFICIENT_PERMISSIONS"
+            }
+        elif "quota" in error_lower or "rate" in error_lower:
+            return {
+                "success": False,
+                "message_id": None,
+                "error": "Limite d'envoi atteinte. Réessayez dans quelques minutes.",
+                "error_type": "QUOTA_EXCEEDED"
+            }
+        elif "invalid" in error_lower and "recipient" in error_lower:
+            return {
+                "success": False,
+                "message_id": None,
+                "error": f"Adresse email invalide: {target_email}",
+                "error_type": "INVALID_RECIPIENT"
+            }
+        else:
+            return {
+                "success": False,
+                "message_id": None,
+                "error": f"Erreur Gmail: {error_msg[:80]}",
+                "error_type": "GMAIL_API_ERROR"
+            }
+
+
+def get_company_email(company_name):
+    """
+    🔍 Trouve l'email de contact d'une entreprise
+    
+    Utilise le LEGAL_DIRECTORY ou génère une adresse générique
+    """
+    company_key = company_name.lower().strip()
+    
+    # Chercher dans le répertoire juridique
+    if company_key in LEGAL_DIRECTORY:
+        return LEGAL_DIRECTORY[company_key].get("email")
+    
+    # Variations courantes
+    variations = {
+        "air france": "customer@airfrance.fr",
+        "airfrance": "customer@airfrance.fr",
+        "easyjet": "customerservices@easyjet.com",
+        "ryanair": "support@ryanair.com",
+        "transavia": "service.client@transavia.com",
+        "vueling": "clientes@vueling.com",
+        "volotea": "contact@volotea.com",
+        "eurostar": "contactcentre@eurostar.com",
+        "ouigo": "relationclient@ouigo.com",
+        "thalys": "contact@thalys.com",
+        "uber": "support@uber.com",
+        "bolt": "support@bolt.eu",
+        "amazon": "cs-reply@amazon.fr",
+        "zalando": "service@zalando.fr",
+        "fnac": "serviceclient@fnac.com",
+        "darty": "serviceclient@darty.com",
+        "cdiscount": "clients@cdiscount.com",
+    }
+    
+    for key, email in variations.items():
+        if key in company_key:
+            return email
+    
+    # Fallback : email générique (sera envoyé à Justicio pour traitement manuel)
+    DEBUG_LOGS.append(f"🔍 Email non trouvé pour {company_name} - Fallback support Justicio")
+    return "support@justicio.fr"
+
+
+def process_pending_litigations(user, litigations_data):
+    """
+    🚀 PROCESSEUR PRINCIPAL - Traite tous les litiges pending après paiement
+    
+    Pour chaque litige :
+    1. Génère la mise en demeure (Agent Avocat GPT)
+    2. Envoie l'email (Agent Facteur Gmail)
+    3. Met à jour le statut en base
+    4. Notifie via Telegram
+    
+    Args:
+        user: Instance User
+        litigations_data: Liste de dicts avec les données des litiges
+    
+    Returns:
+        dict: {"sent": int, "errors": list, "details": list}
+    """
+    
+    sent_count = 0
+    errors = []
+    details = []
+    
+    DEBUG_LOGS.append(f"🚀 Traitement de {len(litigations_data)} litige(s) pour {user.email}")
+    
+    for lit_data in litigations_data:
+        company = lit_data.get('company', 'Inconnu')
+        amount = lit_data.get('amount', '0€')
+        motif = lit_data.get('subject', lit_data.get('proof', 'Litige non spécifié'))
+        law = lit_data.get('law', 'Code de la consommation')
+        message_id = lit_data.get('message_id')
+        
+        DEBUG_LOGS.append(f"📝 Traitement: {company} - {amount}")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ÉTAPE 1 : Enregistrer en base de données
+        # ═══════════════════════════════════════════════════════════════
+        
+        try:
+            new_lit = Litigation(
+                user_email=user.email,
+                company=company,
+                amount=amount,
+                law=law,
+                subject=motif,
+                message_id=message_id,
+                status="En traitement"
+            )
+            db.session.add(new_lit)
+            db.session.commit()
+            litigation_id = new_lit.id
+            DEBUG_LOGS.append(f"   ✅ Dossier #{litigation_id} créé")
+        except IntegrityError:
+            db.session.rollback()
+            errors.append(f"🔄 {company}: Doublon ignoré")
+            continue
+        except Exception as e:
+            db.session.rollback()
+            errors.append(f"❌ {company}: Erreur DB - {str(e)[:30]}")
+            continue
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ÉTAPE 2 : Trouver l'email de l'entreprise
+        # ═══════════════════════════════════════════════════════════════
+        
+        target_email = get_company_email(company)
+        DEBUG_LOGS.append(f"   📧 Email cible: {target_email}")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ÉTAPE 3 : Générer la mise en demeure (Agent Avocat)
+        # ═══════════════════════════════════════════════════════════════
+        
+        user_name = user.name or user.email.split('@')[0].title()
+        
+        letter_result = generate_legal_letter_gpt(
+            company=company,
+            amount=amount,
+            motif=motif,
+            law=law,
+            client_name=user_name,
+            client_email=user.email,
+            order_ref=None
+        )
+        
+        if not letter_result["success"]:
+            errors.append(f"⚠️ {company}: Échec génération lettre - {letter_result['error']}")
+            new_lit.status = "Erreur génération"
+            db.session.commit()
+            continue
+        
+        DEBUG_LOGS.append(f"   ✅ Lettre générée")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ÉTAPE 4 : Envoyer l'email (Agent Facteur)
+        # ═══════════════════════════════════════════════════════════════
+        
+        send_result = send_mise_en_demeure_gmail(
+            user=user,
+            target_email=target_email,
+            subject=letter_result["subject"],
+            html_body=letter_result["html_body"],
+            text_body=letter_result["text_body"],
+            litigation_id=litigation_id
+        )
+        
+        if send_result["success"]:
+            # Succès !
+            new_lit.status = "En attente de réponse"
+            new_lit.legal_notice_sent = True
+            new_lit.legal_notice_date = datetime.now()
+            new_lit.legal_notice_message_id = send_result["message_id"]
+            new_lit.merchant_email = target_email
+            db.session.commit()
+            
+            sent_count += 1
+            details.append({
+                "company": company,
+                "amount": amount,
+                "email": target_email,
+                "status": "✅ Envoyé"
+            })
+            
+            DEBUG_LOGS.append(f"   ✅ ENVOYÉ ! Message ID: {send_result['message_id']}")
+            
+            # Notification Telegram
+            send_telegram_notif(
+                f"📧 MISE EN DEMEURE ENVOYÉE !\n\n"
+                f"🏪 {company.upper()}\n"
+                f"💰 {amount}\n"
+                f"📬 Envoyé à: {target_email}\n"
+                f"👤 Client: {user.email}"
+            )
+        else:
+            # Échec
+            error_detail = f"{send_result['error_type']}: {send_result['error']}"
+            errors.append(f"❌ {company}: {send_result['error']}")
+            new_lit.status = f"Erreur envoi: {send_result['error_type']}"
+            db.session.commit()
+            
+            details.append({
+                "company": company,
+                "amount": amount,
+                "email": target_email,
+                "status": f"❌ {send_result['error_type']}"
+            })
+            
+            DEBUG_LOGS.append(f"   ❌ Échec: {error_detail}")
+    
+    DEBUG_LOGS.append(f"🚀 Traitement terminé: {sent_count}/{len(litigations_data)} envoyé(s)")
+    
+    return {
+        "sent": sent_count,
+        "total": len(litigations_data),
+        "errors": errors,
+        "details": details
+    }
 
 # ========================================
 # BLACKLIST ANTI-SPAM (PARE-FEU) - CORRIGÉ BUG N°2
@@ -6031,7 +6647,7 @@ def success_page():
             """ + FOOTER
     
     # ════════════════════════════════════════════════════════════════
-    # FLUX NORMAL - Traitement des litiges SCAN
+    # FLUX NORMAL - Traitement des litiges SCAN avec AGENTS GPT + GMAIL
     # ════════════════════════════════════════════════════════════════
     
     # Récupérer les litiges détectés depuis la session
@@ -6048,140 +6664,176 @@ def success_page():
         </div>
         """ + FOOTER
     
-    sent_count = 0
-    errors = []
+    DEBUG_LOGS.append(f"🚀 TRAITEMENT POST-PAIEMENT: {len(detected_litigations)} litige(s) pour {user.email}")
+    
+    # ════════════════════════════════════════════════════════════════
+    # PRÉ-FILTRAGE : Vérifier les montants et doublons
+    # ════════════════════════════════════════════════════════════════
+    
+    valid_litigations = []
+    pre_errors = []
     
     for lit_data in detected_litigations:
-        # Vérifier que le montant est valide avant d'enregistrer
-        if not is_valid_euro_amount(lit_data['amount']):
-            errors.append(f"⚠️ {lit_data['company']}: montant invalide ({lit_data['amount']}) - non enregistré")
+        # Vérifier que le montant est valide
+        if not is_valid_euro_amount(lit_data.get('amount', '')):
+            pre_errors.append(f"⚠️ {lit_data.get('company', 'Inconnu')}: montant invalide ({lit_data.get('amount', 'N/A')})")
             continue
         
-        # ════════════════════════════════════════════════════════════════
-        # VÉRIFICATION DOUBLON PAR COMPANY + MONTANT
-        # Permet plusieurs dossiers du même marchand si montants différents
-        # ════════════════════════════════════════════════════════════════
-        company_normalized = lit_data['company'].lower().strip()
-        amount_numeric = extract_numeric_amount(lit_data['amount'])
+        # Vérification doublon
+        company_normalized = lit_data.get('company', '').lower().strip()
+        amount_numeric = extract_numeric_amount(lit_data.get('amount', '0'))
         
-        print(f"\n📝 Création dossier: {company_normalized.upper()} - {amount_numeric}€")
-        
-        # RÈGLE : Si montant = 0, on ne vérifie pas les doublons
-        is_real_duplicate = False
+        is_duplicate = False
         if amount_numeric > 0:
-            # Vérifier si un dossier avec MÊME company ET MÊME montant existe déjà
-            existing_duplicate = Litigation.query.filter_by(
+            existing_cases = Litigation.query.filter_by(
                 user_email=session['email'],
                 company=company_normalized
             ).all()
             
-            for existing in existing_duplicate:
+            for existing in existing_cases:
                 existing_amount = extract_numeric_amount(existing.amount)
-                # Ignorer les montants à 0
-                if existing_amount == 0:
-                    continue
-                diff = abs(existing_amount - amount_numeric)
-                print(f"   Comparaison: |{amount_numeric} - {existing_amount}| = {diff}")
-                # Tolérance de 1€ pour considérer comme doublon
-                if diff <= 1:
-                    is_real_duplicate = True
-                    print(f"   ⚠️ DOUBLON ! Montants identiques")
+                if existing_amount > 0 and abs(existing_amount - amount_numeric) <= 2:
+                    is_duplicate = True
                     break
-                else:
-                    print(f"   ✅ Montants différents → PAS un doublon")
         
-        if is_real_duplicate:
-            errors.append(f"🔄 {lit_data['company'].upper()} ({lit_data['amount']}): doublon ignoré (même marchand + même montant)")
+        if is_duplicate:
+            pre_errors.append(f"🔄 {lit_data.get('company', '').upper()}: doublon ignoré")
             continue
         
-        print(f"   ✅ Création autorisée")
-        
-        # ÉTAPE 1: Enregistrer en base de données
-        new_lit = Litigation(
-            user_email=session['email'],
-            company=lit_data['company'],
-            amount=lit_data['amount'],
-            law=lit_data['law'],
-            subject=lit_data['subject'],
-            message_id=lit_data['message_id'],
-            status="Détecté"
-        )
-        
-        try:
-            db.session.add(new_lit)
-            db.session.commit()
-        except IntegrityError:
-            db.session.rollback()
-            errors.append(f"⚠️ {lit_data['company']}: doublon ignoré")
-            continue
-        
-        # ÉTAPE 2: Envoyer la mise en demeure
-        try:
-            creds = get_refreshed_credentials(user.refresh_token)
-            company_key = lit_data['company'].lower()
-            legal_info = LEGAL_DIRECTORY.get(company_key, {
-                "email": "theodordelgao@gmail.com",
-                "loi": "le Droit Européen de la Consommation"
-            })
-            
-            target_email = legal_info["email"]
-            
-            corps = f"""MISE EN DEMEURE FORMELLE
-
-Objet : Réclamation concernant le dossier : {lit_data['subject']}
-
-À l'attention du Service Juridique de {lit_data['company'].upper()},
-
-Je soussigné(e), {user.name}, vous informe par la présente de mon intention de réclamer une indemnisation pour le litige suivant :
-
-- Nature du litige : {lit_data['subject']}
-- Fondement juridique : {lit_data['law']}
-- Montant réclamé : {lit_data['amount']}
-
-Conformément à la législation en vigueur, je vous mets en demeure de procéder au remboursement sous un délai de 8 jours ouvrés.
-
-À défaut de réponse satisfaisante, je me réserve le droit de saisir les autorités compétentes.
-
-Cordialement,
-{user.name}
-{user.email}
-"""
-            
-            if send_litigation_email(creds, target_email, f"MISE EN DEMEURE - {lit_data['company'].upper()}", corps):
-                new_lit.status = "En attente de remboursement"
-                db.session.commit()
-                sent_count += 1
-                send_telegram_notif(f"📧 **JUSTICIO** : Mise en demeure {lit_data['amount']} envoyée à {lit_data['company'].upper()} !")
-                DEBUG_LOGS.append(f"✅ Mail envoyé pour {lit_data['company']}")
-            else:
-                errors.append(f"❌ {lit_data['company']}: échec d'envoi email")
-        
-        except Exception as e:
-            errors.append(f"❌ {lit_data['company']}: {str(e)}")
-            DEBUG_LOGS.append(f"❌ Erreur envoi {lit_data['company']}: {str(e)}")
+        valid_litigations.append(lit_data)
     
-    # Vider la session des litiges détectés (ils sont maintenant en base)
+    # ════════════════════════════════════════════════════════════════
+    # 🚀 TRAITEMENT AVEC AGENTS (GPT + GMAIL)
+    # ════════════════════════════════════════════════════════════════
+    
+    if valid_litigations:
+        result = process_pending_litigations(user, valid_litigations)
+        sent_count = result["sent"]
+        errors = pre_errors + result["errors"]
+        details = result["details"]
+    else:
+        sent_count = 0
+        errors = pre_errors
+        details = []
+    
+    # Vider la session
     session.pop('detected_litigations', None)
     session.pop('total_gain', None)
     
-    # Affichage du résultat
+    # ════════════════════════════════════════════════════════════════
+    # 📊 AFFICHAGE DU RAPPORT DÉTAILLÉ
+    # ════════════════════════════════════════════════════════════════
+    
+    # Construire le rapport des envois
+    report_html = ""
+    if details:
+        report_items = ""
+        for d in details:
+            if "✅" in d["status"]:
+                status_style = "color:#10b981;"
+                icon = "✅"
+            else:
+                status_style = "color:#dc2626;"
+                icon = "❌"
+            report_items += f"""
+            <div style='display:flex; justify-content:space-between; align-items:center; 
+                        padding:12px; margin:8px 0; background:#f8fafc; border-radius:8px;
+                        border-left:4px solid {"#10b981" if "✅" in d["status"] else "#dc2626"};'>
+                <div>
+                    <strong style='text-transform:uppercase;'>{d["company"]}</strong>
+                    <span style='color:#64748b; font-size:0.85rem; margin-left:10px;'>{d["amount"]}</span>
+                </div>
+                <div style='{status_style} font-weight:bold;'>{icon}</div>
+            </div>
+            """
+        
+        report_html = f"""
+        <div style='background:white; padding:20px; border-radius:15px; margin:20px auto; max-width:450px;
+                    box-shadow:0 4px 15px rgba(0,0,0,0.1);'>
+            <h3 style='margin-top:0; color:#1e293b; border-bottom:2px solid #e2e8f0; padding-bottom:10px;'>
+                📋 Rapport d'envoi
+            </h3>
+            {report_items}
+        </div>
+        """
+    
+    # Construire le bloc erreurs
     error_html = ""
     if errors:
-        error_html = "<div style='background:#fee2e2; padding:15px; border-radius:10px; margin-top:20px;'>" + "<br>".join(errors) + "</div>"
+        error_html = f"""
+        <details style='margin:20px auto; max-width:450px;'>
+            <summary style='cursor:pointer; color:#dc2626; font-size:0.9rem; padding:10px;
+                          background:#fee2e2; border-radius:8px;'>
+                ⚠️ {len(errors)} problème(s) rencontré(s)
+            </summary>
+            <div style='background:#fef2f2; padding:15px; border-radius:0 0 8px 8px; font-size:0.85rem;'>
+                {"<br>".join(errors)}
+            </div>
+        </details>
+        """
+    
+    # Message principal selon résultat
+    if sent_count > 0:
+        main_icon = "✅"
+        main_title = f"{sent_count} Mise(s) en demeure envoyée(s) !"
+        main_color = "#10b981"
+        main_subtitle = "Les réclamations ont été envoyées aux entreprises concernées."
+    elif valid_litigations:
+        main_icon = "⚠️"
+        main_title = "Envoi en cours de traitement"
+        main_color = "#f59e0b"
+        main_subtitle = "Certains envois nécessitent une vérification manuelle."
+    else:
+        main_icon = "ℹ️"
+        main_title = "Aucun nouveau litige à traiter"
+        main_color = "#3b82f6"
+        main_subtitle = "Tous les litiges étaient déjà en cours de traitement."
     
     return STYLE + f"""
-    <div style='text-align:center; padding:50px;'>
-        <h1>✅ Succès !</h1>
-        <div class='card' style='max-width:400px; margin:20px auto;'>
-            <h3>🚀 {sent_count} Mise(s) en demeure envoyée(s) !</h3>
-            <p>Votre carte est enregistrée. Les réclamations ont été envoyées aux entreprises concernées.</p>
-            <p style='color:#10b981; font-weight:bold;'>Vous recevrez une copie dans vos emails envoyés.</p>
-            <p style='color:#64748b; font-size:0.9rem; margin-top:15px;'>
-                💡 Notre système surveille automatiquement votre boîte mail et vous notifiera dès qu'un remboursement sera détecté.
+    <div style='max-width:550px; margin:0 auto; text-align:center; padding:30px;'>
+        
+        <!-- Badge succès principal -->
+        <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                    padding:40px; border-radius:20px; margin-bottom:25px;'>
+            <div style='font-size:4rem; margin-bottom:15px;'>{main_icon}</div>
+            <h1 style='color:#065f46; margin:0 0 10px 0;'>{main_title}</h1>
+            <p style='color:#047857; margin:0;'>{main_subtitle}</p>
+        </div>
+        
+        <!-- Info carte -->
+        <div style='background:#ecfdf5; padding:15px; border-radius:10px; margin-bottom:20px;
+                    border-left:4px solid #10b981;'>
+            <p style='margin:0; color:#065f46; font-size:0.9rem;'>
+                <b>💳 Paiement sécurisé !</b><br>
+                Votre carte est enregistrée. Commission uniquement sur résultat.
             </p>
         </div>
+        
+        <!-- Info BCC -->
+        {f'''<div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px;
+                    border-left:4px solid #3b82f6;'>
+            <p style='margin:0; color:#1e40af; font-size:0.9rem;'>
+                <b>📧 Copie dans votre boîte mail !</b><br>
+                Vous recevez automatiquement une copie de chaque mise en demeure envoyée.
+            </p>
+        </div>''' if sent_count > 0 else ''}
+        
+        {report_html}
         {error_html}
-        <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
+        
+        <!-- Actions -->
+        <div style='margin-top:30px;'>
+            <a href='/dashboard' class='btn-success' style='display:inline-block; padding:15px 30px; margin:5px;'>
+                📂 VOIR MES DOSSIERS
+            </a>
+        </div>
+        
+        <!-- Info suivi -->
+        <p style='color:rgba(255,255,255,0.6); font-size:0.85rem; margin-top:20px;'>
+            💡 Notre système surveille automatiquement votre boîte mail<br>
+            et vous notifiera dès qu'un remboursement sera détecté.
+        </p>
+        
     </div>
     """ + FOOTER
 
