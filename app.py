@@ -1907,6 +1907,239 @@ Exemples REJET :
         DEBUG_LOGS.append(f"Erreur IA: {str(e)}")
         return ["REJET", "Erreur IA", "Inconnu", ""]
 
+
+# ════════════════════════════════════════════════════════════════
+# 🚀 ANALYSE IA PERMISSIVE - MODE VOYAGE (INFAILLIBLE)
+# ════════════════════════════════════════════════════════════════
+
+def analyze_travel_permissive(text, subject, sender):
+    """
+    ✈️ ANALYSE IA ULTRA-PERMISSIVE POUR LES VOYAGES
+    
+    Philosophie : Mieux vaut un faux positif qu'un litige raté !
+    On détecte TOUT ce qui ressemble à un problème de transport.
+    
+    Retourne : {"litige": bool, "company": str, "amount": str, "law": str, "proof": str}
+    """
+    if not OPENAI_API_KEY:
+        return {"litige": False, "reason": "Pas d'API"}
+    
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    try:
+        prompt = f"""🚨 MODE ULTRA-PERMISSIF - AUCUN LITIGE NE DOIT ÊTRE RATÉ ! 🚨
+
+Tu es un AVOCAT EXPERT en droit des transports (Règlement UE 261/2004, Règlement UE 2021/782).
+Ta mission : DÉTECTER TOUS les litiges de transport possibles. Sois PERMISSIF !
+
+📧 EMAIL À ANALYSER :
+EXPÉDITEUR: {sender}
+SUJET: {subject}
+CONTENU: {text[:2500]}
+
+═══════════════════════════════════════════════════════════════
+🎯 RÈGLE D'OR : SI TU VOIS UN DE CES MOTS → C'EST UN LITIGE !
+═══════════════════════════════════════════════════════════════
+
+MOTS-CLÉS TRANSPORT (1 seul suffit) :
+✈️ AVION : retard, delay, annulé, cancelled, annulation, surbooking, refusé embarquement,
+          bagage perdu, bagage retardé, correspondance ratée, indemnisation, compensation,
+          vol, flight, boarding, gate, terminal
+
+🚆 TRAIN : retard, supprimé, annulé, perturbation, incident, panne, grève, 
+          correspondance, TGV, Ouigo, Eurostar, Thalys, compensation, remboursement
+
+🚗 VTC/TAXI : facturé à tort, trajet fantôme, annulation, problème course, surfacturation
+
+COMPAGNIES À DÉTECTER :
+- Aérien : Air France, EasyJet, Ryanair, Transavia, Vueling, Volotea, Lufthansa, 
+           British Airways, KLM, Iberia, TAP, Emirates, Qatar Airways
+- Train : SNCF, Ouigo, Eurostar, Thalys, Trenitalia, Deutsche Bahn, Renfe
+- VTC : Uber, Bolt, Free Now, Kapten
+
+═══════════════════════════════════════════════════════════════
+💰 MONTANTS À APPLIQUER (SI PAS DE MONTANT VISIBLE)
+═══════════════════════════════════════════════════════════════
+
+VOLS (Règlement EC 261/2004) :
+- Retard ≥3h OU annulation <14j : 
+  • Court-courrier (<1500km) : 250€
+  • Moyen-courrier (1500-3500km) : 400€  
+  • Long-courrier (>3500km) : 600€
+- Surbooking : idem
+- Bagage perdu/retardé : jusqu'à 1300€
+
+TRAINS (Règlement UE 2021/782) :
+- Retard ≥60min : 25% du billet
+- Retard ≥120min : 50% du billet
+- Annulation : 100% remboursement
+- Si montant inconnu → mettre "À compléter"
+
+⚠️ RÈGLE IMPORTANTE : Si tu ne trouves pas le montant exact, 
+   mets "À compléter" mais VALIDE QUAND MÊME LE LITIGE !
+
+═══════════════════════════════════════════════════════════════
+❌ NE REJETTE QUE SI C'EST CLAIREMENT :
+═══════════════════════════════════════════════════════════════
+
+1. Une CONFIRMATION de réservation sans problème
+2. Un email MARKETING/PROMO
+3. Une newsletter
+4. Un remboursement DÉJÀ EFFECTUÉ ("votre compte a été crédité")
+
+TOUT LE RESTE → LITIGE VALIDE !
+
+═══════════════════════════════════════════════════════════════
+📋 FORMAT DE RÉPONSE (JSON OBLIGATOIRE)
+═══════════════════════════════════════════════════════════════
+
+SI LITIGE DÉTECTÉ :
+{{"litige": true, "company": "NOM_COMPAGNIE", "amount": "MONTANT€", "law": "Règlement applicable", "proof": "Phrase clé du problème"}}
+
+SI PAS DE LITIGE :
+{{"litige": false, "reason": "Raison courte"}}
+
+EXEMPLES DE RÉPONSES VALIDES :
+{{"litige": true, "company": "SNCF", "amount": "À compléter", "law": "Règlement UE 2021/782", "proof": "Train en retard de 2h"}}
+{{"litige": true, "company": "Air France", "amount": "250€", "law": "Règlement EC 261/2004", "proof": "Vol annulé sans préavis"}}
+{{"litige": true, "company": "Ryanair", "amount": "400€", "law": "Règlement EC 261/2004", "proof": "Retard de 4 heures"}}
+{{"litige": true, "company": "Uber", "amount": "À compléter", "law": "Code de la consommation", "proof": "Course facturée mais non effectuée"}}
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Tu es un avocat expert en droit des transports. Tu dois détecter TOUS les litiges possibles. Sois permissif : mieux vaut un faux positif qu'un litige raté. Réponds UNIQUEMENT en JSON valide."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,  # Un peu de créativité pour ne rien rater
+            max_tokens=300
+        )
+        
+        ai_response = response.choices[0].message.content.strip()
+        DEBUG_LOGS.append(f"✈️ AI Travel Response: {ai_response[:100]}...")
+        
+        # Parser JSON
+        import json
+        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            return result
+        else:
+            return {"litige": False, "reason": "Parsing error"}
+            
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ Erreur IA Travel: {str(e)}")
+        return {"litige": False, "reason": str(e)[:50]}
+
+
+def analyze_ecommerce_permissive(text, subject, sender, to_field):
+    """
+    📦 ANALYSE IA PERMISSIVE POUR L'E-COMMERCE
+    
+    Détecte les litiges : colis non reçu, produit défectueux, remboursement partiel, etc.
+    
+    Retourne : {"litige": bool, "company": str, "amount": str, "law": str, "proof": str}
+    """
+    if not OPENAI_API_KEY:
+        return {"litige": False, "reason": "Pas d'API"}
+    
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    try:
+        prompt = f"""🛒 EXPERT LITIGES E-COMMERCE - MODE DÉTECTION MAXIMALE
+
+Tu es un expert en droit de la consommation. Ta mission : détecter TOUS les litiges e-commerce possibles.
+
+📧 EMAIL :
+FROM: {sender}
+TO: {to_field}
+SUJET: {subject}
+CONTENU: {text[:2500]}
+
+═══════════════════════════════════════════════════════════════
+🎯 MOTS-CLÉS DE LITIGE (1 seul suffit pour valider)
+═══════════════════════════════════════════════════════════════
+
+📦 LIVRAISON :
+- "pas reçu", "jamais reçu", "non livré", "colis perdu", "en attente"
+- "livraison échouée", "retard livraison", "toujours pas livré"
+- "statut bloqué", "colis introuvable"
+
+🔄 RETOUR/REMBOURSEMENT :
+- "remboursement", "rembourser", "pas remboursé", "en attente de remboursement"
+- "retour refusé", "remboursement partiel", "montant incorrect"
+- "demande de remboursement", "je souhaite être remboursé"
+
+⚠️ PRODUIT :
+- "défectueux", "ne fonctionne pas", "cassé", "abîmé"
+- "non conforme", "contrefaçon", "faux", "différent de la photo"
+- "mauvaise taille", "erreur de commande"
+
+💳 FACTURATION :
+- "double facturation", "facturé à tort", "prélèvement non autorisé"
+- "montant incorrect", "erreur de prix"
+
+═══════════════════════════════════════════════════════════════
+🏪 ENTREPRISES E-COMMERCE À DÉTECTER
+═══════════════════════════════════════════════════════════════
+
+Amazon, Zalando, Fnac, Darty, Cdiscount, La Redoute, Asos, Zara, H&M,
+Mango, Bershka, AliExpress, Wish, Temu, Shein, Vinted, Leboncoin,
+eBay, Rakuten, Back Market, Veepee, Showroomprivé, Sarenza, Spartoo...
+
+💡 ASTUCE : Regarde le champ TO pour identifier l'entreprise !
+   @amazon.fr → AMAZON
+   @zalando.fr → ZALANDO
+   @fnac.com → FNAC
+
+═══════════════════════════════════════════════════════════════
+💰 GESTION DU MONTANT
+═══════════════════════════════════════════════════════════════
+
+1. Cherche un montant dans le texte (ex: "42.99€", "50 euros", "120 EUR")
+2. Si pas de montant visible → mets "À compléter" 
+3. ⚠️ NE REJETTE JAMAIS un litige juste parce que le montant manque !
+
+═══════════════════════════════════════════════════════════════
+❌ REJETTE UNIQUEMENT SI :
+═══════════════════════════════════════════════════════════════
+
+1. C'est une CONFIRMATION de commande normale
+2. C'est du MARKETING/PROMO/NEWSLETTER
+3. C'est une simple FACTURE sans problème
+4. Le remboursement est DÉJÀ EFFECTUÉ
+
+═══════════════════════════════════════════════════════════════
+📋 RÉPONSE JSON
+═══════════════════════════════════════════════════════════════
+
+LITIGE : {{"litige": true, "company": "NOM", "amount": "XX€", "law": "Directive UE 2011/83", "proof": "Phrase clé"}}
+PAS DE LITIGE : {{"litige": false, "reason": "Raison"}}
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Tu es un expert en litiges e-commerce. Détecte tous les problèmes possibles. Sois permissif. Réponds en JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=300
+        )
+        
+        ai_response = response.choices[0].message.content.strip()
+        
+        import json
+        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return {"litige": False, "reason": "Parsing error"}
+            
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ Erreur IA E-commerce: {str(e)}")
+        return {"litige": False, "reason": str(e)[:50]}
+
 def is_valid_euro_amount(amount_str):
     """
     FONCTION HELPER - BUG N°3 CORRIGÉ
@@ -3838,10 +4071,12 @@ def scan():
 @app.route("/scan-travel")
 def scan_travel():
     """
-    ✈️ SCANNER VOYAGES - Analyse rétroactive sur 1 AN
+    ✈️ SCANNER VOYAGES INFAILLIBLE - Analyse rétroactive sur 1 AN
     
-    Cible : SNCF, Air France, EasyJet, Ryanair, etc.
-    Recherche : Retards, annulations, indemnisations EC 261
+    VERSION V2 PERMISSIVE : Ne rate AUCUN litige de transport !
+    - Query Gmail ULTRA-LARGE
+    - Analyse IA PERMISSIVE
+    - Gestion robuste du montant
     """
     if "credentials" not in session:
         return redirect("/login")
@@ -3850,44 +4085,65 @@ def scan_travel():
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
     except Exception as e:
-        return f"Erreur d'authentification Gmail : {e}<br><a href='/login'>Se reconnecter</a>"
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1 style='color:white;'>❌ Erreur d'authentification</h1>
+            <p style='color:rgba(255,255,255,0.7);'>{str(e)[:100]}</p>
+            <a href='/login' class='btn-success'>Se reconnecter</a>
+        </div>
+        """ + FOOTER
     
     # Calcul de la date il y a 1 an
     from datetime import timedelta
     one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y/%m/%d")
     
-    # Requête Gmail spécifique aux voyages
+    # ════════════════════════════════════════════════════════════════
+    # 🔍 QUERY GMAIL ULTRA-LARGE - Ne rien rater !
+    # ════════════════════════════════════════════════════════════════
+    
     query = f"""
     label:INBOX 
     after:{one_year_ago}
-    (retard OR annulation OR delay OR cancelled OR annulé OR compensation OR 
-     indemnisation OR remboursement OR refund OR bagage OR baggage OR perdu OR lost)
-    (sncf OR "air france" OR airfrance OR easyjet OR ryanair OR transavia OR 
-     vueling OR volotea OR lufthansa OR "british airways" OR klm OR eurostar OR 
-     ouigo OR thalys OR trenitalia OR uber OR bolt OR blablacar OR flixbus OR
-     booking OR expedia OR "hotels.com" OR airbnb)
+    (
+        SNCF OR "Air France" OR Train OR Vol OR Avion OR Flight OR
+        Retard OR Delay OR Annulation OR Cancelled OR Annulé OR
+        Indemnisation OR Compensation OR Remboursement OR Refund OR
+        Bagage OR Baggage OR Perdu OR Lost OR Perturbation OR
+        EasyJet OR Ryanair OR Transavia OR Vueling OR Volotea OR 
+        Lufthansa OR "British Airways" OR KLM OR Eurostar OR Ouigo OR 
+        Thalys OR Trenitalia OR Uber OR Bolt OR "Free Now" OR Kapten OR
+        Booking OR Expedia OR TGV OR Eurolines OR Flixbus OR BlablaCar
+    )
     -category:promotions -category:social
     -subject:"MISE EN DEMEURE"
     """
     
-    DEBUG_LOGS.append(f"✈️ SCAN VOYAGE lancé - Période: {one_year_ago} à aujourd'hui")
+    print("\n" + "="*70)
+    print("✈️ SCAN VOYAGE INFAILLIBLE - DÉMARRAGE")
+    print(f"📅 Période: {one_year_ago} → Aujourd'hui (365 jours)")
+    print("="*70)
+    
+    DEBUG_LOGS.append(f"✈️ SCAN VOYAGE V2 lancé - Période: {one_year_ago} à aujourd'hui")
     
     try:
         results = service.users().messages().list(userId='me', q=query, maxResults=100).execute()
         messages = results.get('messages', [])
     except Exception as e:
         DEBUG_LOGS.append(f"❌ Erreur lecture Gmail Voyage: {str(e)}")
-        return f"Erreur lecture Gmail : {e}"
+        return STYLE + f"<h1 style='color:white;'>Erreur lecture Gmail : {str(e)[:100]}</h1>" + FOOTER
+    
+    print(f"📧 {len(messages)} emails trouvés sur 1 an")
     
     total_gain = 0
     new_cases_count = 0
     html_cards = ""
-    debug_rejected = ["<h3>📋 Rapport d'Analyse Voyages (1 an)</h3>"]
+    debug_rejected = []
     
     # Compteurs
     emails_scanned = 0
-    emails_filtered_free = 0
+    emails_filtered_spam = 0
     emails_sent_to_ai = 0
+    emails_litige_found = 0
     
     # Anti-doublon
     existing_message_ids = set()
@@ -3906,12 +4162,20 @@ def scan_travel():
     
     detected_litigations = []
     
+    # Liste des compagnies de transport pour filtrage intelligent
+    TRANSPORT_COMPANIES = [
+        "sncf", "air france", "airfrance", "easyjet", "ryanair", "transavia",
+        "vueling", "volotea", "lufthansa", "british airways", "klm", "eurostar",
+        "ouigo", "thalys", "trenitalia", "uber", "bolt", "free now", "kapten",
+        "flixbus", "blablacar", "booking", "expedia", "tgv", "ter"
+    ]
+    
     for msg in messages:
         emails_scanned += 1
         msg_id = msg['id']
         
         if msg_id in existing_message_ids:
-            debug_rejected.append(f"<p style='color:#f59e0b;'>⏭️ Email déjà traité (ID connu)</p>")
+            debug_rejected.append(f"⏭️ Déjà traité: {msg_id[:15]}...")
             continue
         
         try:
@@ -3923,12 +4187,38 @@ def scan_travel():
             
             body_snippet = msg_data.get('snippet', '')
             
-            # Filtrage spam basique
-            if is_spam(sender, subject, body_snippet):
-                emails_filtered_free += 1
+            # ════════════════════════════════════════════════════════════════
+            # FILTRAGE SPAM MINIMAL - On garde un maximum d'emails
+            # ════════════════════════════════════════════════════════════════
+            
+            subject_lower = subject.lower()
+            sender_lower = sender.lower()
+            
+            # Spam évident uniquement
+            if any(spam in subject_lower for spam in ["newsletter", "unsubscribe", "désabonner", "mot de passe", "password"]):
+                emails_filtered_spam += 1
+                debug_rejected.append(f"🚫 Spam: {subject[:40]}...")
                 continue
             
-            # Extraction du body complet (limité)
+            # ════════════════════════════════════════════════════════════════
+            # PRÉ-FILTRE TRANSPORT : L'email doit mentionner une compagnie
+            # ════════════════════════════════════════════════════════════════
+            
+            full_text = f"{sender_lower} {subject_lower} {body_snippet.lower()}"
+            is_transport_related = any(company in full_text for company in TRANSPORT_COMPANIES)
+            
+            # Aussi accepter les mots clés de transport
+            transport_keywords = ["vol ", "train ", "avion", "retard", "annul", "bagage", "flight", "delay", "tgv"]
+            has_transport_keyword = any(kw in full_text for kw in transport_keywords)
+            
+            if not is_transport_related and not has_transport_keyword:
+                debug_rejected.append(f"⏭️ Pas transport: {subject[:40]}...")
+                continue
+            
+            # ════════════════════════════════════════════════════════════════
+            # EXTRACTION DU CONTENU COMPLET
+            # ════════════════════════════════════════════════════════════════
+            
             body_text = ""
             payload = msg_data.get('payload', {})
             
@@ -3939,7 +4229,7 @@ def scan_travel():
                         if data:
                             import base64
                             try:
-                                body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:3000]
+                                body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
                             except:
                                 pass
                             break
@@ -3948,7 +4238,7 @@ def scan_travel():
                 if data:
                     import base64
                     try:
-                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:3000]
+                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
                     except:
                         pass
             
@@ -3957,140 +4247,156 @@ def scan_travel():
             
             emails_sent_to_ai += 1
             
-            # Analyse IA avec prompt spécifique voyages
-            prompt_travel = f"""Tu es un expert en droit des transports et règlement EC 261/2004.
-Analyse cet email concernant un VOYAGE (train, avion, VTC) et détermine s'il y a un litige indemnisable.
-
-EXPÉDITEUR: {sender}
-SUJET: {subject}
-CONTENU: {body_text[:2000]}
-
-INDEMNISATIONS EC 261/2004 (vols):
-- Retard ≥3h: 250€ à 600€ selon distance
-- Annulation <14j: 250€ à 600€
-- Surbooking: 250€ à 600€
-
-INDEMNISATIONS SNCF:
-- Retard TGV ≥30min: 25% à 75% du billet
-- Annulation: 100% remboursement
-
-Réponds UNIQUEMENT en JSON:
-{{"litige": true/false, "company": "nom", "amount": "montant€", "law": "article de loi", "proof": "résumé preuve"}}
-
-Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), réponds:
-{{"litige": false}}"""
-
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": prompt_travel}],
-                    max_tokens=300,
-                    temperature=0.1
-                )
+            print(f"\n{'─'*50}")
+            print(f"✈️ ANALYSE: {subject[:50]}...")
+            print(f"   From: {sender[:40]}...")
+            
+            # ════════════════════════════════════════════════════════════════
+            # 🤖 ANALYSE IA PERMISSIVE POUR VOYAGES
+            # ════════════════════════════════════════════════════════════════
+            
+            analysis = analyze_travel_permissive(body_text, subject, sender)
+            
+            print(f"   🤖 Résultat IA: {analysis}")
+            
+            if analysis.get("litige") == True:
+                company = analysis.get("company", "Transporteur inconnu")
+                amount = analysis.get("amount", "À compléter")
+                law = analysis.get("law", "Règlement EC 261/2004")
+                proof = analysis.get("proof", subject)
                 
-                ai_response = response.choices[0].message.content.strip()
+                # ════════════════════════════════════════════════════════════════
+                # GESTION ROBUSTE DU MONTANT - Ne jamais rejeter pour montant manquant !
+                # ════════════════════════════════════════════════════════════════
                 
-                # Parser JSON
-                import json
-                json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-                if json_match:
-                    analysis = json.loads(json_match.group())
-                else:
+                # Normaliser le montant
+                if not amount or amount.lower() in ["", "à compléter", "inconnu", "none", "null"]:
+                    amount = "À compléter"
+                
+                # Essayer d'extraire un montant numérique
+                amount_numeric = extract_numeric_amount(amount)
+                
+                # Si montant toujours 0 mais c'est un vol, appliquer barème EC 261
+                if amount_numeric == 0:
+                    company_lower = company.lower()
+                    if any(airline in company_lower for airline in ["air france", "easyjet", "ryanair", "transavia", "vueling", "lufthansa", "klm", "british"]):
+                        amount = "250€"  # Minimum EC 261
+                        amount_numeric = 250
+                        print(f"   💰 Montant estimé (EC 261): 250€")
+                    elif "sncf" in company_lower or "ouigo" in company_lower or "tgv" in company_lower:
+                        amount = "À compléter"
+                        amount_numeric = 50  # Estimation basse pour les stats
+                        print(f"   💰 Montant à compléter (train)")
+                
+                # Vérifier doublon company + montant (avec tolérance)
+                company_key = company.lower().strip()
+                
+                is_duplicate = False
+                if company_key in existing_company_amounts_dict:
+                    for existing_amount in existing_company_amounts_dict[company_key]:
+                        if amount_numeric > 0 and abs(existing_amount - amount_numeric) <= 10:
+                            is_duplicate = True
+                            break
+                
+                if is_duplicate:
+                    debug_rejected.append(f"🔄 Doublon: {company} ({amount})")
                     continue
                 
-                if analysis.get("litige") == True:
-                    company = analysis.get("company", "Transporteur")
-                    amount = analysis.get("amount", "0€")
-                    law = analysis.get("law", "EC 261/2004")
-                    proof = analysis.get("proof", subject)
+                # ════════════════════════════════════════════════════════════════
+                # ✅ LITIGE VALIDÉ !
+                # ════════════════════════════════════════════════════════════════
+                
+                new_cases_count += 1
+                emails_litige_found += 1
+                total_gain += amount_numeric if amount_numeric > 0 else 50  # Minimum 50€ pour les stats
+                
+                print(f"   ✅ LITIGE DÉTECTÉ: {company} - {amount}")
+                
+                detected_litigations.append({
+                    "company": company,
+                    "amount": amount,
+                    "law": law,
+                    "subject": f"✈️ {proof[:100]}",
+                    "message_id": msg_id,
+                    "proof": proof
+                })
+                
+                # Ajouter au dict pour éviter les doublons dans ce scan
+                if company_key not in existing_company_amounts_dict:
+                    existing_company_amounts_dict[company_key] = []
+                existing_company_amounts_dict[company_key].append(amount_numeric)
+                
+                # Badge spécial si montant à compléter
+                amount_display = amount if amount != "À compléter" else "<span style='color:#f59e0b;'>À compléter</span>"
+                
+                # Carte HTML Premium
+                html_cards += f"""
+                <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
+                            max-width:550px; position:relative; 
+                            box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
+                            border-left:5px solid #f59e0b;'>
                     
-                    # Vérifier doublon company + montant
-                    company_key = company.lower().strip()
-                    amount_numeric = extract_numeric_amount(amount)
-                    
-                    is_duplicate = False
-                    if company_key in existing_company_amounts_dict:
-                        for existing_amount in existing_company_amounts_dict[company_key]:
-                            if abs(existing_amount - amount_numeric) <= 5:
-                                is_duplicate = True
-                                break
-                    
-                    if is_duplicate:
-                        debug_rejected.append(f"<p style='color:#f59e0b;'>🔄 Doublon ignoré: {company} ({amount})</p>")
-                        continue
-                    
-                    # Ajouter le litige
-                    new_cases_count += 1
-                    total_gain += amount_numeric
-                    
-                    detected_litigations.append({
-                        "company": company,
-                        "amount": amount,
-                        "law": law,
-                        "subject": f"✈️ {proof[:100]}",
-                        "message_id": msg_id,
-                        "proof": proof
-                    })
-                    
-                    # Carte HTML Premium pour voyages
-                    html_cards += f"""
-                    <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
-                                max-width:550px; position:relative; 
-                                box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
-                                border-left:5px solid #f59e0b;'>
-                        
-                        <!-- Badge voyage -->
-                        <div style='position:absolute; top:15px; left:15px; 
-                                    background:linear-gradient(135deg, #fbbf24, #f59e0b);
-                                    color:white; padding:5px 12px; border-radius:20px; 
-                                    font-size:0.7rem; font-weight:600;'>
-                            ✈️ TRANSPORT
-                        </div>
-                        
-                        <!-- Montant -->
-                        <div style='position:absolute; top:25px; right:25px; text-align:right;'>
-                            <div style='font-size:1.8rem; font-weight:700; color:#f59e0b;'>
-                                {amount}
-                            </div>
-                            <div style='font-size:0.75rem; color:#64748b;'>indemnité</div>
-                        </div>
-                        
-                        <!-- Entreprise -->
-                        <div style='margin-top:35px;'>
-                            <span style='background:linear-gradient(135deg, #fef3c7, #fde68a); 
-                                         color:#92400e; padding:6px 14px; border-radius:8px;
-                                         font-size:0.9rem; font-weight:700; text-transform:uppercase;'>
-                                {company.upper()}
-                            </span>
-                        </div>
-                        
-                        <!-- Preuve -->
-                        <div style='background:linear-gradient(135deg, #fef3c7, #fef9c3);
-                                    padding:15px; border-radius:12px; border-left:4px solid #f59e0b;
-                                    margin:20px 0;'>
-                            <p style='margin:0; font-size:0.9rem; color:#92400e; line-height:1.5;'>
-                                {proof[:150]}...
-                            </p>
-                        </div>
-                        
-                        <!-- Base légale -->
-                        <div style='display:flex; align-items:center; gap:8px;'>
-                            <span style='font-size:1.1rem;'>⚖️</span>
-                            <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{law}</span>
-                        </div>
-                        
+                    <!-- Badge voyage -->
+                    <div style='position:absolute; top:15px; left:15px; 
+                                background:linear-gradient(135deg, #fbbf24, #f59e0b);
+                                color:white; padding:5px 12px; border-radius:20px; 
+                                font-size:0.7rem; font-weight:600;'>
+                        ✈️ TRANSPORT
                     </div>
-                    """
                     
-            except Exception as e:
-                DEBUG_LOGS.append(f"❌ Erreur IA voyage: {str(e)[:50]}")
-                continue
+                    <!-- Montant -->
+                    <div style='position:absolute; top:25px; right:25px; text-align:right;'>
+                        <div style='font-size:1.8rem; font-weight:700; color:#f59e0b;'>
+                            {amount_display}
+                        </div>
+                        <div style='font-size:0.75rem; color:#64748b;'>indemnité</div>
+                    </div>
+                    
+                    <!-- Entreprise -->
+                    <div style='margin-top:35px;'>
+                        <span style='background:linear-gradient(135deg, #fef3c7, #fde68a); 
+                                     color:#92400e; padding:6px 14px; border-radius:8px;
+                                     font-size:0.9rem; font-weight:700; text-transform:uppercase;'>
+                            {company.upper()}
+                        </span>
+                    </div>
+                    
+                    <!-- Preuve -->
+                    <div style='background:linear-gradient(135deg, #fef3c7, #fef9c3);
+                                padding:15px; border-radius:12px; border-left:4px solid #f59e0b;
+                                margin:20px 0;'>
+                        <p style='margin:0; font-size:0.9rem; color:#92400e; line-height:1.5;'>
+                            📝 {proof[:180]}{"..." if len(proof) > 180 else ""}
+                        </p>
+                    </div>
+                    
+                    <!-- Base légale -->
+                    <div style='display:flex; align-items:center; gap:8px;'>
+                        <span style='font-size:1.1rem;'>⚖️</span>
+                        <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{law}</span>
+                    </div>
+                    
+                </div>
+                """
+            else:
+                reason = analysis.get("reason", "Non litige")
+                debug_rejected.append(f"❌ Rejeté ({reason}): {subject[:35]}...")
                 
         except Exception as e:
+            debug_rejected.append(f"⚠️ Erreur: {str(e)[:30]}...")
             continue
     
     # Stocker en session
     session['detected_litigations'] = detected_litigations
+    session['total_gain'] = total_gain
+    
+    print("\n" + "="*70)
+    print("📊 RÉSUMÉ SCAN VOYAGE")
+    print(f"   📧 Emails scannés: {emails_scanned}")
+    print(f"   🚫 Filtrés spam: {emails_filtered_spam}")
+    print(f"   🤖 Analysés IA: {emails_sent_to_ai}")
+    print(f"   ✅ LITIGES: {new_cases_count}")
+    print("="*70)
     
     # Debug HTML caché dans <details>
     debug_html = f"""
@@ -4098,17 +4404,17 @@ Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), ré
         <summary style='cursor:pointer; color:rgba(255,255,255,0.5); font-size:0.85rem; 
                         padding:15px; background:rgba(255,255,255,0.05); border-radius:10px;
                         list-style:none; text-align:center;'>
-            🔧 Voir les détails techniques (Debug)
+            🔧 Détails techniques ({emails_scanned} emails analysés)
         </summary>
         <div style='margin-top:15px; background:rgba(255,255,255,0.95); padding:20px; 
                     border-radius:12px; color:#334155; font-size:0.85rem;'>
-            <h4>📊 Statistiques Scan Voyage (1 an)</h4>
-            <p>📧 Emails scannés: {emails_scanned}</p>
-            <p>🚫 Filtrés (spam): {emails_filtered_free}</p>
-            <p>🤖 Analysés par IA: {emails_sent_to_ai}</p>
-            <p>✅ Litiges détectés: {new_cases_count}</p>
-            <div style='max-height:300px; overflow-y:auto; margin-top:10px;'>
-                {''.join(debug_rejected[:20])}
+            <p><b>📧 Emails scannés:</b> {emails_scanned}</p>
+            <p><b>🚫 Filtrés (spam):</b> {emails_filtered_spam}</p>
+            <p><b>🤖 Analysés par IA:</b> {emails_sent_to_ai}</p>
+            <p><b>✅ Litiges détectés:</b> {new_cases_count}</p>
+            <hr style='margin:15px 0; border:none; border-top:1px solid #e2e8f0;'>
+            <div style='max-height:200px; overflow-y:auto; font-size:0.8rem;'>
+                {'<br>'.join(debug_rejected[-30:])}
             </div>
         </div>
     </details>
@@ -4117,12 +4423,13 @@ Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), ré
     if new_cases_count > 0:
         return STYLE + f"""
         <div style='text-align:center; padding:30px;'>
-            <h1 style='color:white;'>✈️ Résultat Scan Voyage (1 an)</h1>
-            <p style='color:#fbbf24; font-size:1.3rem; font-weight:600;'>
+            <div style='font-size:4rem; margin-bottom:15px;'>✈️</div>
+            <h1 style='color:white; margin-bottom:10px;'>Scan Voyage Terminé !</h1>
+            <p style='color:#fbbf24; font-size:1.4rem; font-weight:600;'>
                 {new_cases_count} litige(s) transport détecté(s) !
             </p>
             <p style='color:rgba(255,255,255,0.7);'>
-                💰 Gain potentiel estimé: <b style='color:#10b981; font-size:1.5rem;'>{total_gain:.0f}€</b>
+                💰 Gain potentiel estimé: <b style='color:#10b981; font-size:1.6rem;'>{total_gain:.0f}€</b>
             </p>
         </div>
         
@@ -4131,21 +4438,23 @@ Si ce n'est PAS un litige de voyage (pub, confirmation normale, newsletter), ré
         </div>
         
         <div style='text-align:center; margin:40px 0;'>
-            <a href='/setup-payment' class='btn-gold' style='padding:18px 50px; font-size:1.2rem;'>
+            <a href='/setup-payment' class='btn-success' style='padding:20px 50px; font-size:1.2rem;
+                                                                 background:linear-gradient(135deg, #fbbf24, #f59e0b);
+                                                                 box-shadow:0 15px 40px rgba(251, 191, 36, 0.4);'>
                 🚀 RÉCUPÉRER MES {total_gain:.0f}€
             </a>
             <p style='color:rgba(255,255,255,0.5); margin-top:15px; font-size:0.9rem;'>
                 Commission 25% uniquement en cas de succès
             </p>
         </div>
-        """ + debug_html + FOOTER
+        """ + debug_html + WA_BTN + FOOTER
     else:
         return STYLE + f"""
         <div style='text-align:center; padding:50px;'>
             <div style='font-size:4rem; margin-bottom:20px;'>✈️</div>
             <h1 style='color:white;'>Aucun litige voyage détecté</h1>
             <p style='color:rgba(255,255,255,0.6);'>
-                Nous avons analysé vos emails de transport sur les 12 derniers mois.<br>
+                Nous avons analysé {emails_scanned} emails de transport sur les 12 derniers mois.<br>
                 Aucune indemnisation réclamable n'a été identifiée.
             </p>
             <br>
