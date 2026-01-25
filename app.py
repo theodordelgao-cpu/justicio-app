@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-JUSTICIO v3.0 - PRODUCTION READY
-Application de Réclamations Juridiques Automatisées
-"""
-
 import os
 import re
 import json
@@ -659,3 +652,4 @@ def health():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+
