@@ -2722,6 +2722,119 @@ Si E-COMMERCE valide sans litige :
         DEBUG_LOGS.append(f"❌ Erreur IA {scan_type}: {str(e)}")
         return {"is_valid": False, "litige": False, "reason": str(e)[:50]}
 
+
+def analyze_ecommerce_flexible(text, subject, sender, to_field=""):
+    """
+    📦 ANALYSE IA FLEXIBLE POUR E-COMMERCE - GRAND FILET
+    
+    Détecte TOUS les problèmes de commande, quelle que soit la marque.
+    Capable d'extraire le nom du vendeur même pour des petites boutiques.
+    
+    Retourne : {"is_valid": bool, "litige": bool, "company": str, "amount": str, "law": str, "proof": str}
+    """
+    if not OPENAI_API_KEY:
+        return {"is_valid": False, "litige": False, "reason": "Pas d'API"}
+    
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    # Extraire le domaine de l'expéditeur pour aider à identifier l'entreprise
+    sender_domain = ""
+    if "@" in sender:
+        try:
+            sender_domain = sender.split("@")[1].split(">")[0].split(".")[0]
+        except:
+            pass
+    
+    system_prompt = """Tu es un expert en détection de litiges e-commerce. Tu analyses des emails pour trouver des problèmes de commande.
+
+🎯 TA MISSION : Détecter TOUT problème de livraison/commande, quelle que soit l'entreprise (grande marque OU petite boutique).
+
+📦 MOTS-CLÉS DE LITIGE (1 seul suffit pour valider) :
+- Livraison : "retard", "delay", "non reçu", "jamais reçu", "colis perdu", "non livré", "en attente"
+- Commande : "annulée", "problème", "erreur", "manquant", "incomplet"
+- Produit : "défectueux", "cassé", "abîmé", "non conforme", "contrefaçon"
+- Remboursement : "remboursement", "refund", "pas remboursé", "en attente"
+- Service : "réclamation", "plainte", "litige", "dispute"
+
+🏪 EXTRACTION DE L'ENTREPRISE :
+- Cherche le nom dans l'expéditeur (ex: "service@asphalte.com" → ASPHALTE)
+- Cherche dans le sujet (ex: "Votre commande Nike" → NIKE)
+- Cherche dans le corps (ex: "Boutique XYZ" → XYZ)
+- Si petite boutique inconnue, utilise le nom de domaine de l'expéditeur
+- NE METS JAMAIS "Inconnu" si tu peux extraire un nom !
+
+💰 EXTRACTION DU MONTANT :
+- Cherche des patterns : "150€", "150 euros", "EUR 150", "total: 150"
+- Si pas de montant visible → mets "À compléter"
+- NE REJETTE JAMAIS pour montant manquant !
+
+❌ REJETTE UNIQUEMENT SI :
+1. C'est une CONFIRMATION de commande NORMALE (sans problème mentionné)
+2. C'est du MARKETING/PROMO/NEWSLETTER pur
+3. C'est une simple FACTURE sans problème
+4. Le remboursement est DÉJÀ EFFECTUÉ ("votre compte a été crédité")
+
+⚠️ RÈGLE D'OR : En cas de doute, valide le litige. Mieux vaut un faux positif qu'un litige raté !
+
+📋 FORMAT JSON OBLIGATOIRE :
+
+SI LITIGE :
+{"is_valid": true, "litige": true, "company": "NOM_ENTREPRISE", "amount": "XX€", "law": "Article applicable", "proof": "Phrase clé du problème"}
+
+SI PAS DE LITIGE :
+{"is_valid": true, "litige": false, "reason": "Raison courte"}
+
+SI C'EST DU TRANSPORT (train/avion) :
+{"is_valid": false, "reason": "Transport, pas e-commerce"}"""
+
+    user_prompt = f"""📧 EMAIL À ANALYSER :
+
+EXPÉDITEUR: {sender}
+DOMAINE: {sender_domain}
+DESTINATAIRE: {to_field}
+SUJET: {subject}
+CONTENU: {text[:2500]}
+
+Analyse cet email et réponds UNIQUEMENT en JSON valide."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            max_tokens=400
+        )
+        
+        ai_response = response.choices[0].message.content.strip()
+        DEBUG_LOGS.append(f"📦 AI E-commerce Flexible: {ai_response[:80]}...")
+        
+        # Parser JSON
+        import json
+        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            
+            # Si l'entreprise est "Inconnu", essayer d'extraire depuis le domaine
+            if result.get("company", "").lower() in ["inconnu", "unknown", ""]:
+                if sender_domain and sender_domain not in ["gmail", "yahoo", "outlook", "hotmail", "free", "orange", "sfr"]:
+                    result["company"] = sender_domain.capitalize()
+            
+            # Ajouter la catégorie
+            if result.get("is_valid") and result.get("litige"):
+                result["category"] = "ecommerce"
+            
+            return result
+        else:
+            return {"is_valid": False, "litige": False, "reason": "Parsing error"}
+            
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ Erreur IA E-commerce Flexible: {str(e)}")
+        return {"is_valid": False, "litige": False, "reason": str(e)[:50]}
+
+
 def is_valid_euro_amount(amount_str):
     """
     FONCTION HELPER - BUG N°3 CORRIGÉ
@@ -4090,7 +4203,12 @@ def logout():
 
 @app.route("/scan")
 def scan():
-    """Scanner de litiges - Détection SANS enregistrement en base"""
+    """
+    📦 SCANNER E-COMMERCE V3 - GRAND FILET
+    
+    Détecte TOUS les problèmes de commande, quelle que soit la marque.
+    Query basée sur des CONCEPTS, pas des marques spécifiques.
+    """
     if "credentials" not in session:
         return redirect("/login")
     
@@ -4100,511 +4218,384 @@ def scan():
     except Exception as e:
         return f"Erreur d'authentification Gmail : {e}<br><a href='/login'>Se reconnecter</a>"
     
+    # ════════════════════════════════════════════════════════════════
+    # 🎣 QUERY GMAIL "GRAND FILET" - Basée sur des CONCEPTS
+    # ════════════════════════════════════════════════════════════════
+    
     query = """
-    label:INBOX 
-    (litige OR remboursement OR refund OR annulation OR retard OR delay OR 
-     colis OR commande OR livraison OR sncf OR airfrance OR easyjet OR 
-     ryanair OR amazon OR zalando OR booking OR uber OR deliveroo OR bolt OR
-     fnac OR darty OR zara OR asos OR lufthansa OR klm OR eurostar OR ouigo)
-    -category:promotions -category:social
+    (
+        (commande OR colis OR livraison OR order OR delivery OR package OR expédition OR shipment)
+        (retard OR delay OR problème OR problem OR remboursement OR refund OR 
+         "non reçu" OR "not received" OR "jamais reçu" OR "never received" OR
+         annulé OR cancelled OR "service client" OR "customer service" OR
+         réclamation OR complaint OR litige OR dispute OR défectueux OR defective OR
+         cassé OR broken OR manquant OR missing OR perdu OR lost)
+    )
+    OR
+    (
+        (retard livraison) OR (delivery delay) OR (colis perdu) OR (package lost) OR
+        (commande annulée) OR (order cancelled) OR (remboursement en attente) OR
+        (produit défectueux) OR (article manquant) OR (non conforme)
+    )
+    -label:trash 
+    -category:promotions 
+    -category:social
     -subject:"MISE EN DEMEURE"
+    -subject:newsletter
+    -subject:unsubscribe
     """
     
+    print("\n" + "="*70)
+    print("📦 SCAN E-COMMERCE V3 GRAND FILET - DÉMARRAGE")
+    print("🎣 Mode: Détection par CONCEPTS (pas par marques)")
+    print("="*70)
+    
+    DEBUG_LOGS.append(f"📦 SCAN E-COMMERCE V3 lancé - Mode Grand Filet")
+    
     try:
-        results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=80).execute()
         messages = results.get('messages', [])
     except Exception as e:
         return f"Erreur lecture Gmail : {e}"
+    
+    print(f"📧 {len(messages)} emails trouvés avec la query grand filet")
     
     total_gain = 0
     new_cases_count = 0
     html_cards = ""
     debug_rejected = ["<h3>📋 Rapport d'Analyse</h3>"]
     
-    # Compteurs pour statistiques
+    # Compteurs
     emails_scanned = 0
-    emails_filtered_free = 0  # Spam évidents seulement
+    emails_filtered_spam = 0
     emails_sent_to_ai = 0
+    emails_litige_found = 0
     
-    # ════════════════════════════════════════════════════════════════
-    # LOGIQUE ANTI-DOUBLON : Company + Montant
-    # On autorise plusieurs dossiers du même marchand si montants différents
-    # ════════════════════════════════════════════════════════════════
-    
-    # Charger les message_id DÉJÀ EN BASE (pour ne pas re-scanner le même email)
+    # Anti-doublon
     existing_message_ids = set()
-    
-    # Charger les combinaisons company + amount existantes (pour détecter les vrais doublons)
-    # Format: {company: [liste de montants]}
     existing_company_amounts_dict = {}
     
-    print("\n📂 CHARGEMENT DES DOSSIERS EXISTANTS:")
     for lit in Litigation.query.filter_by(user_email=session['email']).all():
         if lit.message_id:
             existing_message_ids.add(lit.message_id)
-        # Stocker les montants par company
         company_key = lit.company.lower().strip() if lit.company else ""
         amount_value = extract_numeric_amount(lit.amount) if lit.amount else 0
-        print(f"   → {company_key.upper()}: '{lit.amount}' → {amount_value}€")
         if company_key not in existing_company_amounts_dict:
             existing_company_amounts_dict[company_key] = []
         existing_company_amounts_dict[company_key].append(amount_value)
     
-    DEBUG_LOGS.append(f"📊 Dossiers existants : {len(existing_message_ids)} emails")
-    for comp, amounts in existing_company_amounts_dict.items():
-        DEBUG_LOGS.append(f"   → {comp.upper()}: {amounts}")
-    
-    # Liste temporaire des litiges détectés (stockée en session)
     detected_litigations = []
     
-    print("\n" + "="*60)
-    print("🔍 DÉBUT DU SCAN - LOGS DE DÉBOGAGE")
-    print("="*60)
-    print(f"📧 Nombre total d'emails à analyser : {len(messages)}")
-    print(f"📂 Dossiers existants (company → [montants]) : {existing_company_amounts_dict}")
-    print("="*60 + "\n")
+    # ════════════════════════════════════════════════════════════════
+    # LISTES DE FILTRAGE (spam seulement, PAS de filtrage par marque)
+    # ════════════════════════════════════════════════════════════════
+    
+    SPAM_SUBJECTS = [
+        "mot de passe", "password", "newsletter", "unsubscribe", "désabonner",
+        "code promo", "offre exclusive", "vente flash", "soldes", "-50%", "-70%",
+        "gagnez", "félicitations", "cadeau gratuit"
+    ]
+    
+    SPAM_SENDERS = [
+        "noreply@linkedin", "notifications@", "marketing@", "promo@",
+        "news@", "deals@", "offers@"
+    ]
     
     for msg in messages:
+        emails_scanned += 1
+        msg_id = msg['id']
+        
+        if msg_id in existing_message_ids:
+            debug_rejected.append(f"<p>⏭️ Déjà traité: {msg_id[:15]}...</p>")
+            continue
+        
         try:
-            message_id = msg['id']
-            emails_scanned += 1
+            msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+            headers = msg_data.get('payload', {}).get('headers', [])
             
-            # ════════════════════════════════════════════════════════════════
-            # SEUL CHECK PRÉALABLE : Ne pas re-scanner un email déjà traité
-            # (basé sur message_id, PAS sur le marchand)
-            # ════════════════════════════════════════════════════════════════
-            if message_id in existing_message_ids:
-                print(f"⏭️ SKIP (email déjà traité) : message_id={message_id[:20]}...")
-                continue
-            
-            msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
-            headers = msg_data['payload'].get('headers', [])
-            
-            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
-            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Inconnu")
-            to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), "")
+            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'Sans sujet')
+            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Inconnu')
+            to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), '')
             snippet = msg_data.get('snippet', '')
             
-            print(f"\n{'─'*50}")
-            print(f"📩 EMAIL TROUVÉ : {subject[:60]}")
-            print(f"   De: {sender[:50]}")
-            print(f"   To: {to_field[:50]}")
-            print(f"   Snippet: {snippet[:80]}...")
-            print(f"{'─'*50}")
-            
-            # ════════════════════════════════════════════════════════════════
-            # SEULS FILTRES CONSERVÉS (absolument nécessaires)
-            # ════════════════════════════════════════════════════════════════
-            
-            # 1. Ignorer nos propres mises en demeure
-            if "MISE EN DEMEURE" in subject.upper():
-                print(f"   ⏭️ SKIP (notre mise en demeure)")
-                debug_rejected.append(f"<p>📤 <b>IGNORÉ (notre email) :</b> {subject}</p>")
-                continue
-            
-            # 2. Ignorer les spams évidents (mots de passe, newsletters)
             subject_lower = subject.lower()
-            if any(spam_word in subject_lower for spam_word in ["mot de passe", "password", "newsletter", "unsubscribe", "désabonner"]):
-                print(f"   ⏭️ SKIP (spam évident)")
-                emails_filtered_free += 1
-                debug_rejected.append(f"<p>🛑 <b>SPAM évident :</b> {subject}</p>")
-                continue
-            
-            # 3. PRÉ-FILTRE MARKETING - Expéditeurs connus comme publicitaires
             sender_lower = sender.lower()
-            MARKETING_SENDERS = [
-                "temu", "shein", "wish", "aliexpress", "banggood", "gearbest",
-                "groupon", "veepee", "showroomprive", "vente-privee",
-                "newsletter", "promo@", "marketing@", "noreply@", "no-reply@",
-                "info@", "news@", "deals@", "offers@", "sale@"
-            ]
-            is_marketing_sender = any(ms in sender_lower for ms in MARKETING_SENDERS)
             
-            # Aussi vérifier le sujet pour les patterns marketing
-            MARKETING_SUBJECTS = [
-                "offre", "promo", "solde", "réduction", "-50%", "-70%", "gratuit",
-                "gagnez", "félicitations", "cadeau", "offert", "exclusif",
-                "dernière chance", "expire", "limité", "flash", "black friday",
-                "le pdg", "ceo", "founder"
-            ]
-            is_marketing_subject = any(ms in subject_lower for ms in MARKETING_SUBJECTS)
+            # ════════════════════════════════════════════════════════════════
+            # FILTRAGE SPAM MINIMAL (PAS de filtrage par marque !)
+            # ════════════════════════════════════════════════════════════════
             
-            if is_marketing_sender and is_marketing_subject:
-                print(f"   📢 SKIP (marketing évident): {sender[:30]} + sujet promo")
-                emails_filtered_free += 1
-                debug_rejected.append(f"<p>📢 <b>MARKETING (pré-filtre) :</b> {subject}<br><small>De: {sender[:40]}</small></p>")
+            # Nos propres mises en demeure
+            if "MISE EN DEMEURE" in subject.upper():
+                debug_rejected.append(f"<p>📤 Notre email: {subject[:40]}...</p>")
+                continue
+            
+            # Spam évident
+            if any(spam in subject_lower for spam in SPAM_SUBJECTS):
+                emails_filtered_spam += 1
+                debug_rejected.append(f"<p>🚫 Spam: {subject[:40]}...</p>")
+                continue
+            
+            # Expéditeurs spam
+            if any(spam in sender_lower for spam in SPAM_SENDERS):
+                emails_filtered_spam += 1
+                debug_rejected.append(f"<p>🚫 Expéditeur spam: {sender[:30]}...</p>")
                 continue
             
             # ════════════════════════════════════════════════════════════════
-            # ANALYSE IA SYSTÉMATIQUE - Plus de filtre économique !
-            # On envoie TOUT à l'IA pour extraire marchand + montant précis
+            # EXTRACTION DU CONTENU COMPLET
             # ════════════════════════════════════════════════════════════════
             
-            print(f"   🤖 ENVOI À L'IA (analyse systématique)...")
+            body_text = ""
+            payload = msg_data.get('payload', {})
+            
+            if 'parts' in payload:
+                for part in payload['parts']:
+                    if part.get('mimeType') == 'text/plain':
+                        data = part.get('body', {}).get('data', '')
+                        if data:
+                            try:
+                                body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
+                            except:
+                                pass
+                            break
+            else:
+                data = payload.get('body', {}).get('data', '')
+                if data:
+                    try:
+                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
+                    except:
+                        pass
+            
+            if not body_text:
+                body_text = snippet
+            
+            full_text = f"{subject} {sender} {to_field} {body_text}"
+            
             emails_sent_to_ai += 1
             
-            # Extraire le contenu complet
-            body_text = extract_email_content(msg_data)
-            
-            # Détecter l'entreprise depuis le destinataire (TO) en priorité
-            detected_company = extract_company_from_recipient(to_field, subject, sender)
-            print(f"   🏢 Entreprise détectée (TO/sujet): {detected_company or 'Aucune'}")
-            
-            # Essayer d'extraire le montant directement du texte
-            extracted_amount_from_text = extract_amount_from_text(body_text)
-            print(f"   💶 Montant extrait (regex): {extracted_amount_from_text or 'Aucun'}")
-            
-            # APPEL IA - Retourne 4 valeurs : MONTANT | LOI | MARQUE | PREUVE
-            analysis = analyze_litigation_v2(body_text, subject, sender, to_field, detected_company, extracted_amount_from_text)
-            extracted_amount = analysis[0]
-            law_final = analysis[1]
-            company_detected = analysis[2]
-            proof_sentence = analysis[3] if len(analysis) > 3 else snippet  # La preuve ou le snippet par défaut
-            
-            print(f"   🤖 EXTRACTION IA:")
-            print(f"      → Marchand: {company_detected}")
-            print(f"      → Montant: {extracted_amount}")
-            print(f"      → Loi: {law_final}")
-            print(f"      → Preuve: {proof_sentence[:50] if proof_sentence else 'Aucune'}...")
+            print(f"\n{'─'*50}")
+            print(f"📦 ANALYSE: {subject[:50]}...")
+            print(f"   From: {sender[:40]}...")
             
             # ════════════════════════════════════════════════════════════════
-            # GESTION DES REJETS IA (MARKETING, FACTURE, DÉJÀ PAYÉ, REFUS, etc.)
+            # 🤖 ANALYSE IA FLEXIBLE POUR E-COMMERCE
             # ════════════════════════════════════════════════════════════════
-            if "REJET" in extracted_amount.upper() or "REJET" in company_detected.upper():
-                reject_reason = law_final.upper() if law_final else "INCONNU"
-                reject_detail = proof_sentence if proof_sentence else ""
-                
-                # Catégoriser le type de rejet pour les logs
-                if "MARKETING" in reject_reason:
-                    print(f"   📢 REJETÉ (MARKETING/PUB): {subject[:40]}")
-                    debug_rejected.append(f"<p>📢 <b>MARKETING :</b> {subject}<br><small style='color:#f59e0b;'>Email publicitaire ignoré</small></p>")
-                elif "FACTURE" in reject_reason:
-                    print(f"   📄 REJETÉ (FACTURE): Simple notification de paiement")
-                    debug_rejected.append(f"<p>📄 <b>FACTURE :</b> {subject}<br><small style='color:#6b7280;'>Notification de facturation (pas de litige)</small></p>")
-                elif "HORS SUJET" in reject_reason:
-                    print(f"   ⏭️ REJETÉ (HORS SUJET): Aucun déclencheur de litige")
-                    debug_rejected.append(f"<p>⏭️ <b>HORS SUJET :</b> {subject}<br><small style='color:#6b7280;'>Aucun problème détecté</small></p>")
-                elif "DÉJÀ PAYÉ" in reject_reason or "DEJA PAYE" in reject_reason:
-                    print(f"   ✅ REJETÉ (DÉJÀ PAYÉ): Succès pour le CRON")
-                    debug_rejected.append(f"<p>✅ <b>DÉJÀ REMBOURSÉ :</b> {subject}<br><small style='color:#10b981;'>{reject_detail[:80]}</small></p>")
-                elif "REFUS" in reject_reason:
-                    print(f"   🚫 REJETÉ (REFUS): Non gagnable")
-                    debug_rejected.append(f"<p>🚫 <b>REFUS ENTREPRISE :</b> {subject}<br><small style='color:#dc2626;'>{reject_detail[:80]}</small></p>")
-                else:
-                    print(f"   ❌ REJETÉ PAR L'IA: {reject_reason}")
-                    debug_rejected.append(f"<p>❌ <b>REJET ({reject_reason}) :</b> {subject}<br><small>{reject_detail[:80]}</small></p>")
-                
+            
+            analysis = analyze_ecommerce_flexible(body_text, subject, sender, to_field)
+            
+            print(f"   🤖 Résultat IA: {analysis}")
+            
+            # Vérifier si c'est un litige valide
+            if not analysis.get("is_valid", False):
+                reason = analysis.get("reason", "Non valide")
+                debug_rejected.append(f"<p>❌ Rejeté ({reason}): {subject[:35]}...</p>")
+                print(f"   ❌ REJETÉ: {reason}")
                 continue
             
-            # Utiliser l'entreprise détectée par TO si l'IA n'a pas trouvé mieux
-            if detected_company and (company_detected.lower() == "inconnu" or company_detected.lower() == "amazon"):
-                company_detected = detected_company
-                print(f"   🔄 Entreprise corrigée: {company_detected}")
+            if not analysis.get("litige", False):
+                reason = analysis.get("reason", "Pas de litige")
+                debug_rejected.append(f"<p>⏭️ Pas de litige: {subject[:35]}...</p>")
+                continue
             
-            company_normalized = company_detected.lower().strip()
-            
-            # Si le montant de l'IA est "À déterminer" mais qu'on l'a trouvé dans le texte
-            if not is_valid_euro_amount(extracted_amount) and extracted_amount_from_text:
-                extracted_amount = extracted_amount_from_text
-                print(f"   🔄 Montant corrigé (depuis texte): {extracted_amount}")
+            company = analysis.get("company", "Vendeur inconnu")
+            amount = analysis.get("amount", "À compléter")
+            law = analysis.get("law", "Code de la consommation")
+            proof = analysis.get("proof", subject)
             
             # ════════════════════════════════════════════════════════════════
-            # VÉRIFICATION DOUBLON PAR COMPANY + MONTANT
-            # Permet plusieurs dossiers du même marchand si montants différents
+            # 💰 VALIDATION ET EXTRACTION DU MONTANT
             # ════════════════════════════════════════════════════════════════
-            amount_numeric = extract_numeric_amount(extracted_amount)
             
-            print(f"\n   🔍 COMPARAISON DOUBLON:")
-            print(f"      → Nouveau: {company_normalized.upper()} = {amount_numeric}€ (brut: '{extracted_amount}')")
+            amount_numeric = extract_numeric_amount(amount)
             
-            # RÈGLE IMPORTANTE : Si le montant est 0 ou invalide, ce n'est JAMAIS un doublon
-            # On laisse passer pour que l'utilisateur puisse saisir le montant manuellement
+            # Si pas de montant, essayer d'extraire depuis le texte
             if amount_numeric == 0:
-                print(f"      → Montant = 0, pas de vérification de doublon (montant à saisir manuellement)")
-                is_duplicate = False
-            else:
-                # Vérifier si cette combinaison existe déjà EN BASE
-                is_duplicate = False
-                if company_normalized in existing_company_amounts_dict:
-                    existing_amounts = existing_company_amounts_dict[company_normalized]
-                    print(f"      → Existants en base pour {company_normalized.upper()}: {existing_amounts}€")
-                    for existing_amt in existing_amounts:
-                        # IGNORER les montants existants à 0 (non valides)
-                        if existing_amt == 0:
-                            print(f"         Skip montant existant = 0 (invalide)")
-                            continue
-                        diff = abs(existing_amt - amount_numeric)
-                        print(f"         Comparaison: |{amount_numeric} - {existing_amt}| = {diff} (tolérance: 1€)")
-                        # Tolérance de 1€ pour considérer comme doublon
-                        if diff <= 1:
-                            is_duplicate = True
-                            print(f"         ⚠️ DOUBLON DÉTECTÉ ! ({amount_numeric}€ ≈ {existing_amt}€)")
-                            DEBUG_LOGS.append(f"🔄 Doublon détecté: {company_normalized} {amount_numeric}€ ≈ {existing_amt}€ en base")
-                            break
-                        else:
-                            print(f"         ✅ Montants différents ({diff}€ > 1€) → PAS un doublon")
-                else:
-                    print(f"      → Aucun dossier existant pour {company_normalized.upper()} → PAS un doublon")
+                extracted = extract_amount_from_text(full_text)
+                if extracted:
+                    amount = extracted
+                    amount_numeric = extract_numeric_amount(extracted)
+                    print(f"   💰 Montant extrait du texte: {amount}")
             
-            if is_duplicate:
-                print(f"   ❌ REJETÉ (DOUBLON)")
-                debug_rejected.append(f"<p>🔄 <b>DOUBLON IGNORÉ :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Un dossier identique (même marchand + montant similaire) existe déjà.</small></p>")
-                continue
-            else:
-                print(f"   ✅ PAS UN DOUBLON → Création autorisée")
+            # Si toujours pas de montant, mettre "À compléter"
+            if amount_numeric == 0 or "compléter" in amount.lower():
+                amount = "À compléter"
+                amount_numeric = 50  # Estimation pour les stats
             
-            # Log si même marchand mais montant différent (nouveau dossier autorisé)
-            if company_normalized in existing_company_amounts_dict:
-                existing_amounts = existing_company_amounts_dict[company_normalized]
-                print(f"   ✅ NOUVEAU DOSSIER AUTORISÉ pour {company_normalized.upper()} : {amount_numeric}€ (existants: {existing_amounts}€)")
-                DEBUG_LOGS.append(f"✅ Nouveau dossier autorisé: {company_normalized.upper()} {amount_numeric}€ (existants: {existing_amounts}€)")
+            # ════════════════════════════════════════════════════════════════
+            # VÉRIFICATION DOUBLON
+            # ════════════════════════════════════════════════════════════════
             
-            # Vérifier aussi dans les litiges détectés DANS CE SCAN (éviter doublons dans la session)
-            already_in_session = False
-            if amount_numeric > 0:  # Ne vérifier que si on a un montant valide
-                for existing_lit in detected_litigations:
-                    existing_company = existing_lit['company'].lower().strip()
-                    existing_amount = extract_numeric_amount(existing_lit['amount'])
-                    # Ignorer les montants à 0
-                    if existing_amount == 0:
-                        continue
-                    # Tolérance de 1€
-                    if existing_company == company_normalized and abs(existing_amount - amount_numeric) <= 1:
-                        already_in_session = True
-                        print(f"   ⚠️ Doublon détecté dans ce scan: {company_normalized} {amount_numeric}€ ≈ {existing_amount}€")
+            company_key = company.lower().strip()
+            
+            is_duplicate = False
+            if company_key in existing_company_amounts_dict and amount_numeric > 0:
+                for existing_amount in existing_company_amounts_dict[company_key]:
+                    if existing_amount > 0 and abs(existing_amount - amount_numeric) <= 2:
+                        is_duplicate = True
                         break
             
-            if already_in_session:
-                print(f"   ❌ REJETÉ (doublon dans ce scan)")
-                debug_rejected.append(f"<p>🔄 <b>DOUBLON SCAN :</b> {company_normalized.upper()} - {extracted_amount}<br><small>Déjà détecté dans ce scan.</small></p>")
+            # Vérifier aussi dans ce scan
+            for existing_lit in detected_litigations:
+                ex_company = existing_lit['company'].lower().strip()
+                ex_amount = extract_numeric_amount(existing_lit['amount'])
+                if ex_company == company_key and ex_amount > 0 and amount_numeric > 0:
+                    if abs(ex_amount - amount_numeric) <= 2:
+                        is_duplicate = True
+                        break
+            
+            if is_duplicate:
+                debug_rejected.append(f"<p>🔄 Doublon: {company} ({amount})</p>")
                 continue
             
-            # Nettoyer la preuve si vide ou trop courte
-            if not proof_sentence or len(proof_sentence) < 10:
-                proof_sentence = snippet[:150] if snippet else subject
+            # ════════════════════════════════════════════════════════════════
+            # ✅ LITIGE E-COMMERCE VALIDÉ !
+            # ════════════════════════════════════════════════════════════════
             
-            # Ajouter au dict pour éviter les doublons dans ce scan
-            if company_normalized not in existing_company_amounts_dict:
-                existing_company_amounts_dict[company_normalized] = []
-            existing_company_amounts_dict[company_normalized].append(amount_numeric)
+            new_cases_count += 1
+            emails_litige_found += 1
+            total_gain += amount_numeric if amount_numeric > 0 else 50
             
-            # STOCKER EN MÉMOIRE (pas en base !)
-            litigation_data = {
-                "message_id": message_id,
-                "company": company_normalized,
-                "amount": extracted_amount,
-                "law": law_final,
-                "subject": subject,
-                "snippet": snippet,
-                "proof": proof_sentence  # La preuve extraite par l'IA
-            }
-            detected_litigations.append(litigation_data)
+            print(f"   ✅ LITIGE E-COMMERCE VALIDÉ: {company} - {amount}")
             
-            print(f"\n   ✅✅✅ LITIGE DÉTECTÉ ET STOCKÉ ✅✅✅")
-            print(f"      → {company_normalized.upper()} - {extracted_amount}")
-            print(f"      → Total litiges détectés jusqu'ici: {len(detected_litigations)}")
+            detected_litigations.append({
+                "company": company,
+                "amount": amount,
+                "law": law,
+                "subject": f"📦 {proof[:100]}",
+                "message_id": msg_id,
+                "proof": proof,
+                "category": "ecommerce"
+            })
             
-            # Construire l'affichage
-            if is_valid_euro_amount(extracted_amount):
-                amount_display = f"<div class='amount-badge'>{extracted_amount}</div>"
-                total_gain += extract_numeric_amount(extracted_amount)
+            # Ajouter au dict pour éviter doublons
+            if company_key not in existing_company_amounts_dict:
+                existing_company_amounts_dict[company_key] = []
+            existing_company_amounts_dict[company_key].append(amount_numeric)
+            
+            # ════════════════════════════════════════════════════════════════
+            # 🎨 CARTE HTML E-COMMERCE (icône 📦 forcée)
+            # ════════════════════════════════════════════════════════════════
+            
+            # Affichage montant
+            if is_valid_euro_amount(amount):
+                amount_display = amount
             else:
-                hint_text = ""
-                if "%" in extracted_amount:
-                    hint_text = "<div class='amount-hint'>⚠️ Pourcentage détecté. Calculez le montant en euros.</div>"
-                else:
-                    hint_text = "<div class='amount-hint'>⚠️ Montant non trouvé. Indiquez le prix.</div>"
-                
-                amount_display = f"<input type='number' placeholder='Prix €' class='amount-input' data-index='{new_cases_count}' onchange='updateAmount(this)'>{hint_text}"
-            
-            # Afficher la PREUVE au lieu du snippet générique
-            proof_display = proof_sentence[:200] + "..." if len(proof_sentence) > 200 else proof_sentence
-            
-            # Badge de confiance basé sur le montant et la clarté
-            confidence_badge = ""
-            if extracted_amount > 50:
-                confidence_badge = """
-                <div style='position:absolute; top:15px; left:15px; background:linear-gradient(135deg, #10b981, #059669);
-                            color:white; padding:5px 12px; border-radius:20px; font-size:0.7rem; font-weight:600;
-                            display:flex; align-items:center; gap:5px;'>
-                    ✓ Confiance élevée
-                </div>
-                """
+                amount_display = f"<span style='color:#f59e0b;'>À compléter</span>"
             
             html_cards += f"""
             <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
                         max-width:550px; position:relative; 
                         box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
-                        border-left:5px solid #ef4444;'>
+                        border-left:5px solid #10b981;'>
                 
-                {confidence_badge}
+                <!-- Badge E-COMMERCE (forcé) -->
+                <div style='position:absolute; top:15px; left:15px; 
+                            background:linear-gradient(135deg, #10b981, #059669);
+                            color:white; padding:5px 12px; border-radius:20px; 
+                            font-size:0.7rem; font-weight:600;'>
+                    📦 E-COMMERCE
+                </div>
                 
-                <!-- Montant en gros -->
+                <!-- Montant -->
                 <div style='position:absolute; top:25px; right:25px; text-align:right;'>
                     <div style='font-size:1.8rem; font-weight:700; color:#10b981;'>
-                        {extracted_amount:.0f}€
+                        {amount_display}
                     </div>
                     <div style='font-size:0.75rem; color:#64748b;'>à récupérer</div>
                 </div>
                 
                 <!-- Entreprise -->
-                <div style='margin-top:10px;'>
-                    <span style='background:linear-gradient(135deg, #e0f2fe, #dbeafe); 
-                                 color:#0369a1; padding:6px 14px; border-radius:8px;
-                                 font-size:0.8rem; font-weight:600; text-transform:uppercase;
-                                 letter-spacing:0.5px;'>
-                        {company_normalized.upper()}
+                <div style='margin-top:40px;'>
+                    <span style='background:linear-gradient(135deg, #d1fae5, #a7f3d0); 
+                                 color:#065f46; padding:6px 14px; border-radius:8px;
+                                 font-size:0.9rem; font-weight:700; text-transform:uppercase;'>
+                        {company.upper()}
                     </span>
                 </div>
                 
-                <!-- Sujet -->
-                <h3 style='margin:20px 0 15px 0; font-size:1.1rem; color:#1e293b; 
-                           padding-right:100px; line-height:1.4;'>
-                    {subject[:80]}{"..." if len(subject) > 80 else ""}
-                </h3>
-                
                 <!-- Preuve -->
-                <div style='background:linear-gradient(135deg, #fef3c7, #fef9c3);
-                            padding:15px; border-radius:12px; border-left:4px solid #f59e0b;
-                            margin:15px 0;'>
-                    <p style='margin:0; font-size:0.9rem; color:#92400e; line-height:1.5; font-style:italic;'>
-                        📝 "{proof_display}"
+                <div style='background:linear-gradient(135deg, #ecfdf5, #d1fae5);
+                            padding:15px; border-radius:12px; border-left:4px solid #10b981;
+                            margin:20px 0;'>
+                    <p style='margin:0; font-size:0.9rem; color:#065f46; line-height:1.5;'>
+                        📝 {proof[:180]}{"..." if len(proof) > 180 else ""}
                     </p>
                 </div>
                 
                 <!-- Base légale -->
-                <div style='display:flex; align-items:center; gap:8px; margin-top:15px;'>
+                <div style='display:flex; align-items:center; gap:8px;'>
                     <span style='font-size:1.1rem;'>⚖️</span>
-                    <span style='font-size:0.85rem; color:#64748b;'>{law_final}</span>
+                    <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{law}</span>
                 </div>
                 
             </div>
             """
-            new_cases_count += 1
-            
+                
         except Exception as e:
-            debug_rejected.append(f"<p>❌ Erreur traitement : {str(e)}</p>")
+            debug_rejected.append(f"<p>⚠️ Erreur: {str(e)[:30]}...</p>")
             continue
     
-    # ═══════════════════════════════════════════════════════════════
-    # FIN DU SCAN - RÉSUMÉ
-    # ═══════════════════════════════════════════════════════════════
-    print("\n" + "="*60)
-    print("📊 RÉSUMÉ DU SCAN")
-    print("="*60)
-    print(f"📧 Emails scannés: {emails_scanned}")
-    print(f"🚫 Filtrés (gratuit): {emails_filtered_free}")
-    print(f"🤖 Envoyés à l'IA: {emails_sent_to_ai}")
-    print(f"✅ LITIGES DÉTECTÉS: {len(detected_litigations)}")
-    for lit in detected_litigations:
-        print(f"   → {lit['company'].upper()} - {lit['amount']}")
-    print("="*60 + "\n")
-    
-    # Stocker les litiges détectés en session (pour les enregistrer après paiement)
+    # Stocker en session
     session['detected_litigations'] = detected_litigations
     session['total_gain'] = total_gain
     
-    # Bouton d'action sticky
-    action_btn = ""
-    if new_cases_count > 0 and STRIPE_SK:
-        action_btn = f"""
-        <div class='sticky-footer'>
-            <div style='margin-right:20px; font-size:1.2em;'>
-                <b>Total Détecté : <span id='total-display'>{total_gain}</span>€</b>
-            </div>
-            <a href='/setup-payment' class='btn-success'>🚀 RÉCUPÉRER TOUT</a>
-        </div>
-        """
+    print("\n" + "="*70)
+    print("📊 RÉSUMÉ SCAN E-COMMERCE V3")
+    print(f"   📧 Emails scannés: {emails_scanned}")
+    print(f"   🚫 Spam filtrés: {emails_filtered_spam}")
+    print(f"   🤖 Analysés IA: {emails_sent_to_ai}")
+    print(f"   ✅ LITIGES E-COMMERCE: {new_cases_count}")
+    print("="*70)
     
-    # Script JS pour mise à jour des montants en session
-    script_js = """
-    <script>
-    function updateAmount(input) {
-        const index = input.getAttribute('data-index');
-        const value = input.value;
-        if (!value || value <= 0) return;
-        
-        fetch('/update-detected-amount', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({index: parseInt(index), amount: value})
-        }).then(res => {
-            if(res.ok) {
-                input.style.borderColor = '#10b981';
-                input.style.color = '#10b981';
-                
-                // Mettre à jour le total affiché
-                res.json().then(data => {
-                    document.getElementById('total-display').textContent = data.total;
-                });
-            }
-        });
-    }
-    </script>
-    """
-    
-    # Statistiques - Mode Analyse Systématique
-    stats_html = f"""
-    <div style='background:#dbeafe; padding:15px; border-radius:10px; margin-bottom:20px;'>
-        <h4 style='margin:0 0 10px 0; color:#1e40af; text-align:center;'>🔬 Mode Analyse Systématique (Précision Max)</h4>
-        
-        <div style='display:flex; justify-content:space-around; margin-bottom:10px;'>
-            <div style='text-align:center;'>
-                <div style='font-size:1.5rem; font-weight:bold; color:#1e40af;'>{emails_scanned}</div>
-                <div style='font-size:0.8rem; color:#3b82f6;'>📧 Emails scannés</div>
-            </div>
-            <div style='text-align:center;'>
-                <div style='font-size:1.5rem; font-weight:bold; color:#7c3aed;'>{emails_sent_to_ai}</div>
-                <div style='font-size:0.8rem; color:#8b5cf6;'>🤖 Analysés par IA</div>
-            </div>
-            <div style='text-align:center;'>
-                <div style='font-size:1.5rem; font-weight:bold; color:#10b981;'>{new_cases_count}</div>
-                <div style='font-size:0.8rem; color:#059669;'>✅ Litiges détectés</div>
-            </div>
-        </div>
-        
-        <div style='background:#bfdbfe; padding:8px; border-radius:5px; text-align:center;'>
-            <span style='font-weight:bold; color:#1e40af;'>🎯 Chaque email est analysé par l'IA pour ne rater aucun litige</span>
-        </div>
-    </div>
-    """
-    
-    # Logs cachés dans une balise <details> pour ne pas polluer l'interface
+    # Debug HTML
     debug_html = f"""
     <details style='margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;'>
         <summary style='cursor:pointer; color:rgba(255,255,255,0.5); font-size:0.85rem; 
                         padding:15px; background:rgba(255,255,255,0.05); border-radius:10px;
                         list-style:none; text-align:center;'>
-            🔧 Voir les détails techniques (Debug)
+            🔧 Détails techniques ({emails_scanned} emails analysés)
         </summary>
         <div style='margin-top:15px; background:rgba(255,255,255,0.95); padding:20px; 
                     border-radius:12px; color:#334155; font-size:0.85rem;'>
-            {stats_html}
-            <div style='max-height:400px; overflow-y:auto; margin-top:15px;'>
-                {"".join(debug_rejected)}
+            <p><b>📧 Emails scannés:</b> {emails_scanned}</p>
+            <p><b>🚫 Spam filtrés:</b> {emails_filtered_spam}</p>
+            <p><b>🤖 Analysés par IA:</b> {emails_sent_to_ai}</p>
+            <p><b>✅ Litiges détectés:</b> {new_cases_count}</p>
+            <hr style='margin:15px 0; border:none; border-top:1px solid #e2e8f0;'>
+            <div style='max-height:200px; overflow-y:auto; font-size:0.8rem;'>
+                {"".join(debug_rejected[-30:])}
             </div>
         </div>
     </details>
     """
     
-    # Ajouter info sur les dossiers existants pour debug
-    existing_info = ""
-    if existing_company_amounts_dict:
-        existing_info = "<div style='background:#f1f5f9; padding:10px; border-radius:8px; margin-top:10px;'><b>📂 Dossiers existants :</b><ul style='margin:5px 0;'>"
-        for comp, amounts in existing_company_amounts_dict.items():
-            existing_info += f"<li>{comp.upper()}: {amounts}€</li>"
-        existing_info += "</ul></div>"
+    # Bouton action
+    action_btn = ""
+    if new_cases_count > 0 and STRIPE_SK:
+        action_btn = f"""
+        <div style='text-align:center; margin:40px 0;'>
+            <a href='/setup-payment' class='btn-success' style='padding:20px 50px; font-size:1.2rem;
+                                                                 background:linear-gradient(135deg, #10b981, #059669);
+                                                                 box-shadow:0 15px 40px rgba(16, 185, 129, 0.4);'>
+                🚀 RÉCUPÉRER MES {total_gain:.0f}€
+            </a>
+            <p style='color:rgba(255,255,255,0.5); margin-top:15px; font-size:0.9rem;'>
+                Commission 25% uniquement en cas de succès
+            </p>
+        </div>
+        """
     
     if new_cases_count > 0:
-        # Page de résultats premium
         return STYLE + f"""
         <div style='text-align:center; padding:30px;'>
-            <div style='font-size:4rem; margin-bottom:15px;'>🎉</div>
-            <h1 style='color:white; font-size:2.2rem; margin-bottom:10px;'>
-                {new_cases_count} Litige{"s" if new_cases_count > 1 else ""} Détecté{"s" if new_cases_count > 1 else ""} !
-            </h1>
-            <p style='color:#10b981; font-size:1.3rem; font-weight:600;'>
-                💰 Gain potentiel : {total_gain:.0f}€
+            <div style='font-size:4rem; margin-bottom:15px;'>📦</div>
+            <h1 style='color:white; margin-bottom:10px;'>Scan E-commerce Terminé !</h1>
+            <p style='color:#10b981; font-size:1.4rem; font-weight:600;'>
+                {new_cases_count} litige(s) détecté(s) !
+            </p>
+            <p style='color:rgba(255,255,255,0.7);'>
+                💰 Gain potentiel: <b style='color:#10b981; font-size:1.6rem;'>{total_gain:.0f}€</b>
             </p>
         </div>
         
@@ -4613,38 +4604,34 @@ def scan():
         </div>
         
         {action_btn}
-        {debug_html}
-        {script_js}
-        """ + WA_BTN + FOOTER
+        """ + debug_html + WA_BTN + FOOTER
     else:
-        # Vérifier s'il y a des dossiers en cours
         existing_count = Litigation.query.filter_by(user_email=session['email']).count()
         if existing_count > 0:
             return STYLE + f"""
             <div style='text-align:center; padding:50px;'>
                 <div style='font-size:4rem; margin-bottom:20px;'>✅</div>
-                <h1 style='color:white;'>Aucun nouveau litige</h1>
+                <h1 style='color:white;'>Aucun nouveau litige e-commerce</h1>
                 <p style='color:rgba(255,255,255,0.7);'>
-                    Vous avez déjà <b style='color:#10b981;'>{existing_count} dossier(s)</b> en cours de traitement.
+                    Vous avez déjà <b style='color:#10b981;'>{existing_count} dossier(s)</b> en cours.
                 </p>
                 <br>
                 <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
             </div>
-            {debug_html}
-            """ + FOOTER
+            """ + debug_html + FOOTER
         else:
             return STYLE + f"""
             <div style='text-align:center; padding:50px;'>
-                <div style='font-size:4rem; margin-bottom:20px;'>🔍</div>
-                <h1 style='color:white;'>Aucun litige détecté</h1>
+                <div style='font-size:4rem; margin-bottom:20px;'>📦</div>
+                <h1 style='color:white;'>Aucun litige e-commerce détecté</h1>
                 <p style='color:rgba(255,255,255,0.6);'>
-                    Votre boîte mail ne contient pas de litiges identifiables pour le moment.
+                    Nous avons analysé {emails_scanned} emails sur les derniers mois.<br>
+                    Aucun problème de commande n'a été identifié.
                 </p>
                 <br>
                 <a href='/' class='btn-success'>Retour à l'accueil</a>
             </div>
-            {debug_html}
-            """ + FOOTER
+            """ + debug_html + FOOTER
 
 # ========================================
 # ✈️ SCAN VOYAGES - Historique 1 AN
@@ -6609,8 +6596,7 @@ def success_page():
                 <div style='background:#ecfdf5; padding:15px; border-radius:10px; margin-bottom:20px;
                             border-left:4px solid #10b981;'>
                     <p style='margin:0; color:#065f46; font-size:0.9rem;'>
-                        <b>💳 Paiement sécurisé !</b><br>
-                        Votre carte est enregistrée. Commission uniquement sur résultat.
+                        <b>💳 Paiement sécurisé !</b>
                     </p>
                 </div>
                 
@@ -6804,8 +6790,7 @@ def success_page():
         <div style='background:#ecfdf5; padding:15px; border-radius:10px; margin-bottom:20px;
                     border-left:4px solid #10b981;'>
             <p style='margin:0; color:#065f46; font-size:0.9rem;'>
-                <b>💳 Paiement sécurisé !</b><br>
-                Votre carte est enregistrée. Commission uniquement sur résultat.
+                <b>💳 Paiement sécurisé !</b>
             </p>
         </div>
         
@@ -6827,12 +6812,6 @@ def success_page():
                 📂 VOIR MES DOSSIERS
             </a>
         </div>
-        
-        <!-- Info suivi -->
-        <p style='color:rgba(255,255,255,0.6); font-size:0.85rem; margin-top:20px;'>
-            💡 Notre système surveille automatiquement votre boîte mail<br>
-            et vous notifiera dès qu'un remboursement sera détecté.
-        </p>
         
     </div>
     """ + FOOTER
