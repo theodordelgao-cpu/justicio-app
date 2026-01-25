@@ -4115,18 +4115,18 @@ def index():
         <div style='display:flex; flex-wrap:wrap; justify-content:center; gap:25px; margin-bottom:40px;'>
             
             <!-- CARTE E-COMMERCE -->
-            <a href='/scan' class='action-card' onclick='showLoading()'>
+            <a href='/scan-ecommerce' class='action-card' onclick='showLoading("ecommerce")'>
                 <div class='icon'>📦</div>
                 <div class='title'>SCAN E-COMMERCE</div>
                 <div class='description'>
                     Colis perdus, retours refusés, produits défectueux...<br>
-                    <b>Amazon, Zalando, Fnac, AliExpress...</b>
+                    <b>Toutes marques : Amazon, Zalando, Asphalte...</b>
                 </div>
-                <span class='badge badge-fast'>⚡ Rapide • 30 jours</span>
+                <span class='badge badge-fast'>⚡ Grand Filet • 30 jours</span>
             </a>
             
             <!-- CARTE VOYAGES -->
-            <a href='/scan-travel' class='action-card travel' onclick='showLoading()'>
+            <a href='/scan-travel' class='action-card travel' onclick='showLoading("travel")'>
                 <div class='icon'>✈️</div>
                 <div class='title'>SCAN VOYAGES</div>
                 <div class='description'>
@@ -4202,6 +4202,7 @@ def logout():
 # ========================================
 
 @app.route("/scan")
+@app.route("/scan-ecommerce")
 def scan():
     """
     📦 SCANNER E-COMMERCE V3 - GRAND FILET
@@ -5294,8 +5295,11 @@ def dashboard():
             {html_rows}
         </div>
         <div class='sticky-footer'>
-            <a href='/scan' class='btn-success' style='background:#4f46e5; margin-right:10px;'>
-                🔍 SCANNER
+            <a href='/scan-ecommerce' class='btn-success' style='background:#4f46e5; margin-right:10px;'>
+                📦 E-COMMERCE
+            </a>
+            <a href='/scan-travel' class='btn-success' style='background:#f59e0b; margin-right:10px;'>
+                ✈️ VOYAGES
             </a>
             <a href='/declare' class='btn-success' style='background:#10b981; margin-right:10px;'>
                 ✍️ DÉCLARER
@@ -6123,7 +6127,7 @@ def delete_case(case_id):
             <br>
             <a href='/dashboard' class='btn-success'>Retour au Dashboard</a>
             <br><br>
-            <a href='/scan' class='btn-logout'>Nouveau Scan</a>
+            <a href='/scan-ecommerce' class='btn-logout'>Nouveau Scan E-commerce</a>
         </div>
         """ + FOOTER
         
@@ -6155,7 +6159,7 @@ def force_reset():
             <h1>✅ Base Nettoyée</h1>
             <p>{num_deleted} dossiers supprimés pour {session.get('email')}</p>
             <br>
-            <a href='/scan' class='btn-success'>Relancer Scan</a>
+            <a href='/scan-ecommerce' class='btn-success'>Relancer Scan E-commerce</a>
             <br><br>
             <a href='/' class='btn-logout'>Retour</a>
         </div>
@@ -7866,7 +7870,7 @@ def reset_stripe():
             <p>Ancien Customer ID : <code>{old_id}</code></p>
             <p>Un nouveau sera créé lors du prochain paiement.</p>
             <br>
-            <a href='/scan' class='btn-success'>Relancer le Scan</a>
+            <a href='/scan-ecommerce' class='btn-success'>Relancer le Scan</a>
             <br><br>
             <a href='/' class='btn-logout'>Retour</a>
         </div>
