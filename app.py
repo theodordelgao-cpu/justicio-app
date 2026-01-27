@@ -20,76 +20,110 @@ from sqlalchemy.exc import IntegrityError
 from bs4 import BeautifulSoup
 
 # ════════════════════════════════════════════════════════════════════════════════
-# 🛡️ HELPER SÉCURISÉ - Parsing JSON infaillible
+# 🛡️ HELPER SÉCURISÉ - Parsing JSON infaillible (V2 - BRACE BALANCED)
 # ════════════════════════════════════════════════════════════════════════════════
+
+def _extract_first_json_object(text: str) -> str | None:
+    """
+    Extrait le 1er objet JSON {...} en respectant les accolades équilibrées.
+    Supporte aussi les réponses dans des fences ```json ... ```
+    """
+    if not text:
+        return None
+
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if fence:
+        candidate = fence.group(1).strip()
+        inner = re.search(r"\{[\s\S]*\}", candidate)
+        text = inner.group(0) if inner else candidate
+
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    in_string = False
+    escape = False
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i+1]
+
+    return None
+
+def _repair_common_json_issues(json_str: str) -> str:
+    """
+    Réparations "low risk" : virgules traînantes, quotes simples.
+    """
+    if not json_str:
+        return json_str
+
+    s = json_str.strip()
+    s = re.sub(r",\s*}", "}", s)
+    s = re.sub(r",\s*]", "]", s)
+
+    if "'" in s and '"' not in s:
+        s = s.replace("'", '"')
+
+    return s
 
 def secure_json_parse(response_text, default_value=None):
     """
-    🛡️ Parse une réponse IA en JSON de manière INFAILLIBLE
-    
-    Problème résolu : OpenAI renvoie parfois du texte avant/après le JSON
-    Exemple : "Voici l'analyse : {"is_valid": true} J'espère que ça aide"
-    
-    Stratégie en 3 étapes :
-    1. Extraction regex du JSON (première { à dernière })
-    2. Parsing avec json.loads
-    3. Fallback sur default_value si échec
-    
-    Args:
-        response_text: La réponse brute de l'IA (peut contenir du texte parasite)
-        default_value: Valeur à retourner en cas d'échec (dict par défaut)
-    
-    Returns:
-        dict: Le JSON parsé ou default_value
+    🛡️ Parse une réponse IA en JSON de manière très robuste (ne crash jamais).
+    Version V2 avec extraction brace-balanced.
     """
-    
     if default_value is None:
         default_value = {"is_valid": False, "litige": False, "reason": "Parsing failed"}
-    
+
     if not response_text:
-        DEBUG_LOGS.append("🛡️ secure_json_parse: Réponse vide")
-        return default_value
-    
-    try:
-        # ÉTAPE 1 : Extraction regex - Trouver le JSON dans le texte
-        # Pattern : première { jusqu'à la dernière }
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
-        
-        if not json_match:
-            DEBUG_LOGS.append(f"🛡️ secure_json_parse: Pas de JSON trouvé dans: {response_text[:100]}...")
-            return default_value
-        
-        json_str = json_match.group()
-        
-        # ÉTAPE 2 : Parsing JSON
-        result = json.loads(json_str)
-        
-        # ÉTAPE 3 : Validation minimale - s'assurer que c'est un dict
-        if not isinstance(result, dict):
-            DEBUG_LOGS.append(f"🛡️ secure_json_parse: Résultat n'est pas un dict: {type(result)}")
-            return default_value
-        
-        return result
-        
-    except json.JSONDecodeError as e:
-        DEBUG_LOGS.append(f"🛡️ secure_json_parse: JSONDecodeError - {str(e)[:50]}")
-        
-        # FALLBACK : Tentative de réparation basique
         try:
-            # Parfois il manque des guillemets ou il y a des virgules en trop
-            cleaned = json_str.replace("'", '"')  # Guillemets simples → doubles
-            cleaned = re.sub(r',\s*}', '}', cleaned)  # Virgule avant }
-            cleaned = re.sub(r',\s*]', ']', cleaned)  # Virgule avant ]
-            result = json.loads(cleaned)
-            DEBUG_LOGS.append("🛡️ secure_json_parse: Réparation JSON réussie")
-            return result if isinstance(result, dict) else default_value
+            DEBUG_LOGS.append("🛡️ secure_json_parse: Réponse vide")
         except:
             pass
-        
         return default_value
-        
+
+    try:
+        json_str = _extract_first_json_object(response_text)
+        if not json_str:
+            try:
+                DEBUG_LOGS.append(f"🛡️ secure_json_parse: Aucun objet JSON détecté: {response_text[:120]}...")
+            except:
+                pass
+            return default_value
+
+        try:
+            obj = json.loads(json_str)
+            return obj if isinstance(obj, dict) else default_value
+        except json.JSONDecodeError:
+            pass
+
+        cleaned = _repair_common_json_issues(json_str)
+        obj = json.loads(cleaned)
+        return obj if isinstance(obj, dict) else default_value
+
     except Exception as e:
-        DEBUG_LOGS.append(f"🛡️ secure_json_parse: Exception inattendue - {str(e)[:50]}")
+        try:
+            DEBUG_LOGS.append(f"🛡️ secure_json_parse: Exception - {type(e).__name__}: {str(e)[:80]}")
+        except:
+            pass
         return default_value
 # ========================================
 # CONFIGURATION & INITIALISATION
@@ -542,19 +576,57 @@ def send_mise_en_demeure_gmail(user, target_email, subject, html_body, text_body
             }
 
 
-def get_company_email(company_name):
+# ════════════════════════════════════════════════════════════════════════════════
+# 📧 ANNUAIRE OVERRIDE EMAILS ENTREPRISES (Priorité absolue)
+# ════════════════════════════════════════════════════════════════════════════════
+
+COMPANY_EMAIL_OVERRIDE = {
+    "sncf": "relationclient@sncf.fr",
+    "ouigo": "relationclient@ouigo.com",
+    "eurostar": "contactcentre@eurostar.com",
+    "air france": "customer@airfrance.fr",
+    "easyjet": "customerservices@easyjet.com",
+    "ryanair": "support@ryanair.com",
+    "transavia": "service.client@transavia.com",
+    "amazon": "cs-reply@amazon.fr",
+    "zalando": "service@zalando.fr",
+    "fnac": "serviceclient@fnac.com",
+    "darty": "serviceclient@darty.com",
+    "cdiscount": "clients@cdiscount.com",
+}
+
+def normalize_company_key(name: str) -> str:
+    """Normalise le nom d'entreprise pour lookup dans l'annuaire"""
+    if not name:
+        return ""
+    n = name.lower().strip()
+    n = n.replace("&", "and")
+    n = re.sub(r"\s+", " ", n)
+    return n
+
+
+def get_company_email(company_name, sender_email=None, to_field=None):
     """
     🔍 Trouve l'email de contact d'une entreprise
     
-    Utilise le LEGAL_DIRECTORY ou génère une adresse générique
+    Priorité :
+    1) Override annuaire (priorité absolue)
+    2) LEGAL_DIRECTORY (si présent)
+    3) Variations (contains)
+    4) Fallback support
     """
-    company_key = company_name.lower().strip()
-    
-    # Chercher dans le répertoire juridique
-    if company_key in LEGAL_DIRECTORY:
-        return LEGAL_DIRECTORY[company_key].get("email")
-    
-    # Variations courantes
+    company_key = normalize_company_key(company_name)
+
+    if company_key in COMPANY_EMAIL_OVERRIDE:
+        return COMPANY_EMAIL_OVERRIDE[company_key]
+
+    for k, v in COMPANY_EMAIL_OVERRIDE.items():
+        if k and k in company_key:
+            return v
+
+    if company_key in LEGAL_DIRECTORY and LEGAL_DIRECTORY[company_key].get("email"):
+        return LEGAL_DIRECTORY[company_key]["email"]
+
     variations = {
         "air france": "customer@airfrance.fr",
         "airfrance": "customer@airfrance.fr",
@@ -574,14 +646,12 @@ def get_company_email(company_name):
         "darty": "serviceclient@darty.com",
         "cdiscount": "clients@cdiscount.com",
     }
-    
     for key, email in variations.items():
         if key in company_key:
             return email
-    
-    # Fallback : email générique (sera envoyé à Justicio pour traitement manuel)
-    DEBUG_LOGS.append(f"🔍 Email non trouvé pour {company_name} - Fallback support Justicio")
-    return "support@justicio.fr"
+
+    _dbg(f"🔍 Email non trouvé pour {company_name} - fallback support")
+    return SUPPORT_EMAIL
 
 
 def process_pending_litigations(user, litigations_data):
@@ -648,7 +718,11 @@ def process_pending_litigations(user, litigations_data):
         # ÉTAPE 2 : Trouver l'email de l'entreprise
         # ═══════════════════════════════════════════════════════════════
         
-        target_email = get_company_email(company)
+        target_email = get_company_email(
+            company,
+            sender_email=lit_data.get("sender", ""),
+            to_field=lit_data.get("to_field", "")
+        )
         DEBUG_LOGS.append(f"   📧 Email cible: {target_email}")
         
         # ═══════════════════════════════════════════════════════════════
@@ -1079,6 +1153,127 @@ def is_spam(sender, subject, body_snippet):
             return True, f"Body blacklist: {black}"
     
     return False, None
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 🚀 HELPERS PERFORMANCE/ROBUSTESSE POUR SCANS
+# ════════════════════════════════════════════════════════════════════════════════
+
+def _dbg(msg: str):
+    """Helper debug log sécurisé"""
+    try:
+        if isinstance(globals().get("DEBUG_LOGS"), list):
+            DEBUG_LOGS.append(msg)
+    except:
+        pass
+
+def contains_any(text: str, keywords) -> bool:
+    """Vérifie si text contient au moins un keyword"""
+    if not text:
+        return False
+    t = text.lower()
+    return any(k.lower() in t for k in keywords)
+
+# Mots-clés pour pré-filtrage rapide TRANSPORT
+TRAVEL_FAST_INCLUDE = [
+    "sncf", "ouigo", "inoui", "tgv", "ter", "eurostar", "thalys", "trenitalia",
+    "air france", "airfrance", "easyjet", "ryanair", "transavia", "vueling", "lufthansa", "klm", "volotea",
+    "vol ", "flight", "train", "billet",
+    "retard", "delay", "annul", "cancel", "compensation", "indemn", "réclamation", "reclamation"
+]
+
+TRAVEL_FAST_EXCLUDE = [
+    "amazon", "zalando", "cdiscount", "darty", "fnac", "temu", "shein", "aliexpress",
+    "colis", "commande", "livraison", "order", "delivery", "package", "retour"
+]
+
+# Mots-clés pour pré-filtrage rapide E-COMMERCE
+ECOM_FAST_INCLUDE = [
+    "commande", "colis", "livraison", "order", "delivery", "package", "shipment",
+    "non reçu", "pas reçu", "jamais reçu", "not received", "never received",
+    "retard", "delay", "perdu", "lost", "manquant", "missing",
+    "défectueux", "defective", "cassé", "broken", "abîmé", "damaged",
+    "remboursement", "refund", "retour", "return", "réclamation", "complaint", "litige", "dispute",
+]
+
+ECOM_FAST_EXCLUDE = [
+    "sncf", "ouigo", "tgv", "ter", "eurostar", "thalys",
+    "air france", "easyjet", "ryanair", "transavia", "vueling",
+    "vol ", "flight", "train", "billet", "embarquement", "gate", "boarding pass"
+]
+
+def fast_candidate_filter(scan_type: str, sender: str, subject: str, snippet: str) -> tuple:
+    """
+    Pré-filtre rapide AVANT appel IA - retourne (bool, reason)
+    """
+    subject = subject or ""
+    sender = sender or ""
+    snippet = snippet or ""
+    blob = f"{sender} {subject} {snippet}".lower()
+
+    if "mise en demeure" in subject.lower():
+        return False, "Notre propre email"
+
+    if contains_any(blob, KEYWORDS_SUCCESS):
+        return False, "Déjà résolu (success keyword)"
+    if contains_any(blob, KEYWORDS_REFUSAL):
+        return False, "Refus détecté (refusal keyword)"
+
+    if contains_any(subject, ["newsletter", "unsubscribe", "désabonner", "promo", "soldes", "mot de passe", "password"]):
+        return False, "Spam évident"
+
+    if scan_type == "travel":
+        if contains_any(blob, TRAVEL_FAST_EXCLUDE):
+            return False, "Exclusion e-commerce"
+        if not contains_any(blob, TRAVEL_FAST_INCLUDE):
+            return False, "Pas assez d'indices transport"
+        return True, "Candidat transport"
+
+    # scan_type == "ecommerce"
+    if contains_any(blob, ECOM_FAST_EXCLUDE):
+        return False, "Exclusion transport"
+    if not contains_any(blob, ECOM_FAST_INCLUDE):
+        return False, "Pas assez d'indices e-commerce"
+    return True, "Candidat e-commerce"
+
+def get_gmail_headers(headers, name: str, default=""):
+    """Récupère un header Gmail par son nom"""
+    name = name.lower()
+    for h in headers or []:
+        if h.get("name", "").lower() == name:
+            return h.get("value", default)
+    return default
+
+def safe_extract_body_text(msg_data, limit_chars=4000) -> str:
+    """Extrait le texte du body de manière sécurisée"""
+    try:
+        payload = msg_data.get("payload", {}) or {}
+
+        def walk(part):
+            text = ""
+            if not part:
+                return text
+            if "parts" in part:
+                for sp in part["parts"]:
+                    text += walk(sp)
+                return text
+            mt = part.get("mimeType")
+            if mt in ("text/plain", "text/html"):
+                data = (part.get("body", {}) or {}).get("data", "")
+                if data:
+                    decoded = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+                    return decoded
+            return ""
+
+        body_raw = walk(payload)
+        if not body_raw:
+            return (msg_data.get("snippet") or "")[:limit_chars]
+
+        body_clean = re.sub(r"<[^>]+>", " ", body_raw)
+        body_clean = re.sub(r"\s+", " ", body_clean).strip()
+        return body_clean[:limit_chars]
+    except Exception as e:
+        _dbg(f"⚠️ safe_extract_body_text error: {type(e).__name__}: {str(e)[:60]}")
+        return (msg_data.get("snippet") or "")[:limit_chars]
 
 # ========================================
 # 🕵️ AGENT DÉTECTIVE - Scraping Email Marchand
@@ -2773,22 +2968,24 @@ Si E-COMMERCE valide sans litige :
             max_tokens=350
         )
         
-        ai_response = response.choices[0].message.content.strip()
+        ai_response = (response.choices[0].message.content or "").strip()
         DEBUG_LOGS.append(f"🤖 AI {scan_type}: {ai_response[:80]}...")
-        
-        # Parser JSON
-        import json
-        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-        if json_match:
-            result = json.loads(json_match.group())
-            
-            # Ajouter la catégorie si non présente
-            if result.get("is_valid") and result.get("litige"):
-                result["category"] = scan_type
-            
-            return result
-        else:
-            return {"is_valid": False, "litige": False, "reason": "Parsing error"}
+
+        DEFAULT = {"is_valid": False, "litige": False, "reason": "Parsing error"}
+        result = secure_json_parse(ai_response, DEFAULT)
+
+        result.setdefault("is_valid", False)
+        result.setdefault("litige", False)
+        result.setdefault("reason", "")
+
+        if result.get("is_valid") and result.get("litige"):
+            result.setdefault("company", "Inconnu")
+            result.setdefault("amount", "À déterminer")
+            result.setdefault("law", "Code de la consommation")
+            result.setdefault("proof", subject[:120] if subject else "")
+            result["category"] = scan_type
+
+        return result
             
     except Exception as e:
         DEBUG_LOGS.append(f"❌ Erreur IA {scan_type}: {str(e)}")
@@ -4509,6 +4706,15 @@ def scan():
             
             full_text = f"{subject} {sender} {to_field} {body_text}"
             
+            # ════════════════════════════════════════════════════════════════
+            # 🚀 PRÉ-FILTRE RAPIDE AVANT APPEL IA
+            # ════════════════════════════════════════════════════════════════
+            
+            ok, reason = fast_candidate_filter("ecommerce", sender, subject, snippet)
+            if not ok:
+                debug_rejected.append(f"<p>⏭️ SKIP ({reason}): {subject[:35]}...</p>")
+                continue
+            
             emails_sent_to_ai += 1
             
             print(f"\n{'─'*50}")
@@ -4602,7 +4808,9 @@ def scan():
                 "subject": f"📦 {proof[:100]}",
                 "message_id": msg_id,
                 "proof": proof,
-                "category": "ecommerce"
+                "category": "ecommerce",
+                "sender": sender,
+                "to_field": to_field,
             })
             
             # Ajouter au dict pour éviter doublons
@@ -4909,91 +5117,71 @@ def scan_travel():
         "showroomprive", "mango", "bershka", "la redoute", "kiabi", "decathlon"
     ]
     
+    MAX_AI_CALLS = 35
+    ai_calls = 0
+    emails_errors = 0
+    
     for msg in messages:
         emails_scanned += 1
         msg_id = msg['id']
         
-        if msg_id in existing_message_ids:
-            debug_rejected.append(f"⏭️ Déjà traité: {msg_id[:15]}...")
-            continue
-        
         try:
-            msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-            headers = msg_data.get('payload', {}).get('headers', [])
-            
-            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'Sans sujet')
-            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Inconnu')
-            to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), '')
-            
-            body_snippet = msg_data.get('snippet', '')
-            
-            subject_lower = subject.lower()
-            sender_lower = sender.lower()
-            full_text = f"{sender_lower} {subject_lower} {body_snippet.lower()}"
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🚫 PRÉ-FILTRE PYTHON : EXCLURE E-COMMERCE
-            # ════════════════════════════════════════════════════════════════
-            
-            is_ecommerce = any(ec in full_text for ec in ECOMMERCE_BLACKLIST)
-            if is_ecommerce:
-                emails_filtered_spam += 1  # Compteur réutilisé
-                debug_rejected.append(f"🛒 E-commerce exclu: {subject[:35]}...")
-                print(f"   🛒 EXCLU (e-commerce): {subject[:40]}...")
+            if msg_id in existing_message_ids:
+                debug_rejected.append(f"⏭️ Déjà traité: {msg_id[:15]}...")
                 continue
             
-            # Spam évident
-            if any(spam in subject_lower for spam in ["newsletter", "unsubscribe", "désabonner", "mot de passe", "password", "promo", "soldes"]):
+            # ════════════════════════════════════════════════════════════════
+            # 📋 ÉTAPE 1 : GET METADATA UNIQUEMENT (pas full)
+            # ════════════════════════════════════════════════════════════════
+            
+            msg_meta = service.users().messages().get(
+                userId='me',
+                id=msg_id,
+                format='metadata',
+                metadataHeaders=['Subject', 'From', 'To', 'Date']
+            ).execute()
+            
+            headers = (msg_meta.get('payload') or {}).get('headers') or []
+            subject = get_gmail_headers(headers, 'subject', 'Sans sujet')
+            sender = get_gmail_headers(headers, 'from', 'Inconnu')
+            to_field = get_gmail_headers(headers, 'to', '')
+            snippet = msg_meta.get('snippet', '') or ""
+            
+            # ════════════════════════════════════════════════════════════════
+            # 🚀 ÉTAPE 2 : PRÉ-FILTRE RAPIDE (avant appel IA)
+            # ════════════════════════════════════════════════════════════════
+            
+            ok, reason = fast_candidate_filter("travel", sender, subject, snippet)
+            if not ok:
                 emails_filtered_spam += 1
-                debug_rejected.append(f"🚫 Spam: {subject[:35]}...")
+                debug_rejected.append(f"⏭️ SKIP ({reason}): {subject[:40]}...")
                 continue
             
             # ════════════════════════════════════════════════════════════════
-            # PRÉ-FILTRE TRANSPORT : L'email doit mentionner une compagnie
+            # 🛑 VÉRIFIER PLAFOND IA
             # ════════════════════════════════════════════════════════════════
             
-            full_text = f"{sender_lower} {subject_lower} {body_snippet.lower()}"
-            is_transport_related = any(company in full_text for company in TRANSPORT_COMPANIES)
-            
-            # Aussi accepter les mots clés de transport
-            transport_keywords = ["vol ", "train ", "avion", "retard", "annul", "bagage", "flight", "delay", "tgv"]
-            has_transport_keyword = any(kw in full_text for kw in transport_keywords)
-            
-            if not is_transport_related and not has_transport_keyword:
-                debug_rejected.append(f"⏭️ Pas transport: {subject[:40]}...")
-                continue
+            if ai_calls >= MAX_AI_CALLS:
+                debug_rejected.append(f"⏭️ Limite IA atteinte ({MAX_AI_CALLS}) — scan partiel")
+                break
             
             # ════════════════════════════════════════════════════════════════
-            # EXTRACTION DU CONTENU COMPLET
+            # 📄 ÉTAPE 3 : GET FULL (seulement si candidat)
             # ════════════════════════════════════════════════════════════════
             
-            body_text = ""
-            payload = msg_data.get('payload', {})
+            msg_full = service.users().messages().get(
+                userId='me',
+                id=msg_id,
+                format='full'
+            ).execute()
             
-            if 'parts' in payload:
-                for part in payload['parts']:
-                    if part.get('mimeType') == 'text/plain':
-                        data = part.get('body', {}).get('data', '')
-                        if data:
-                            import base64
-                            try:
-                                body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
-                            except:
-                                pass
-                            break
-            else:
-                data = payload.get('body', {}).get('data', '')
-                if data:
-                    import base64
-                    try:
-                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
-                    except:
-                        pass
-            
+            body_text = safe_extract_body_text(msg_full, limit_chars=4000) or snippet
             if not body_text:
-                body_text = body_snippet
+                debug_rejected.append(f"⚠️ Body vide: {subject[:40]}...")
+                continue
             
             emails_sent_to_ai += 1
+            ai_calls += 1
             
             print(f"\n{'─'*50}")
             print(f"✈️ ANALYSE: {subject[:50]}...")
@@ -5081,7 +5269,9 @@ def scan_travel():
                 "subject": f"✈️ {proof[:100]}",
                 "message_id": msg_id,
                 "proof": proof,
-                "category": "transport"  # Catégorie explicite
+                "category": "transport",
+                "sender": sender,
+                "to_field": to_field,
             })
             
             # Ajouter au dict pour éviter les doublons
@@ -5140,7 +5330,10 @@ def scan_travel():
             """
                 
         except Exception as e:
-            debug_rejected.append(f"⚠️ Erreur: {str(e)[:30]}...")
+            emails_errors += 1
+            err = f"{type(e).__name__}: {str(e)[:60]}"
+            _dbg(f"⚠️ scan_travel error msg={msg_id[:10]}: {err}")
+            debug_rejected.append(f"⚠️ Erreur email: {err}")
             continue
     
     # Stocker en session
