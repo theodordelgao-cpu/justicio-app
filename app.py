@@ -3117,11 +3117,26 @@ Analyse cet email et réponds UNIQUEMENT en JSON valide (pas de texte avant/apr�
         result.setdefault("proof", subject[:100] if subject else "")
         result.setdefault("reason", "")
         
-        # Si l'entreprise est "Inconnu", essayer d'extraire depuis le domaine
-        if result.get("company", "").lower() in ["inconnu", "unknown", "", "vendeur"]:
-            if sender_domain and sender_domain.lower() not in ["gmail", "yahoo", "outlook", "hotmail", "free", "orange", "sfr", "laposte"]:
-                result["company"] = sender_domain.capitalize()
-                DEBUG_LOGS.append(f"📦 Company extraite du domaine: {result['company']}")
+        # ════════════════════════════════════════════════════════════════
+        # 🛡️ CORRECTION COMPANY : Ne jamais utiliser un provider mail
+        # ════════════════════════════════════════════════════════════════
+        company_raw = (result.get("company") or "").strip()
+        company_l = company_raw.lower()
+        
+        # Si l'IA renvoie inconnu/vide OU un provider mail comme entreprise
+        if company_l in ["", "inconnu", "unknown", "vendeur"] or company_l in MAIL_PROVIDERS:
+            # Essayer d'extraire depuis TO/Sujet/From (pas depuis domaine mail provider)
+            guessed = extract_company_from_recipient(to_field, subject, sender) if to_field else None
+            if guessed:
+                result["company"] = guessed.upper() if isinstance(guessed, str) else guessed
+                DEBUG_LOGS.append(f"📦 Company extraite via extract_company_from_recipient: {result['company']}")
+            elif sender_domain and sender_domain.lower() not in MAIL_PROVIDERS:
+                # Fallback domaine uniquement si ce n'est PAS un provider mail
+                result["company"] = sender_domain.upper()
+                DEBUG_LOGS.append(f"📦 Company extraite du domaine non-provider: {result['company']}")
+            else:
+                result["company"] = "Vendeur"
+                DEBUG_LOGS.append("📦 Company: aucune extraction possible, fallback Vendeur")
         
         # Nettoyer le montant (enlever le symbole €, garder que les chiffres)
         amount_str = str(result.get("amount", "0"))
@@ -3285,6 +3300,44 @@ KEYWORDS_REFUSAL = [
     # Réponses négatives fermes
     "ne donnera pas lieu", "clôture sans suite", "sans suite favorable"
 ]
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📧 PROVIDERS MAIL - Ne jamais utiliser comme "company" de litige
+# ════════════════════════════════════════════════════════════════════════════════
+MAIL_PROVIDERS = {
+    "gmail", "googlemail", "outlook", "hotmail", "live", "msn", "yahoo", "icloud", "me", "mac",
+    "protonmail", "proton", "pm", "gmx", "zoho", "mail", "aol",
+    "orange", "wanadoo", "free", "sfr", "laposte", "bbox", "neuf", "numericable"
+}
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📄 FILTRE FACTURES NORMALES (éviter faux positifs)
+# ════════════════════════════════════════════════════════════════════════════════
+INVOICE_KEYWORDS = [
+    "facture", "invoice", "reçu", "receipt", "confirmation de paiement", "payment confirmation",
+    "paiement accepté", "payment successful", "merci pour votre paiement", "payment received",
+    "renouvellement", "renewal", "abonnement", "subscription", "prélèvement", "sepa", "montant débité",
+    "échéance", "mensualité", "paiement mensuel", "votre facture est disponible",
+]
+
+DISPUTE_TRIGGERS = [
+    "pas reçu", "non reçu", "jamais reçu", "non livré", "pas livré", "colis perdu",
+    "retard", "delay", "annulation", "cancel", "annulé",
+    "pas remboursé", "remboursement refusé", "en attente de remboursement", "attente remboursement",
+    "litige", "réclamation", "plainte", "dispute", "contestation",
+    "défectueux", "cassé", "endommagé", "broken", "defective", "damaged", "abîmé",
+    "non conforme", "contrefaçon", "arnaque", "erreur",
+]
+
+def is_invoice_without_dispute(subject: str, snippet: str) -> bool:
+    """
+    Détecte les factures/confirmations de paiement normales SANS litige.
+    Retourne True si c'est une facture normale à ignorer.
+    """
+    blob = f"{subject or ''} {snippet or ''}".lower()
+    if any(k in blob for k in INVOICE_KEYWORDS) and not any(t in blob for t in DISPUTE_TRIGGERS):
+        return True
+    return False
 
 def is_ignored_sender(sender_email):
     """
@@ -3474,6 +3527,29 @@ def extract_numeric_amount(amount_str):
                 continue
     
     return 0
+
+def is_valid_euro_amount(amount_str: str) -> bool:
+    """
+    Valide un montant type '42€' / '42.99€' / '42,99€'.
+    Refuse 'À compléter' et montants nuls.
+    """
+    if not amount_str:
+        return False
+    s = str(amount_str).strip().lower()
+    if "compl" in s:
+        return False
+
+    m = re.search(r"(\d+(?:[.,]\d{1,2})?)\s*(€|eur|euros?)\b", s)
+    if not m:
+        m = re.search(r"(\d+(?:[.,]\d{1,2})?)\s*€", s)
+        if not m:
+            return False
+
+    try:
+        val = float(m.group(1).replace(",", "."))
+        return val > 0
+    except:
+        return False
 
 def extract_amount_from_text(text):
     """
@@ -4419,26 +4495,26 @@ def index():
         <!-- CARTES D'ACTION -->
         <div style='display:flex; flex-wrap:wrap; justify-content:center; gap:25px; margin-bottom:40px;'>
             
-            <!-- CARTE E-COMMERCE -->
-            <a href='/scan-ecommerce' class='action-card' onclick='showLoading("ecommerce")'>
-                <div class='icon'>📦</div>
-                <div class='title'>SCAN E-COMMERCE</div>
+            <!-- CARTE SCAN UNIQUE -->
+            <a href='/scan-all' class='action-card' onclick='showLoading("scan")'>
+                <div class='icon'>🔍</div>
+                <div class='title'>SCAN COMPLET</div>
                 <div class='description'>
-                    Colis perdus, retours refusés, produits défectueux...<br>
-                    <b>Toutes marques : Amazon, Zalando, Asphalte...</b>
+                    E-commerce + Voyages en un seul scan<br>
+                    <b>Colis perdus, vols retardés, remboursements...</b>
                 </div>
-                <span class='badge badge-fast'>⚡ Grand Filet • 30 jours</span>
+                <span class='badge badge-fast'>⚡ Analyse IA • 365 jours</span>
             </a>
             
-            <!-- CARTE VOYAGES -->
-            <a href='/scan-travel' class='action-card travel' onclick='showLoading("travel")'>
-                <div class='icon'>✈️</div>
-                <div class='title'>SCAN VOYAGES</div>
+            <!-- CARTE DÉCLARER -->
+            <a href='/declare' class='action-card travel' onclick='showLoading("declare")'>
+                <div class='icon'>✍️</div>
+                <div class='title'>DÉCLARER UN LITIGE</div>
                 <div class='description'>
-                    Retards, annulations, bagages perdus...<br>
-                    <b>SNCF, Air France, EasyJet, Eurostar...</b>
+                    Vous avez un litige spécifique ?<br>
+                    <b>Déclarez-le manuellement</b>
                 </div>
-                <span class='badge badge-premium'>💎 Jusqu'à 600€/dossier</span>
+                <span class='badge badge-premium'>📝 Manuel</span>
             </a>
             
         </div>
@@ -4456,16 +4532,6 @@ def index():
         
         <!-- STATS RAPIDES -->
         {"<div style='background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:12px; padding:15px 25px; display:inline-block; margin-bottom:30px;'><span style='color:#10b981; font-weight:600;'>💰 " + f"{total_potential:.0f}€" + " en litiges détectés</span></div>" if total_potential > 0 else ""}
-        
-        <!-- DÉCLARATION MANUELLE -->
-        <div style='margin-bottom:30px;'>
-            <a href='/declare' style='color:rgba(255,255,255,0.6); font-size:0.95rem; text-decoration:none;
-                                       display:inline-flex; align-items:center; gap:8px;
-                                       padding:12px 20px; border-radius:10px;
-                                       transition:all 0.3s;'>
-                ✍️ Déclarer un litige manuellement
-            </a>
-        </div>
         
         <!-- FOOTER LINKS -->
         <div style='margin-top:20px;'>
@@ -4509,14 +4575,71 @@ def logout():
 @app.route("/scan")
 @app.route("/scan-ecommerce")
 def scan():
+    """Redirige vers /scan-all pour compatibilité"""
+    return redirect("/scan-all")
+
+# ========================================
+# ✈️ SCAN VOYAGES - REDIRIGE VERS SCAN-ALL
+# ========================================
+
+@app.route("/scan-travel")
+def scan_travel():
+    """Redirige vers /scan-all pour compatibilité"""
+    return redirect("/scan-all")
+
+# ========================================
+# 🔍 SCAN UNIFIÉ - E-COMMERCE + VOYAGES
+# ========================================
+
+# Mots-clés pour classification locale
+TRAVEL_KEYWORDS = [
+    "sncf", "ouigo", "eurostar", "thalys", "ter", "tgv", "train", "rail",
+    "air france", "easyjet", "ryanair", "transavia", "vueling", "volotea",
+    "lufthansa", "klm", "british airways", "tap", "iberia", "swiss",
+    "vol", "flight", "aéroport", "airport", "embarquement", "boarding",
+    "retard vol", "flight delay", "annulation vol", "cancelled flight",
+    "compensation", "règlement 261", "ec 261", "bagage perdu", "lost baggage",
+    "correspondance ratée", "missed connection"
+]
+
+ECOMMERCE_KEYWORDS = [
+    "commande", "order", "colis", "package", "livraison", "delivery",
+    "amazon", "cdiscount", "fnac", "darty", "zalando", "asos", "zara",
+    "vinted", "leboncoin", "aliexpress", "shein", "temu", "wish",
+    "retour", "return", "remboursement", "refund", "défectueux", "defective",
+    "non reçu", "not received", "jamais reçu", "never received",
+    "colis perdu", "lost package", "article manquant", "missing item"
+]
+
+def classify_email_category(subject: str, snippet: str, sender: str) -> str:
     """
-    📦 SCANNER E-COMMERCE V4 - GRAND FILET BLINDÉ
+    Classifie un email en 'travel' ou 'ecommerce' basé sur les mots-clés.
+    Retourne la catégorie avec le plus de matchs.
+    """
+    blob = f"{subject or ''} {snippet or ''} {sender or ''}".lower()
     
-    VERSION BLINDÉE :
-    - Try/except autour de CHAQUE email (ne crashe jamais)
-    - Compteur d'erreurs pour diagnostic
-    - Parsing JSON sécurisé via analyze_ecommerce_flexible blindé
-    - Continue même si un email pose problème
+    travel_score = sum(1 for kw in TRAVEL_KEYWORDS if kw in blob)
+    ecommerce_score = sum(1 for kw in ECOMMERCE_KEYWORDS if kw in blob)
+    
+    if travel_score > ecommerce_score:
+        return "travel"
+    elif ecommerce_score > travel_score:
+        return "ecommerce"
+    else:
+        # Par défaut, e-commerce (plus fréquent)
+        return "ecommerce"
+
+@app.route("/scan-all")
+def scan_all():
+    """
+    🔍 SCAN UNIFIÉ V1 - E-Commerce + Voyages
+    
+    Scan unique qui:
+    - Liste Gmail sur 365 jours
+    - Filtre localement (gratuit) les spam/newsletters/success
+    - Classifie localement en travel vs ecommerce
+    - Appelle l'IA uniquement sur les candidats
+    - MAX_AI_CALLS global pour limiter les coûts
     """
     if "credentials" not in session:
         return redirect("/login")
@@ -4525,7 +4648,7 @@ def scan():
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
     except Exception as e:
-        DEBUG_LOGS.append(f"❌ Scan E-commerce: Erreur auth Gmail - {str(e)[:50]}")
+        DEBUG_LOGS.append(f"❌ Scan-All: Erreur auth Gmail - {str(e)[:50]}")
         return STYLE + f"""
         <div style='text-align:center; padding:50px;'>
             <h1 style='color:white;'>❌ Erreur d'authentification</h1>
@@ -4535,407 +4658,288 @@ def scan():
         """ + FOOTER
     
     # ════════════════════════════════════════════════════════════════
-    # 🎣 QUERY GMAIL "GRAND FILET" - Basée sur des CONCEPTS
+    # 📅 Query Gmail large sur 365 jours
     # ════════════════════════════════════════════════════════════════
+    from datetime import timedelta
+    one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y/%m/%d")
     
-    query = """
+    query = f"""
+    label:INBOX 
+    after:{one_year_ago}
     (
-        (commande OR colis OR livraison OR order OR delivery OR package OR expédition OR shipment)
-        (retard OR delay OR problème OR problem OR remboursement OR refund OR 
-         "non reçu" OR "not received" OR "jamais reçu" OR "never received" OR
-         annulé OR cancelled OR "service client" OR "customer service" OR
-         réclamation OR complaint OR litige OR dispute OR défectueux OR defective OR
-         cassé OR broken OR manquant OR missing OR perdu OR lost)
+        (commande OR colis OR livraison OR order OR delivery OR package)
+        OR
+        (sncf OR "air france" OR easyjet OR ryanair OR train OR vol OR flight)
+        OR
+        (retard OR delay OR annulation OR cancel OR remboursement OR refund)
+        OR
+        (réclamation OR complaint OR litige OR dispute)
+        OR
+        ("non reçu" OR "pas reçu" OR "jamais reçu" OR perdu OR lost)
     )
-    OR
-    (
-        (retard livraison) OR (delivery delay) OR (colis perdu) OR (package lost) OR
-        (commande annulée) OR (order cancelled) OR (remboursement en attente) OR
-        (produit défectueux) OR (article manquant) OR (non conforme)
-    )
-    -label:trash 
     -category:promotions 
     -category:social
     -subject:"MISE EN DEMEURE"
     -subject:newsletter
     -subject:unsubscribe
+    -from:noreply
+    -from:no-reply
     """
     
     print("\n" + "="*70)
-    print("📦 SCAN E-COMMERCE V4 BLINDÉ - DÉMARRAGE")
-    print("🛡️ Mode: Try/except par email + Parsing JSON sécurisé")
+    print("🔍 SCAN UNIFIÉ V1 - DÉMARRAGE")
     print("="*70)
     
-    DEBUG_LOGS.append(f"📦 SCAN E-COMMERCE V4 lancé - Mode Blindé")
+    DEBUG_LOGS.append(f"🔍 SCAN-ALL lancé - Mode unifié E-commerce + Voyages")
     
     try:
-        results = service.users().messages().list(userId='me', q=query, maxResults=80).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=200).execute()
         messages = results.get('messages', [])
     except Exception as e:
-        DEBUG_LOGS.append(f"❌ Scan: Erreur liste Gmail - {str(e)[:50]}")
+        DEBUG_LOGS.append(f"❌ Scan-All: Erreur liste Gmail - {str(e)[:50]}")
         return STYLE + f"<h1 style='color:white;'>Erreur lecture Gmail : {str(e)[:100]}</h1><a href='/login'>Se reconnecter</a>" + FOOTER
     
-    print(f"📧 {len(messages)} emails trouvés avec la query grand filet")
+    print(f"📧 {len(messages)} emails trouvés")
     
     # ════════════════════════════════════════════════════════════════
-    # 📊 COMPTEURS ET VARIABLES
+    # 🔄 Analyse des emails
     # ════════════════════════════════════════════════════════════════
-    
-    total_gain = 0
-    new_cases_count = 0
-    html_cards = ""
-    debug_rejected = ["<h3>📋 Rapport d'Analyse</h3>"]
-    
-    # Compteurs détaillés
-    emails_scanned = 0
-    emails_filtered_spam = 0
-    emails_sent_to_ai = 0
-    emails_litige_found = 0
-    emails_errors = 0  # 🆕 Compteur d'erreurs
-    
-    # Anti-doublon
-    existing_message_ids = set()
-    existing_company_amounts_dict = {}
-    
-    for lit in Litigation.query.filter_by(user_email=session['email']).all():
-        if lit.message_id:
-            existing_message_ids.add(lit.message_id)
-        company_key = lit.company.lower().strip() if lit.company else ""
-        amount_value = extract_numeric_amount(lit.amount) if lit.amount else 0
-        if company_key not in existing_company_amounts_dict:
-            existing_company_amounts_dict[company_key] = []
-        existing_company_amounts_dict[company_key].append(amount_value)
     
     detected_litigations = []
-    
-    # ════════════════════════════════════════════════════════════════
-    # LISTES DE FILTRAGE (spam seulement, PAS de filtrage par marque)
-    # ════════════════════════════════════════════════════════════════
-    
-    SPAM_SUBJECTS = [
-        "mot de passe", "password", "newsletter", "unsubscribe", "désabonner",
-        "code promo", "offre exclusive", "vente flash", "soldes", "-50%", "-70%",
-        "gagnez", "félicitations", "cadeau gratuit"
-    ]
-    
-    SPAM_SENDERS = [
-        "noreply@linkedin", "notifications@", "marketing@", "promo@",
-        "news@", "deals@", "offers@"
-    ]
-    
-    # ════════════════════════════════════════════════════════════════
-    # 🔄 BOUCLE PRINCIPALE AVEC TRY/EXCEPT PAR EMAIL
-    # ════════════════════════════════════════════════════════════════
+    emails_scanned = 0
+    emails_skipped = 0
+    emails_errors = 0
+    ai_calls = 0
+    MAX_AI_CALLS = 40
     
     for msg in messages:
-        emails_scanned += 1
-        msg_id = msg['id']
-        
-        # ════════════════════════════════════════════════════════════════
-        # 🛡️ TRY/EXCEPT GLOBAL PAR EMAIL - NE CRASHE JAMAIS
-        # ════════════════════════════════════════════════════════════════
         try:
-            # Vérifier doublon
-            if msg_id in existing_message_ids:
-                debug_rejected.append(f"<p>⏭️ Déjà traité: {msg_id[:15]}...</p>")
-                continue
+            # Récupérer metadata (Subject, From, To, snippet)
+            msg_data = service.users().messages().get(userId='me', id=msg['id'], format='metadata',
+                                                       metadataHeaders=['Subject', 'From', 'To']).execute()
             
-            # Récupérer l'email
-            msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-            
-            if not msg_data:
-                debug_rejected.append(f"<p>⚠️ Email vide: {msg_id[:15]}...</p>")
-                continue
-            
-            headers = msg_data.get('payload', {}).get('headers', [])
-            
-            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'Sans sujet')
-            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Inconnu')
-            to_field = next((h['value'] for h in headers if h['name'].lower() == 'to'), '')
+            headers = {h['name']: h['value'] for h in msg_data.get('payload', {}).get('headers', [])}
+            subject = headers.get('Subject', '')
+            sender = headers.get('From', '')
+            to_field = headers.get('To', '')
             snippet = msg_data.get('snippet', '')
             
-            subject_lower = subject.lower()
-            sender_lower = sender.lower()
+            emails_scanned += 1
             
             # ════════════════════════════════════════════════════════════════
-            # FILTRAGE SPAM MINIMAL (PAS de filtrage par marque !)
+            # 🛡️ FILTRAGE LOCAL (GRATUIT)
             # ════════════════════════════════════════════════════════════════
             
-            # Nos propres mises en demeure
-            if "MISE EN DEMEURE" in subject.upper():
-                debug_rejected.append(f"<p>📤 Notre email: {subject[:40]}...</p>")
+            blob = f"{subject} {snippet}".lower()
+            
+            # Ignorer nos propres mises en demeure
+            if "mise en demeure" in blob and "justicio" in blob:
+                emails_skipped += 1
                 continue
             
-            # Spam évident
-            if any(spam in subject_lower for spam in SPAM_SUBJECTS):
-                emails_filtered_spam += 1
-                debug_rejected.append(f"<p>🚫 Spam: {subject[:40]}...</p>")
+            # Ignorer newsletters/promos
+            if any(kw in blob for kw in ["newsletter", "unsubscribe", "désinscri", "promo", "offre exclusive", "code promo"]):
+                emails_skipped += 1
                 continue
             
-            # Expéditeurs spam
-            if any(spam in sender_lower for spam in SPAM_SENDERS):
-                emails_filtered_spam += 1
-                debug_rejected.append(f"<p>🚫 Expéditeur spam: {sender[:30]}...</p>")
+            # Ignorer SUCCESS (déjà remboursé)
+            if any(kw in blob for kw in KEYWORDS_SUCCESS):
+                emails_skipped += 1
+                continue
+            
+            # Ignorer REFUS (pas de litige exploitable)
+            if any(kw in blob for kw in KEYWORDS_REFUSAL):
+                emails_skipped += 1
+                continue
+            
+            # Ignorer factures normales sans litige
+            if is_invoice_without_dispute(subject, snippet):
+                emails_skipped += 1
                 continue
             
             # ════════════════════════════════════════════════════════════════
-            # EXTRACTION DU CONTENU COMPLET
+            # 🏷️ CLASSIFICATION LOCALE
             # ════════════════════════════════════════════════════════════════
             
-            body_text = ""
-            payload = msg_data.get('payload', {})
+            category = classify_email_category(subject, snippet, sender)
             
+            # ════════════════════════════════════════════════════════════════
+            # 🤖 ANALYSE IA (si quota pas atteint)
+            # ════════════════════════════════════════════════════════════════
+            
+            if ai_calls >= MAX_AI_CALLS:
+                DEBUG_LOGS.append(f"⚠️ Quota IA atteint ({MAX_AI_CALLS}), arrêt")
+                break
+            
+            # Récupérer le corps complet
             try:
-                if 'parts' in payload:
-                    for part in payload['parts']:
-                        if part.get('mimeType') == 'text/plain':
-                            data = part.get('body', {}).get('data', '')
-                            if data:
-                                body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
-                                break
-                else:
-                    data = payload.get('body', {}).get('data', '')
-                    if data:
-                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')[:4000]
-            except Exception as decode_err:
-                DEBUG_LOGS.append(f"⚠️ Erreur décodage body {msg_id[:10]}: {str(decode_err)[:30]}")
-                body_text = snippet  # Fallback sur le snippet
-            
-            if not body_text:
+                full_msg = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+                body_text = safe_extract_body_text(full_msg)
+            except:
                 body_text = snippet
             
-            full_text = f"{subject} {sender} {to_field} {body_text}"
+            # Extraire le domaine expéditeur
+            sender_domain = ""
+            email_match = re.search(r'@([a-zA-Z0-9.-]+)', sender)
+            if email_match:
+                sender_domain = email_match.group(1).split('.')[0]
             
-            # ════════════════════════════════════════════════════════════════
-            # 🚀 PRÉ-FILTRE RAPIDE AVANT APPEL IA
-            # ════════════════════════════════════════════════════════════════
+            # Appeler l'IA selon la catégorie
+            ai_calls += 1
             
-            ok, reason = fast_candidate_filter("ecommerce", sender, subject, snippet)
-            if not ok:
-                debug_rejected.append(f"<p>⏭️ SKIP ({reason}): {subject[:35]}...</p>")
-                continue
-            
-            emails_sent_to_ai += 1
-            
-            print(f"\n{'─'*50}")
-            print(f"📦 ANALYSE: {subject[:50]}...")
-            print(f"   From: {sender[:40]}...")
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🤖 ANALYSE IA FLEXIBLE (DÉJÀ BLINDÉE)
-            # ════════════════════════════════════════════════════════════════
-            
-            analysis = analyze_ecommerce_flexible(body_text, subject, sender, to_field)
-            
-            print(f"   🤖 Résultat IA: {analysis}")
-            
-            # Vérifier si c'est un litige valide
-            if not analysis.get("is_valid", False):
-                reason = analysis.get("reason", "Non valide")
-                debug_rejected.append(f"<p>❌ Rejeté ({reason}): {subject[:35]}...</p>")
-                print(f"   ❌ REJETÉ: {reason}")
-                continue
-            
-            if not analysis.get("litige", False):
-                reason = analysis.get("reason", "Pas de litige")
-                debug_rejected.append(f"<p>⏭️ Pas de litige: {subject[:35]}...</p>")
-                continue
-            
-            company = analysis.get("company", "Vendeur inconnu")
-            amount = analysis.get("amount", "À compléter")
-            law = analysis.get("law", "Code de la consommation")
-            proof = analysis.get("proof", subject)
-            
-            # ════════════════════════════════════════════════════════════════
-            # 💰 VALIDATION ET EXTRACTION DU MONTANT
-            # ════════════════════════════════════════════════════════════════
-            
-            amount_numeric = extract_numeric_amount(amount)
-            
-            # Si pas de montant, essayer d'extraire depuis le texte
-            if amount_numeric == 0:
-                extracted = extract_amount_from_text(full_text)
-                if extracted:
-                    amount = extracted
-                    amount_numeric = extract_numeric_amount(extracted)
-                    print(f"   💰 Montant extrait du texte: {amount}")
-            
-            # Si toujours pas de montant, mettre "À compléter"
-            if amount_numeric == 0 or "compléter" in amount.lower():
-                amount = "À compléter"
-                amount_numeric = 50  # Estimation pour les stats
-            
-            # ════════════════════════════════════════════════════════════════
-            # VÉRIFICATION DOUBLON
-            # ════════════════════════════════════════════════════════════════
-            
-            company_key = company.lower().strip()
-            
-            is_duplicate = False
-            if company_key in existing_company_amounts_dict and amount_numeric > 0:
-                for existing_amount in existing_company_amounts_dict[company_key]:
-                    if existing_amount > 0 and abs(existing_amount - amount_numeric) <= 2:
-                        is_duplicate = True
-                        break
-            
-            # Vérifier aussi dans ce scan
-            for existing_lit in detected_litigations:
-                ex_company = existing_lit['company'].lower().strip()
-                ex_amount = extract_numeric_amount(existing_lit['amount'])
-                if ex_company == company_key and ex_amount > 0 and amount_numeric > 0:
-                    if abs(ex_amount - amount_numeric) <= 2:
-                        is_duplicate = True
-                        break
-            
-            if is_duplicate:
-                debug_rejected.append(f"<p>🔄 Doublon: {company} ({amount})</p>")
-                continue
-            
-            # ════════════════════════════════════════════════════════════════
-            # ✅ LITIGE E-COMMERCE VALIDÉ !
-            # ════════════════════════════════════════════════════════════════
-            
-            new_cases_count += 1
-            emails_litige_found += 1
-            total_gain += amount_numeric if amount_numeric > 0 else 50
-            
-            print(f"   ✅ LITIGE E-COMMERCE VALIDÉ: {company} - {amount}")
-            
-            detected_litigations.append({
-                "company": company,
-                "amount": amount,
-                "law": law,
-                "subject": f"📦 {proof[:100]}",
-                "message_id": msg_id,
-                "proof": proof,
-                "category": "ecommerce",
-                "sender": sender,
-                "to_field": to_field,
-            })
-            
-            # Ajouter au dict pour éviter doublons
-            if company_key not in existing_company_amounts_dict:
-                existing_company_amounts_dict[company_key] = []
-            existing_company_amounts_dict[company_key].append(amount_numeric)
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🎨 CARTE HTML E-COMMERCE (icône 📦 forcée)
-            # ════════════════════════════════════════════════════════════════
-            
-            # Affichage montant
-            if is_valid_euro_amount(amount):
-                amount_display = amount
+            if category == "travel":
+                result = analyze_litigation_strict(body_text, subject, sender, sender_domain, to_field, scan_type="travel")
             else:
-                amount_display = f"<span style='color:#f59e0b;'>À compléter</span>"
+                result = analyze_ecommerce_flexible(body_text, subject, sender, sender_domain, to_field)
             
-            html_cards += f"""
-            <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
-                        max-width:550px; position:relative; 
-                        box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
-                        border-left:5px solid #10b981;'>
+            # Vérifier si litige détecté
+            if result.get("is_valid") and result.get("litige"):
+                # Éviter les doublons
+                is_duplicate = False
+                for existing in detected_litigations:
+                    if existing.get('message_id') == msg['id']:
+                        is_duplicate = True
+                        break
+                    if existing.get('company', '').lower() == result.get('company', '').lower() and \
+                       existing.get('proof', '')[:50] == result.get('proof', '')[:50]:
+                        is_duplicate = True
+                        break
                 
-                <!-- Badge E-COMMERCE (forcé) -->
-                <div style='position:absolute; top:15px; left:15px; 
-                            background:linear-gradient(135deg, #10b981, #059669);
-                            color:white; padding:5px 12px; border-radius:20px; 
-                            font-size:0.7rem; font-weight:600;'>
-                    📦 E-COMMERCE
-                </div>
-                
-                <!-- Montant -->
-                <div style='position:absolute; top:25px; right:25px; text-align:right;'>
-                    <div style='font-size:1.8rem; font-weight:700; color:#10b981;'>
-                        {amount_display}
-                    </div>
-                    <div style='font-size:0.75rem; color:#64748b;'>à récupérer</div>
-                </div>
-                
-                <!-- Entreprise -->
-                <div style='margin-top:40px;'>
-                    <span style='background:linear-gradient(135deg, #d1fae5, #a7f3d0); 
-                                 color:#065f46; padding:6px 14px; border-radius:8px;
-                                 font-size:0.9rem; font-weight:700; text-transform:uppercase;'>
-                        {company.upper()}
-                    </span>
-                </div>
-                
-                <!-- Preuve -->
-                <div style='background:linear-gradient(135deg, #ecfdf5, #d1fae5);
-                            padding:15px; border-radius:12px; border-left:4px solid #10b981;
-                            margin:20px 0;'>
-                    <p style='margin:0; font-size:0.9rem; color:#065f46; line-height:1.5;'>
-                        📝 {proof[:180]}{"..." if len(proof) > 180 else ""}
-                    </p>
-                </div>
-                
-                <!-- Base légale -->
-                <div style='display:flex; align-items:center; gap:8px;'>
-                    <span style='font-size:1.1rem;'>⚖️</span>
-                    <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{law}</span>
-                </div>
-                
-            </div>
-            """
+                if not is_duplicate:
+                    detected_litigations.append({
+                        "company": result.get("company", "Vendeur"),
+                        "amount": result.get("amount", "À compléter"),
+                        "law": result.get("law", ""),
+                        "proof": result.get("proof", subject[:100]),
+                        "message_id": msg['id'],
+                        "category": category,
+                        "sender": sender,
+                        "to_field": to_field
+                    })
+                    DEBUG_LOGS.append(f"✅ LITIGE DÉTECTÉ [{category.upper()}]: {result.get('company')} - {result.get('amount')}")
         
-        # ════════════════════════════════════════════════════════════════
-        # 🛡️ CATCH GLOBAL : Si un email crashe, on continue
-        # ════════════════════════════════════════════════════════════════
-        except Exception as email_error:
+        except Exception as e:
             emails_errors += 1
-            error_msg = f"{type(email_error).__name__}: {str(email_error)[:50]}"
-            DEBUG_LOGS.append(f"⚠️ Erreur email {msg_id[:10]}: {error_msg}")
-            debug_rejected.append(f"<p style='color:#dc2626;'>⚠️ Erreur: {error_msg[:40]}...</p>")
-            print(f"   ⚠️ ERREUR EMAIL: {error_msg}")
-            continue  # 🔥 CRUCIAL : On passe à l'email suivant !
+            DEBUG_LOGS.append(f"❌ Erreur email {msg.get('id', '?')[:8]}: {type(e).__name__}")
+            continue
     
     # ════════════════════════════════════════════════════════════════
-    # 📊 FIN DE LA BOUCLE - Rapport
+    # 💾 Stocker en session
     # ════════════════════════════════════════════════════════════════
     
-    # Stocker en session
     session['detected_litigations'] = detected_litigations
+    
+    # Calculer le gain total
+    total_gain = 0
+    for lit in detected_litigations:
+        if is_valid_euro_amount(lit.get('amount', '')):
+            total_gain += extract_numeric_amount(lit['amount'])
+    
     session['total_gain'] = total_gain
     
-    print("\n" + "="*70)
-    print("📊 RÉSUMÉ SCAN E-COMMERCE V4 BLINDÉ")
-    print(f"   📧 Emails scannés: {emails_scanned}")
-    print(f"   🚫 Spam filtrés: {emails_filtered_spam}")
-    print(f"   🤖 Analysés IA: {emails_sent_to_ai}")
-    print(f"   ✅ LITIGES E-COMMERCE: {new_cases_count}")
-    print(f"   ⚠️ ERREURS (ignorées): {emails_errors}")
-    print("="*70)
+    new_cases_count = len(detected_litigations)
     
-    # Log warning si beaucoup d'erreurs
-    if emails_errors > 0:
-        DEBUG_LOGS.append(f"⚠️ Scan terminé avec {emails_errors} erreur(s) ignorée(s)")
+    print(f"\n📊 RÉSUMÉ SCAN UNIFIÉ")
+    print(f"   Emails analysés: {emails_scanned}")
+    print(f"   Emails ignorés: {emails_skipped}")
+    print(f"   Erreurs: {emails_errors}")
+    print(f"   Appels IA: {ai_calls}")
+    print(f"   Litiges détectés: {new_cases_count}")
+    print(f"   Gain potentiel: {total_gain}€")
     
-    # Debug HTML
-    debug_html = f"""
-    <details style='margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;'>
-        <summary style='cursor:pointer; color:rgba(255,255,255,0.5); font-size:0.85rem; 
-                        padding:15px; background:rgba(255,255,255,0.05); border-radius:10px;
-                        list-style:none; text-align:center;'>
-            🔧 Détails techniques ({emails_scanned} emails analysés, {emails_errors} erreur(s))
-        </summary>
-        <div style='margin-top:15px; background:rgba(255,255,255,0.95); padding:20px; 
-                    border-radius:12px; color:#334155; font-size:0.85rem;'>
-            <p><b>📧 Emails scannés:</b> {emails_scanned}</p>
-            <p><b>🚫 Spam filtrés:</b> {emails_filtered_spam}</p>
-            <p><b>🤖 Analysés par IA:</b> {emails_sent_to_ai}</p>
-            <p><b>✅ Litiges détectés:</b> {new_cases_count}</p>
-            <p style='color:#dc2626;'><b>⚠️ Erreurs (ignorées):</b> {emails_errors}</p>
-            <hr style='margin:15px 0; border:none; border-top:1px solid #e2e8f0;'>
-            <div style='max-height:200px; overflow-y:auto; font-size:0.8rem;'>
-                {"".join(debug_rejected[-30:])}
+    # ════════════════════════════════════════════════════════════════
+    # 🎨 Générer l'interface résultat
+    # ════════════════════════════════════════════════════════════════
+    
+    html_cards = ""
+    for i, lit in enumerate(detected_litigations):
+        category_badge = "📦 E-COMMERCE" if lit.get('category') == 'ecommerce' else "✈️ TRANSPORT"
+        category_color = "#4f46e5" if lit.get('category') == 'ecommerce' else "#f59e0b"
+        
+        amount_display = lit.get('amount', 'À compléter')
+        amount_editable = not is_valid_euro_amount(amount_display)
+        
+        html_cards += f"""
+        <div style='background:rgba(255,255,255,0.05); border-radius:16px; padding:20px; margin-bottom:15px;
+                    border-left:4px solid {category_color};'>
+            <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;'>
+                <span style='background:{category_color}; color:white; padding:4px 12px; border-radius:20px; font-size:0.75rem;'>
+                    {category_badge}
+                </span>
+                <span style='color:rgba(255,255,255,0.5); font-size:0.8rem;'>#{i+1}</span>
+            </div>
+            <h3 style='color:white; margin:0 0 8px 0;'>{lit.get('company', 'Vendeur')}</h3>
+            <p style='color:rgba(255,255,255,0.6); font-size:0.9rem; margin:0 0 10px 0;'>
+                {lit.get('proof', '')[:80]}...
+            </p>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span style='color:#10b981; font-weight:600; font-size:1.2rem;'>
+                    {"<input type='number' id='amount-" + str(i) + "' value='' placeholder='Montant €' style='width:100px; padding:5px; border-radius:5px; border:1px solid #10b981; background:rgba(16,185,129,0.1); color:#10b981;' onchange='updateAmount(" + str(i) + ")'>" if amount_editable else amount_display}
+                </span>
+                <span style='color:rgba(255,255,255,0.4); font-size:0.8rem;'>{lit.get('law', '')[:30]}</span>
             </div>
         </div>
-    </details>
+        """
+    
+    # Debug HTML
+    debug_html = ""
+    if DEBUG_LOGS:
+        debug_html = f"""
+        <details style='margin-top:30px; background:rgba(0,0,0,0.3); padding:15px; border-radius:10px;'>
+            <summary style='color:#fbbf24; cursor:pointer;'>🔧 Debug ({len(DEBUG_LOGS)} logs)</summary>
+            <pre style='color:rgba(255,255,255,0.6); font-size:0.75rem; white-space:pre-wrap; margin-top:10px;'>
+{chr(10).join(DEBUG_LOGS[-50:])}
+            </pre>
+        </details>
+        """
+    
+    # JavaScript pour mise à jour des montants
+    update_script = """
+    <script>
+    function updateAmount(index) {
+        const input = document.getElementById('amount-' + index);
+        const amount = input.value;
+        if (amount && amount > 0) {
+            fetch('/update-detected-amount', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({index: index, amount: amount})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    input.style.borderColor = '#10b981';
+                    // Mettre à jour le total si affiché
+                    const totalEl = document.getElementById('total-gain');
+                    if (totalEl) totalEl.textContent = data.total + '€';
+                }
+            });
+        }
+    }
+    </script>
     """
     
-    # Bouton action
-    action_btn = ""
-    if new_cases_count > 0 and STRIPE_SK:
-        action_btn = f"""
+    if new_cases_count > 0:
+        return STYLE + update_script + f"""
+        <div style='text-align:center; padding:30px;'>
+            <div style='font-size:4rem; margin-bottom:15px;'>🔍</div>
+            <h1 style='color:white; margin-bottom:10px;'>Scan Terminé !</h1>
+            <p style='color:#10b981; font-size:1.4rem; font-weight:600;'>
+                {new_cases_count} litige(s) détecté(s) !
+            </p>
+            <p style='color:rgba(255,255,255,0.7);'>
+                💰 Gain potentiel: <b id='total-gain' style='color:#10b981; font-size:1.6rem;'>{total_gain:.0f}€</b>
+            </p>
+            <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
+                📧 {emails_scanned} emails analysés • 🤖 {ai_calls} appels IA
+                {f" • ⚠️ {emails_errors} erreurs" if emails_errors > 0 else ""}
+            </p>
+        </div>
+        
+        <div style='max-width:600px; margin:0 auto;'>
+            {html_cards}
+        </div>
+        
         <div style='text-align:center; margin:40px 0;'>
             <a href='/setup-payment' class='btn-success' style='padding:20px 50px; font-size:1.2rem;
                                                                  background:linear-gradient(135deg, #10b981, #059669);
@@ -4946,472 +4950,23 @@ def scan():
                 Commission 25% uniquement en cas de succès
             </p>
         </div>
-        """
-    
-    if new_cases_count > 0:
-        return STYLE + f"""
-        <div style='text-align:center; padding:30px;'>
-            <div style='font-size:4rem; margin-bottom:15px;'>📦</div>
-            <h1 style='color:white; margin-bottom:10px;'>Scan E-commerce Terminé !</h1>
-            <p style='color:#10b981; font-size:1.4rem; font-weight:600;'>
-                {new_cases_count} litige(s) détecté(s) !
-            </p>
-            <p style='color:rgba(255,255,255,0.7);'>
-                💰 Gain potentiel: <b style='color:#10b981; font-size:1.6rem;'>{total_gain:.0f}€</b>
-            </p>
-            {f"<p style='color:#f59e0b; font-size:0.85rem;'>⚠️ {emails_errors} email(s) ignoré(s) suite à des erreurs</p>" if emails_errors > 0 else ""}
-        </div>
-        
-        <div style='max-width:600px; margin:0 auto;'>
-            {html_cards}
-        </div>
-        
-        {action_btn}
-        """ + debug_html + WA_BTN + FOOTER
-    else:
-        existing_count = Litigation.query.filter_by(user_email=session['email']).count()
-        if existing_count > 0:
-            return STYLE + f"""
-            <div style='text-align:center; padding:50px;'>
-                <div style='font-size:4rem; margin-bottom:20px;'>✅</div>
-                <h1 style='color:white;'>Aucun nouveau litige e-commerce</h1>
-                <p style='color:rgba(255,255,255,0.7);'>
-                    Vous avez déjà <b style='color:#10b981;'>{existing_count} dossier(s)</b> en cours.
-                </p>
-                {f"<p style='color:#f59e0b; font-size:0.85rem;'>⚠️ {emails_errors} email(s) ignoré(s) suite à des erreurs</p>" if emails_errors > 0 else ""}
-                <br>
-                <a href='/dashboard' class='btn-success'>📂 VOIR MES DOSSIERS</a>
-            </div>
-            """ + debug_html + FOOTER
-        else:
-            return STYLE + f"""
-            <div style='text-align:center; padding:50px;'>
-                <div style='font-size:4rem; margin-bottom:20px;'>📦</div>
-                <h1 style='color:white;'>Aucun litige e-commerce détecté</h1>
-                <p style='color:rgba(255,255,255,0.6);'>
-                    Nous avons analysé {emails_scanned} emails sur les derniers mois.<br>
-                    Aucun problème de commande n'a été identifié.
-                </p>
-                {f"<p style='color:#f59e0b; font-size:0.85rem;'>⚠️ {emails_errors} email(s) ignoré(s) suite à des erreurs</p>" if emails_errors > 0 else ""}
-                <br>
-                <a href='/' class='btn-success'>Retour à l'accueil</a>
-            </div>
-            """ + debug_html + FOOTER
-
-# ========================================
-# ✈️ SCAN VOYAGES - Historique 1 AN
-# ========================================
-
-@app.route("/scan-travel")
-def scan_travel():
-    """
-    ✈️ SCANNER VOYAGES INFAILLIBLE - Analyse rétroactive sur 1 AN
-    
-    VERSION V2 PERMISSIVE : Ne rate AUCUN litige de transport !
-    - Query Gmail ULTRA-LARGE
-    - Analyse IA PERMISSIVE
-    - Gestion robuste du montant
-    """
-    if "credentials" not in session:
-        return redirect("/login")
-    
-    try:
-        creds = Credentials(**session["credentials"])
-        service = build('gmail', 'v1', credentials=creds)
-    except Exception as e:
-        return STYLE + f"""
-        <div style='text-align:center; padding:50px;'>
-            <h1 style='color:white;'>❌ Erreur d'authentification</h1>
-            <p style='color:rgba(255,255,255,0.7);'>{str(e)[:100]}</p>
-            <a href='/login' class='btn-success'>Se reconnecter</a>
-        </div>
-        """ + FOOTER
-    
-    # Calcul de la date il y a 1 an
-    from datetime import timedelta
-    one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y/%m/%d")
-    
-    # ════════════════════════════════════════════════════════════════
-    # 🎯 QUERY GMAIL STRICTE - TRANSPORT UNIQUEMENT + EXCLUSIONS E-COMMERCE
-    # ════════════════════════════════════════════════════════════════
-    
-    query = f"""
-    label:INBOX 
-    after:{one_year_ago}
-    (
-        sncf OR "air france" OR easyjet OR ryanair OR transavia OR 
-        vueling OR volotea OR lufthansa OR "british airways" OR klm OR 
-        eurostar OR ouigo OR thalys OR trenitalia OR uber OR bolt OR 
-        tgv OR inoui OR ter OR trainline OR "free now" OR kapten OR
-        flixbus OR blablacar
-    )
-    (retard OR annulation OR delay OR cancelled OR compensation OR indemnisation)
-    -amazon -temu -aliexpress -zalando -shein -asphalte -fnac -darty -cdiscount
-    -vinted -asos -zara -wish -ebay -leboncoin -rakuten
-    -category:promotions -category:social
-    -subject:"MISE EN DEMEURE"
-    """
-    
-    print("\n" + "="*70)
-    print("✈️ SCAN VOYAGE V3 STRICT - DÉMARRAGE")
-    print(f"📅 Période: {one_year_ago} → Aujourd'hui (365 jours)")
-    print("🔒 Mode: Séparation stricte transport/e-commerce")
-    print("="*70)
-    
-    DEBUG_LOGS.append(f"✈️ SCAN VOYAGE V2 lancé - Période: {one_year_ago} à aujourd'hui")
-    
-    try:
-        results = service.users().messages().list(userId='me', q=query, maxResults=100).execute()
-        messages = results.get('messages', [])
-    except Exception as e:
-        DEBUG_LOGS.append(f"❌ Erreur lecture Gmail Voyage: {str(e)}")
-        return STYLE + f"<h1 style='color:white;'>Erreur lecture Gmail : {str(e)[:100]}</h1>" + FOOTER
-    
-    print(f"📧 {len(messages)} emails trouvés sur 1 an")
-    
-    total_gain = 0
-    new_cases_count = 0
-    html_cards = ""
-    debug_rejected = []
-    
-    # Compteurs
-    emails_scanned = 0
-    emails_filtered_spam = 0
-    emails_sent_to_ai = 0
-    emails_litige_found = 0
-    
-    # Anti-doublon
-    existing_message_ids = set()
-    existing_company_amounts_dict = {}
-    
-    for lit in Litigation.query.filter_by(user_email=session['email']).all():
-        if lit.message_id:
-            existing_message_ids.add(lit.message_id)
-        company_key = lit.company.lower().strip() if lit.company else ""
-        amount_value = extract_numeric_amount(lit.amount) if lit.amount else 0
-        if company_key not in existing_company_amounts_dict:
-            existing_company_amounts_dict[company_key] = []
-        existing_company_amounts_dict[company_key].append(amount_value)
-    
-    DEBUG_LOGS.append(f"✈️ {len(messages)} emails voyage trouvés sur 1 an")
-    
-    detected_litigations = []
-    
-    # ════════════════════════════════════════════════════════════════
-    # LISTES DE FILTRAGE STRICT
-    # ════════════════════════════════════════════════════════════════
-    
-    # Compagnies de transport VALIDES
-    TRANSPORT_COMPANIES = [
-        "sncf", "air france", "airfrance", "easyjet", "ryanair", "transavia",
-        "vueling", "volotea", "lufthansa", "british airways", "klm", "eurostar",
-        "ouigo", "thalys", "trenitalia", "uber", "bolt", "free now", "kapten",
-        "flixbus", "blablacar", "tgv", "ter", "inoui", "trainline", "italo"
-    ]
-    
-    # Sites E-COMMERCE à EXCLURE (double sécurité)
-    ECOMMERCE_BLACKLIST = [
-        "amazon", "temu", "aliexpress", "zalando", "shein", "asphalte", 
-        "fnac", "darty", "cdiscount", "vinted", "asos", "zara", "h&m", "hm",
-        "wish", "ebay", "leboncoin", "rakuten", "backmarket", "veepee",
-        "showroomprive", "mango", "bershka", "la redoute", "kiabi", "decathlon"
-    ]
-    
-    MAX_AI_CALLS = 35
-    ai_calls = 0
-    emails_errors = 0
-    
-    for msg in messages:
-        emails_scanned += 1
-        msg_id = msg['id']
-        
-        try:
-            if msg_id in existing_message_ids:
-                debug_rejected.append(f"⏭️ Déjà traité: {msg_id[:15]}...")
-                continue
-            
-            # ════════════════════════════════════════════════════════════════
-            # 📋 ÉTAPE 1 : GET METADATA UNIQUEMENT (pas full)
-            # ════════════════════════════════════════════════════════════════
-            
-            msg_meta = service.users().messages().get(
-                userId='me',
-                id=msg_id,
-                format='metadata',
-                metadataHeaders=['Subject', 'From', 'To', 'Date']
-            ).execute()
-            
-            headers = (msg_meta.get('payload') or {}).get('headers') or []
-            subject = get_gmail_headers(headers, 'subject', 'Sans sujet')
-            sender = get_gmail_headers(headers, 'from', 'Inconnu')
-            to_field = get_gmail_headers(headers, 'to', '')
-            snippet = msg_meta.get('snippet', '') or ""
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🚀 ÉTAPE 2 : PRÉ-FILTRE RAPIDE (avant appel IA)
-            # ════════════════════════════════════════════════════════════════
-            
-            ok, reason = fast_candidate_filter("travel", sender, subject, snippet)
-            if not ok:
-                emails_filtered_spam += 1
-                debug_rejected.append(f"⏭️ SKIP ({reason}): {subject[:40]}...")
-                continue
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🛑 VÉRIFIER PLAFOND IA
-            # ════════════════════════════════════════════════════════════════
-            
-            if ai_calls >= MAX_AI_CALLS:
-                debug_rejected.append(f"⏭️ Limite IA atteinte ({MAX_AI_CALLS}) — scan partiel")
-                break
-            
-            # ════════════════════════════════════════════════════════════════
-            # 📄 ÉTAPE 3 : GET FULL (seulement si candidat)
-            # ════════════════════════════════════════════════════════════════
-            
-            msg_full = service.users().messages().get(
-                userId='me',
-                id=msg_id,
-                format='full'
-            ).execute()
-            
-            body_text = safe_extract_body_text(msg_full, limit_chars=4000) or snippet
-            if not body_text:
-                debug_rejected.append(f"⚠️ Body vide: {subject[:40]}...")
-                continue
-            
-            emails_sent_to_ai += 1
-            ai_calls += 1
-            
-            print(f"\n{'─'*50}")
-            print(f"✈️ ANALYSE: {subject[:50]}...")
-            print(f"   From: {sender[:40]}...")
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🤖 ANALYSE IA STRICTE AVEC DOUBLE VÉRIFICATION
-            # ════════════════════════════════════════════════════════════════
-            
-            analysis = analyze_litigation_strict(body_text, subject, sender, to_field, scan_type="travel")
-            
-            print(f"   🤖 Résultat IA: {analysis}")
-            
-            # VÉRIFICATION OBLIGATOIRE : is_valid doit être True
-            if not analysis.get("is_valid", False):
-                reason = analysis.get("reason", "Type invalide")
-                debug_rejected.append(f"❌ IA rejeté ({reason}): {subject[:30]}...")
-                print(f"   ❌ REJETÉ PAR IA: {reason}")
-                continue
-            
-            # Vérifier que c'est bien un litige
-            if not analysis.get("litige", False):
-                reason = analysis.get("reason", "Pas de litige")
-                debug_rejected.append(f"⏭️ Pas de litige: {subject[:30]}...")
-                continue
-            
-            company = analysis.get("company", "Transporteur")
-            amount = analysis.get("amount", "250€")
-            law = analysis.get("law", "Règlement EC 261/2004")
-            proof = analysis.get("proof", subject)
-            
-            # ════════════════════════════════════════════════════════════════
-            # 💰 ESTIMATION INTELLIGENTE DU MONTANT (plus "À compléter")
-            # ════════════════════════════════════════════════════════════════
-            
-            amount_numeric = extract_numeric_amount(amount)
-            company_lower = company.lower()
-            
-            # Si pas de montant, estimer selon le type de transport
-            if amount_numeric == 0 or "compléter" in amount.lower():
-                if any(airline in company_lower for airline in ["air france", "easyjet", "ryanair", "transavia", "vueling", "lufthansa", "klm", "british", "volotea"]):
-                    amount = "250€"  # Minimum EC 261
-                    amount_numeric = 250
-                    print(f"   💰 Estimation vol (EC 261): 250€")
-                elif any(train in company_lower for train in ["sncf", "ouigo", "tgv", "ter", "eurostar", "thalys", "trenitalia", "inoui"]):
-                    amount = "50€"  # Estimation train
-                    amount_numeric = 50
-                    print(f"   💰 Estimation train: 50€")
-                elif any(vtc in company_lower for vtc in ["uber", "bolt", "free now", "kapten"]):
-                    amount = "25€"
-                    amount_numeric = 25
-                    print(f"   💰 Estimation VTC: 25€")
-                else:
-                    amount = "100€"
-                    amount_numeric = 100
-            
-            # Vérifier doublon company + montant (avec tolérance)
-            company_key = company_lower.strip()
-            
-            is_duplicate = False
-            if company_key in existing_company_amounts_dict:
-                for existing_amount in existing_company_amounts_dict[company_key]:
-                    if amount_numeric > 0 and abs(existing_amount - amount_numeric) <= 15:
-                        is_duplicate = True
-                        break
-            
-            if is_duplicate:
-                debug_rejected.append(f"🔄 Doublon: {company} ({amount})")
-                continue
-            
-            # ════════════════════════════════════════════════════════════════
-            # ✅ LITIGE TRANSPORT VALIDÉ !
-            # ════════════════════════════════════════════════════════════════
-            
-            new_cases_count += 1
-            emails_litige_found += 1
-            total_gain += amount_numeric
-            
-            print(f"   ✅ LITIGE TRANSPORT VALIDÉ: {company} - {amount}")
-            
-            detected_litigations.append({
-                "company": company,
-                "amount": amount,
-                "law": law,
-                "subject": f"✈️ {proof[:100]}",
-                "message_id": msg_id,
-                "proof": proof,
-                "category": "transport",
-                "sender": sender,
-                "to_field": to_field,
-            })
-            
-            # Ajouter au dict pour éviter les doublons
-            if company_key not in existing_company_amounts_dict:
-                existing_company_amounts_dict[company_key] = []
-            existing_company_amounts_dict[company_key].append(amount_numeric)
-            
-            # Carte HTML Transport (icône ✈️ forcée)
-            html_cards += f"""
-            <div style='background:white; border-radius:20px; padding:30px; margin:20px auto;
-                        max-width:550px; position:relative; 
-                        box-shadow:0 10px 40px -10px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
-                        border-left:5px solid #f59e0b;'>
-                
-                <!-- Badge TRANSPORT (forcé) -->
-                <div style='position:absolute; top:15px; left:15px; 
-                            background:linear-gradient(135deg, #fbbf24, #f59e0b);
-                            color:white; padding:5px 12px; border-radius:20px; 
-                            font-size:0.7rem; font-weight:600;'>
-                    ✈️ TRANSPORT
-                </div>
-                
-                <!-- Montant -->
-                <div style='position:absolute; top:25px; right:25px; text-align:right;'>
-                    <div style='font-size:1.8rem; font-weight:700; color:#f59e0b;'>
-                        {amount}
-                    </div>
-                    <div style='font-size:0.75rem; color:#64748b;'>indemnité estimée</div>
-                </div>
-                
-                <!-- Entreprise -->
-                <div style='margin-top:40px;'>
-                    <span style='background:linear-gradient(135deg, #fef3c7, #fde68a); 
-                                 color:#92400e; padding:6px 14px; border-radius:8px;
-                                 font-size:0.9rem; font-weight:700; text-transform:uppercase;'>
-                        {company.upper()}
-                    </span>
-                </div>
-                
-                <!-- Preuve -->
-                <div style='background:linear-gradient(135deg, #fef3c7, #fef9c3);
-                            padding:15px; border-radius:12px; border-left:4px solid #f59e0b;
-                            margin:20px 0;'>
-                    <p style='margin:0; font-size:0.9rem; color:#92400e; line-height:1.5;'>
-                        📝 {proof[:180]}{"..." if len(proof) > 180 else ""}
-                    </p>
-                </div>
-                
-                <!-- Base légale -->
-                <div style='display:flex; align-items:center; gap:8px;'>
-                    <span style='font-size:1.1rem;'>⚖️</span>
-                    <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{law}</span>
-                </div>
-                
-            </div>
-            """
-                
-        except Exception as e:
-            emails_errors += 1
-            err = f"{type(e).__name__}: {str(e)[:60]}"
-            _dbg(f"⚠️ scan_travel error msg={msg_id[:10]}: {err}")
-            debug_rejected.append(f"⚠️ Erreur email: {err}")
-            continue
-    
-    # Stocker en session
-    session['detected_litigations'] = detected_litigations
-    session['total_gain'] = total_gain
-    
-    print("\n" + "="*70)
-    print("📊 RÉSUMÉ SCAN VOYAGE")
-    print(f"   📧 Emails scannés: {emails_scanned}")
-    print(f"   🚫 Filtrés spam: {emails_filtered_spam}")
-    print(f"   🤖 Analysés IA: {emails_sent_to_ai}")
-    print(f"   ✅ LITIGES: {new_cases_count}")
-    print("="*70)
-    
-    # Debug HTML caché dans <details>
-    debug_html = f"""
-    <details style='margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;'>
-        <summary style='cursor:pointer; color:rgba(255,255,255,0.5); font-size:0.85rem; 
-                        padding:15px; background:rgba(255,255,255,0.05); border-radius:10px;
-                        list-style:none; text-align:center;'>
-            🔧 Détails techniques ({emails_scanned} emails analysés)
-        </summary>
-        <div style='margin-top:15px; background:rgba(255,255,255,0.95); padding:20px; 
-                    border-radius:12px; color:#334155; font-size:0.85rem;'>
-            <p><b>📧 Emails scannés:</b> {emails_scanned}</p>
-            <p><b>🚫 Filtrés (spam):</b> {emails_filtered_spam}</p>
-            <p><b>🤖 Analysés par IA:</b> {emails_sent_to_ai}</p>
-            <p><b>✅ Litiges détectés:</b> {new_cases_count}</p>
-            <hr style='margin:15px 0; border:none; border-top:1px solid #e2e8f0;'>
-            <div style='max-height:200px; overflow-y:auto; font-size:0.8rem;'>
-                {'<br>'.join(debug_rejected[-30:])}
-            </div>
-        </div>
-    </details>
-    """
-    
-    if new_cases_count > 0:
-        return STYLE + f"""
-        <div style='text-align:center; padding:30px;'>
-            <div style='font-size:4rem; margin-bottom:15px;'>✈️</div>
-            <h1 style='color:white; margin-bottom:10px;'>Scan Voyage Terminé !</h1>
-            <p style='color:#fbbf24; font-size:1.4rem; font-weight:600;'>
-                {new_cases_count} litige(s) transport détecté(s) !
-            </p>
-            <p style='color:rgba(255,255,255,0.7);'>
-                💰 Gain potentiel estimé: <b style='color:#10b981; font-size:1.6rem;'>{total_gain:.0f}€</b>
-            </p>
-        </div>
-        
-        <div style='max-width:600px; margin:0 auto;'>
-            {html_cards}
-        </div>
-        
-        <div style='text-align:center; margin:40px 0;'>
-            <a href='/setup-payment' class='btn-success' style='padding:20px 50px; font-size:1.2rem;
-                                                                 background:linear-gradient(135deg, #fbbf24, #f59e0b);
-                                                                 box-shadow:0 15px 40px rgba(251, 191, 36, 0.4);'>
-                🚀 RÉCUPÉRER MES {total_gain:.0f}€
-            </a>
-            <p style='color:rgba(255,255,255,0.5); margin-top:15px; font-size:0.9rem;'>
-                Commission 25% uniquement en cas de succès
-            </p>
-        </div>
         """ + debug_html + WA_BTN + FOOTER
     else:
         return STYLE + f"""
         <div style='text-align:center; padding:50px;'>
-            <div style='font-size:4rem; margin-bottom:20px;'>✈️</div>
-            <h1 style='color:white;'>Aucun litige voyage détecté</h1>
+            <div style='font-size:4rem; margin-bottom:20px;'>✅</div>
+            <h1 style='color:white;'>Aucun litige détecté</h1>
             <p style='color:rgba(255,255,255,0.6);'>
-                Nous avons analysé {emails_scanned} emails de transport sur les 12 derniers mois.<br>
-                Aucune indemnisation réclamable n'a été identifiée.
+                Nous avons analysé {emails_scanned} emails sur les 12 derniers mois.<br>
+                Aucun litige exploitable n'a été identifié.
+            </p>
+            <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
+                📧 {emails_skipped} emails ignorés • 🤖 {ai_calls} appels IA
             </p>
             <br>
             <a href='/' class='btn-success'>Retour à l'accueil</a>
         </div>
         """ + debug_html + FOOTER
-
 # ========================================
 # MISE À JOUR MONTANT EN SESSION (avant paiement)
 # ========================================
@@ -8897,6 +8452,131 @@ def test_detective():
             <a href='/debug-logs' class='btn-logout' style='margin-right:10px;'>📋 Tous les logs</a>
             <a href='/' class='btn-logout'>Retour</a>
         </div>
+    </div>
+    """ + FOOTER
+
+# ========================================
+# 🧪 ROUTE ADMIN - TESTS SCAN
+# ========================================
+
+@app.route("/admin/test-scan")
+def admin_test_scan():
+    """
+    🧪 Tests automatisés des fonctions de filtrage et classification.
+    Protégé par session admin_authenticated.
+    """
+    if not session.get('admin_authenticated'):
+        return STYLE + """
+        <div style='text-align:center; padding:50px;'>
+            <h1 style='color:white;'>🔐 Accès Admin Requis</h1>
+            <p style='color:rgba(255,255,255,0.6);'>Cette page est réservée aux administrateurs.</p>
+            <a href='/' class='btn-success'>Retour</a>
+        </div>
+        """ + FOOTER
+    
+    # ════════════════════════════════════════════════════════════════
+    # 📋 DÉFINITION DES CAS DE TEST
+    # ════════════════════════════════════════════════════════════════
+    
+    test_cases = [
+        # (subject, snippet, expected_invoice_filter, expected_category, description)
+        ("Votre facture Orange du 15/01", "Montant: 45.99€ - Prélèvement le 20/01", True, None, "Facture normale - IGNORER"),
+        ("Confirmation de paiement Netflix", "Merci pour votre abonnement mensuel", True, None, "Abonnement normal - IGNORER"),
+        ("Newsletter FNAC - Soldes d'hiver", "Profitez de -50% sur la tech", True, None, "Newsletter promo - IGNORER"),
+        ("Votre remboursement a été effectué", "Nous avons crédité 89€ sur votre compte", False, "ecommerce", "Remboursement déjà fait - SUCCESS"),
+        ("Colis non reçu - Commande #123456", "Votre colis Amazon n'a pas été livré", False, "ecommerce", "Colis non reçu - LITIGE E-COMMERCE"),
+        ("Vol AF1234 retardé de 4h", "Air France vous informe d'un retard", False, "travel", "Vol retardé - LITIGE VOYAGE"),
+        ("Réclamation train SNCF - TGV annulé", "Votre TGV Paris-Lyon a été annulé", False, "travel", "Train annulé - LITIGE VOYAGE"),
+        ("Votre commande Zalando", "Livraison prévue demain", True, None, "Confirmation commande - IGNORER"),
+        ("Problème livraison - Commande jamais reçue", "Nous n'avons pas reçu notre colis SHEIN", False, "ecommerce", "Jamais reçu SHEIN - LITIGE"),
+        ("Bagage perdu vol EasyJet", "Votre bagage n'est pas arrivé à destination", False, "travel", "Bagage perdu - LITIGE VOYAGE"),
+    ]
+    
+    # ════════════════════════════════════════════════════════════════
+    # 🧪 EXÉCUTION DES TESTS
+    # ════════════════════════════════════════════════════════════════
+    
+    results_html = ""
+    passed = 0
+    failed = 0
+    
+    for i, (subject, snippet, expect_invoice_filter, expect_category, description) in enumerate(test_cases):
+        # Test 1: is_invoice_without_dispute
+        actual_invoice = is_invoice_without_dispute(subject, snippet)
+        invoice_pass = (actual_invoice == expect_invoice_filter)
+        
+        # Test 2: classify_email_category (si pas filtré)
+        category_pass = True
+        actual_category = None
+        if not expect_invoice_filter and expect_category:
+            actual_category = classify_email_category(subject, snippet, "")
+            category_pass = (actual_category == expect_category)
+        
+        # Résultat global
+        test_pass = invoice_pass and category_pass
+        if test_pass:
+            passed += 1
+            status_icon = "✅"
+            status_color = "#10b981"
+        else:
+            failed += 1
+            status_icon = "❌"
+            status_color = "#ef4444"
+        
+        results_html += f"""
+        <div style='background:rgba(255,255,255,0.05); border-radius:10px; padding:15px; margin-bottom:10px;
+                    border-left:4px solid {status_color};'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span style='color:white; font-weight:600;'>{status_icon} Test #{i+1}: {description}</span>
+            </div>
+            <div style='color:rgba(255,255,255,0.6); font-size:0.85rem; margin-top:8px;'>
+                <div>📧 Subject: <code>{subject[:50]}...</code></div>
+                <div>📝 Snippet: <code>{snippet[:50]}...</code></div>
+                <div style='margin-top:5px;'>
+                    🔍 Invoice filter: <span style='color:{"#10b981" if invoice_pass else "#ef4444"};'>
+                        attendu={expect_invoice_filter}, obtenu={actual_invoice}
+                    </span>
+                </div>
+                {"<div>🏷️ Category: <span style='color:" + ("#10b981" if category_pass else "#ef4444") + ";'>attendu=" + str(expect_category) + ", obtenu=" + str(actual_category) + "</span></div>" if not expect_invoice_filter else ""}
+            </div>
+        </div>
+        """
+    
+    # ════════════════════════════════════════════════════════════════
+    # 📊 RÉSUMÉ
+    # ════════════════════════════════════════════════════════════════
+    
+    total = passed + failed
+    success_rate = (passed / total * 100) if total > 0 else 0
+    summary_color = "#10b981" if success_rate >= 80 else "#f59e0b" if success_rate >= 50 else "#ef4444"
+    
+    return STYLE + f"""
+    <div style='text-align:center; padding:30px;'>
+        <div style='font-size:4rem; margin-bottom:15px;'>🧪</div>
+        <h1 style='color:white;'>Tests Scan - Résultats</h1>
+        <div style='display:flex; justify-content:center; gap:30px; margin:20px 0;'>
+            <div style='background:rgba(16,185,129,0.2); padding:20px 30px; border-radius:10px;'>
+                <div style='font-size:2rem; color:#10b981; font-weight:700;'>{passed}</div>
+                <div style='color:rgba(255,255,255,0.6);'>Passés</div>
+            </div>
+            <div style='background:rgba(239,68,68,0.2); padding:20px 30px; border-radius:10px;'>
+                <div style='font-size:2rem; color:#ef4444; font-weight:700;'>{failed}</div>
+                <div style='color:rgba(255,255,255,0.6);'>Échoués</div>
+            </div>
+            <div style='background:rgba(255,255,255,0.1); padding:20px 30px; border-radius:10px;'>
+                <div style='font-size:2rem; color:{summary_color}; font-weight:700;'>{success_rate:.0f}%</div>
+                <div style='color:rgba(255,255,255,0.6);'>Taux de réussite</div>
+            </div>
+        </div>
+    </div>
+    
+    <div style='max-width:800px; margin:0 auto; padding:0 20px;'>
+        <h2 style='color:white; margin-bottom:20px;'>📋 Détail des tests</h2>
+        {results_html}
+    </div>
+    
+    <div style='text-align:center; margin:40px 0;'>
+        <a href='/admin' class='btn-success'>← Retour Admin</a>
     </div>
     """ + FOOTER
 
