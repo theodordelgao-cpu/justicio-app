@@ -2834,6 +2834,27 @@ Tu ne traites QUE les problèmes de PASSAGERS :
 
 Si c'est du E-COMMERCE → Réponds UNIQUEMENT : {"is_valid": false, "reason": "E-commerce, pas transport"}
 
+═══════════════════════════════════════════════════════════════
+💰 RÈGLE ABSOLUE SUR LES REMBOURSEMENTS 💰
+═══════════════════════════════════════════════════════════════
+
+🎫 SI LA COMPAGNIE PROPOSE UN BON D'ACHAT / AVOIR / VOUCHER / MILES :
+   1. C'est un LITIGE → litige: true
+   2. Le motif est : "La compagnie impose un avoir au lieu d'un remboursement financier"
+   3. Le montant = la valeur du bon/avoir proposé (ex: "15€")
+   4. Le passager a DROIT à un remboursement en ARGENT, pas en bons !
+
+💳 SI LA COMPAGNIE A FAIT UN VIREMENT BANCAIRE ou CRÉDIT CARTE :
+   1. Ce n'est PAS un litige → litige: false
+   2. Le motif est : "Virement bancaire effectué"
+
+⚠️ ATTENTION : Un email de "compensation" ou "indemnisation" n'est PAS forcément un succès !
+   - Si c'est un BON → LITIGE
+   - Si c'est un VIREMENT → Pas de litige
+
+Mots-clés BON D'ACHAT (= LITIGE) : avoir, voucher, bon, crédit voyage, miles, points, geste commercial, compensation en bons
+Mots-clés VIREMENT (= PAS LITIGE) : virement effectué, crédité sur votre compte bancaire, remboursement par virement, IBAN crédité
+
 Réponds TOUJOURS en JSON valide."""
 
         user_prompt = f"""📧 EMAIL À ANALYSER (SCAN TRANSPORT) :
@@ -2899,13 +2920,17 @@ BAGAGE PERDU : jusqu'à 1300€
 Si E-COMMERCE (invalide) :
 {{"is_valid": false, "reason": "Colis/Commande e-commerce"}}
 
-Si TRANSPORT valide avec litige :
+Si TRANSPORT valide avec litige (retard/annulation) :
 {{"is_valid": true, "litige": true, "company": "SNCF", "amount": "250€", "law": "Règlement UE 261/2004", "proof": "Vol annulé, la compagnie invoque la grève mais l'indemnisation reste due", "category": "transport"}}
 
-Si TRANSPORT valide sans litige :
+Si TRANSPORT valide avec BON D'ACHAT (= litige !) :
+{{"is_valid": true, "litige": true, "company": "SNCF", "amount": "15€", "law": "Règlement UE 2021/782", "proof": "La compagnie propose un bon d'achat de 15€ au lieu d'un remboursement financier", "category": "transport"}}
+
+Si TRANSPORT valide sans litige (confirmation normale, vrai virement reçu) :
 {{"is_valid": true, "litige": false, "reason": "Confirmation de réservation normale"}}
 
-⚠️ RAPPEL : Même si l'email dit "pas d'indemnisation due", calcule quand même le montant théorique !
+⚠️ RAPPEL 1 : Même si l'email dit "pas d'indemnisation due", calcule quand même le montant théorique !
+⚠️ RAPPEL 2 : Un BON D'ACHAT ou AVOIR n'est PAS un remboursement valide → c'est un LITIGE !
 """
 
     else:  # scan_type == "ecommerce"
@@ -3280,24 +3305,23 @@ REQUIRED_KEYWORDS = [
 # Ces mots indiquent que le problème est RÉSOLU → Pas un litige à créer
 # ════════════════════════════════════════════════════════════════════════════
 KEYWORDS_SUCCESS = [
-    # Confirmations de paiement
+    # ⚠️ UNIQUEMENT les vrais VIREMENTS BANCAIRES / CRÉDITS CARTE
+    # Ces termes indiquent un VRAI remboursement financier (pas un bon d'achat)
     "virement effectué", "virement réalisé", "virement envoyé",
-    "remboursement effectué", "remboursement validé", "remboursement confirmé",
-    "crédité sur votre compte", "créditée sur votre compte",
-    "avis de virement", "confirmation de virement",
-    "confirmation de remboursement",
-    # Formules positives entreprises
-    "nous avons le plaisir", "nous avons bien procédé",
-    "votre remboursement a été", "le remboursement a été effectué",
-    "nous vous confirmons le remboursement",
-    "montant remboursé", "somme remboursée",
-    "votre compte a été crédité", "compte crédité",
-    # Résolutions
-    "problème résolu", "dossier clôturé", "réclamation traitée",
-    "nous avons fait le nécessaire", "régularisation effectuée",
-    "geste commercial accordé", "avoir crédité",
-    # Bons d'achat (pas du vrai argent mais résolution)
-    "bon d'achat", "code promo offert", "réduction accordée"
+    "virement bancaire effectué", "virement sur votre compte",
+    "crédité sur votre compte bancaire", "créditée sur votre carte",
+    "remboursement par virement", "remboursement carte bancaire",
+    "remboursement crédité", "montant viré",
+    "IBAN crédité", "RIB crédité"
+]
+
+# 🎫 MOTS-CLÉS VOUCHER/AVOIR - Ces emails DOIVENT être envoyés à l'IA !
+# Ne JAMAIS skipper un email contenant ces termes
+VOUCHER_KEYWORDS = [
+    "bon d'achat", "bon achat", "avoir", "voucher", "crédit voyage",
+    "code promo", "e-billet", "miles", "points fidélité",
+    "geste commercial", "compensation", "dédommagement",
+    "réduction accordée", "remise commerciale"
 ]
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -4865,13 +4889,30 @@ def scan_all():
                 emails_skipped += 1
                 continue
             
-            # Ignorer SUCCESS (déjà remboursé)
-            if any(kw in blob for kw in KEYWORDS_SUCCESS):
-                emails_skipped += 1
-                continue
+            # ════════════════════════════════════════════════════════════════
+            # 🎫 DÉTECTION VOUCHER/AVOIR - PRIORITÉ ABSOLUE
+            # Si l'email contient des mots de voucher → TOUJOURS envoyer à l'IA
+            # ════════════════════════════════════════════════════════════════
+            has_voucher_keywords = any(kw in blob for kw in VOUCHER_KEYWORDS)
             
-            # Ignorer factures normales sans litige (sauf si transport fort)
-            if not is_strong and is_invoice_without_dispute(subject, snippet):
+            if has_voucher_keywords and is_strong:
+                DEBUG_LOGS.append(f"🎫 VOUCHER + Transport détecté → Envoi à l'IA: {subject[:40]}...")
+            
+            # ⚠️ Ignorer SUCCESS (vrai virement) - SAUF SI :
+            # - Transport fort détecté
+            # - OU mots-clés voucher détectés (compensation, bon d'achat, etc.)
+            if any(kw in blob for kw in KEYWORDS_SUCCESS):
+                if is_strong or has_voucher_keywords:
+                    # Transport fort OU voucher → On analyse quand même
+                    DEBUG_LOGS.append(f"🔍 Succès apparent mais transport/voucher → Envoi à l'IA: {subject[:40]}...")
+                else:
+                    # Vrai succès sans transport fort ni voucher → Skip
+                    emails_skipped += 1
+                    DEBUG_LOGS.append(f"✅ Vrai virement détecté, skip: {subject[:40]}...")
+                    continue
+            
+            # Ignorer factures normales sans litige (sauf si transport fort OU voucher)
+            if not is_strong and not has_voucher_keywords and is_invoice_without_dispute(subject, snippet):
                 emails_skipped += 1
                 continue
             
@@ -4928,6 +4969,19 @@ def scan_all():
                         "to_field": to_field
                     })
                     DEBUG_LOGS.append(f"✅ LITIGE TRANSPORT: {result.get('company')} - {result.get('amount')}")
+            else:
+                # 🔍 DEBUG: Logger les rejets IA pour comprendre pourquoi
+                reason = result.get('reason', 'Pas de motif fourni')
+                company_guess = result.get('company', 'Inconnu')
+                is_valid = result.get('is_valid', False)
+                has_litige = result.get('litige', False)
+                
+                if not is_valid:
+                    DEBUG_LOGS.append(f"❌ REJET IA (invalide): {subject[:35]}... → {reason}")
+                    print(f"❌ REJET IA (invalide) [{company_guess}]: {reason}")
+                elif not has_litige:
+                    DEBUG_LOGS.append(f"⚪ REJET IA (pas litige): {subject[:35]}... → {reason}")
+                    print(f"⚪ REJET IA (pas litige) [{company_guess}]: {reason}")
         
         except Exception as e:
             emails_errors += 1
@@ -5264,14 +5318,14 @@ def update_detected_amount():
 @app.route("/reset-scan")
 def reset_scan():
     """
-    🗑️ Efface les résultats du scan :
+    🗑️ HARD RESET - Efface TOUT :
     - Vide la session (detected_litigations, total_gain)
     - Vide les logs de debug
-    - SUPPRIME les litiges de l'utilisateur en base de données
+    - SUPPRIME TOUS les litiges de l'utilisateur en base de données
     
     ⚠️ Action destructive mais nécessaire pour le mode test/dev.
     """
-    global DEBUG_LOGS  # Déclaration en début de fonction
+    global DEBUG_LOGS
     deleted_count = 0
     
     # 1. Effacer les données de scan en session
@@ -5280,30 +5334,26 @@ def reset_scan():
     if 'total_gain' in session:
         del session['total_gain']
     
-    # 2. Supprimer les litiges en base de données pour cet utilisateur
+    # 2. HARD DELETE - Supprimer TOUS les litiges en BDD pour cet utilisateur
     user_email = session.get('email')
     if user_email:
         try:
-            # Récupérer et supprimer tous les litiges de l'utilisateur
-            user_lits = Litigation.query.filter_by(user_email=user_email).all()
-            deleted_count = len(user_lits)
-            
-            for lit in user_lits:
-                db.session.delete(lit)
-            
+            # Méthode bulk delete (plus efficace)
+            deleted_count = Litigation.query.filter_by(user_email=user_email).delete()
             db.session.commit()
-            print(f"🗑️ RESET: {deleted_count} litige(s) supprimé(s) pour {user_email}")
+            
+            print(f"🗑️ HARD RESET: {deleted_count} litige(s) supprimé(s) de la BDD pour {user_email}")
             
         except Exception as e:
             db.session.rollback()
             print(f"❌ Erreur suppression litiges: {str(e)[:100]}")
-            DEBUG_LOGS.append(f"❌ Erreur reset BDD: {str(e)[:50]}")
+            # On continue quand même
     
     # 3. Vider les logs de debug pour un scan propre
     DEBUG_LOGS = []
-    DEBUG_LOGS.append(f"🗑️ RESET complet: session vidée + {deleted_count} litige(s) supprimé(s) de la BDD")
+    DEBUG_LOGS.append(f"🗑️ HARD RESET: session vidée + {deleted_count} litige(s) supprimé(s) de la BDD")
     
-    # Rediriger vers l'accueil
+    # Rediriger vers l'accueil avec message flash
     return redirect("/")
 
 # ========================================
