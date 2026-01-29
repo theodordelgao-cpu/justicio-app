@@ -2867,11 +2867,30 @@ COMPAGNIES TRANSPORT ACCEPTÉES :
 - Train : SNCF, Ouigo, Eurostar, Thalys, Trenitalia, TGV, TER, Intercités
 - VTC : Uber, Bolt, Free Now, Kapten
 
-INDEMNISATIONS :
-- Vol retardé ≥3h / annulé : 250€ à 600€ selon distance
-- Train retardé ≥60min : 25% du billet
-- Train retardé ≥120min : 50% du billet
-- Bagage perdu : jusqu'à 1300€
+═══════════════════════════════════════════════════════════════
+💰 INDEMNISATIONS - RÈGLES STRICTES
+═══════════════════════════════════════════════════════════════
+
+🚨 RÈGLE CRITIQUE : TOUJOURS ESTIMER UN MONTANT THÉORIQUE 🚨
+
+Même si la compagnie refuse l'indemnisation (grève, météo, "circonstance 
+exceptionnelle", force majeure), TU DOIS calculer le montant THÉORIQUE 
+selon le Règlement UE. Le passager a le droit de contester le refus.
+
+⛔ NE JAMAIS RENVOYER 0€ pour un retard > 3h ou une annulation !
+
+BARÈME VOL (Règlement UE 261/2004) :
+- Distance < 1500 km : 250€
+- Distance 1500-3500 km : 400€  
+- Distance > 3500 km : 600€
+- Retard < 3h : indemnisation réduite de 50%
+
+BARÈME TRAIN (Règlement UE 2021/782) :
+- Retard ≥60 min : 25% du prix du billet
+- Retard ≥120 min : 50% du prix du billet
+- Si prix du billet inconnu, estimer : 50€ à 150€ selon trajet
+
+BAGAGE PERDU : jusqu'à 1300€
 
 ═══════════════════════════════════════════════════════════════
 📋 FORMAT DE RÉPONSE JSON
@@ -2881,10 +2900,12 @@ Si E-COMMERCE (invalide) :
 {{"is_valid": false, "reason": "Colis/Commande e-commerce"}}
 
 Si TRANSPORT valide avec litige :
-{{"is_valid": true, "litige": true, "company": "SNCF", "amount": "50€", "law": "Règlement UE 2021/782", "proof": "Train retardé de 2h", "category": "transport"}}
+{{"is_valid": true, "litige": true, "company": "SNCF", "amount": "250€", "law": "Règlement UE 261/2004", "proof": "Vol annulé, la compagnie invoque la grève mais l'indemnisation reste due", "category": "transport"}}
 
 Si TRANSPORT valide sans litige :
 {{"is_valid": true, "litige": false, "reason": "Confirmation de réservation normale"}}
+
+⚠️ RAPPEL : Même si l'email dit "pas d'indemnisation due", calcule quand même le montant théorique !
 """
 
     else:  # scan_type == "ecommerce"
@@ -4593,7 +4614,26 @@ def scan_travel():
 # ⚠️ PIVOT STRATÉGIQUE: Le scan auto ne détecte QUE les litiges transport.
 # L'e-commerce est géré exclusivement via /declare (déclaration manuelle).
 
-# Mots-clés TRANSPORT (seuls acceptés par le scan auto)
+# 🚀 TRANSPORT FORT - Ces mots-clés PASSENT OUTRE la blacklist e-commerce
+# Si un de ces termes est détecté, on analyse TOUJOURS (priorité absolue)
+TRANSPORT_STRONG_KEYWORDS = [
+    # Compagnies ferroviaires (noms exacts)
+    "sncf", "ouigo", "eurostar", "thalys", "tgv", "inoui", "intercités",
+    "trainline", "trenitalia", "renfe", "deutsche bahn",
+    # Compagnies aériennes (noms exacts)  
+    "air france", "airfrance", "easyjet", "ryanair", "transavia", "vueling", "volotea",
+    "lufthansa", "klm", "british airways", "tap portugal", "iberia", "swiss air",
+    "emirates", "qatar airways", "turkish airlines", "norwegian", "wizzair",
+    # VTC (noms exacts)
+    "uber", "bolt", "kapten", "heetch", "freenow", "blablacar", "flixbus",
+    # Termes TRANSPORT non ambigus
+    "règlement 261", "ec 261", "règlement ue", "règlement européen",
+    "bagage perdu", "lost baggage", "bagage endommagé",
+    "vol annulé", "vol retardé", "flight cancelled", "flight delayed",
+    "train annulé", "train retardé", "correspondance ratée", "missed connection"
+]
+
+# Mots-clés TRANSPORT génériques (utilisés si pas de blacklist)
 TRANSPORT_KEYWORDS = [
     # Compagnies ferroviaires
     "sncf", "ouigo", "eurostar", "thalys", "ter", "tgv", "inoui", "intercités",
@@ -4612,7 +4652,7 @@ TRANSPORT_KEYWORDS = [
     "bagage perdu", "lost baggage", "bagage endommagé", "damaged luggage"
 ]
 
-# Mots-clés E-COMMERCE (à BANNIR du scan auto)
+# Mots-clés E-COMMERCE (à BANNIR du scan auto SAUF si transport fort détecté)
 ECOMMERCE_BLACKLIST = [
     # Termes e-commerce
     "commande", "order", "colis", "package", "livraison", "delivery",
@@ -4628,18 +4668,35 @@ ECOMMERCE_BLACKLIST = [
     "colis perdu", "lost package", "non reçu", "not received"
 ]
 
+def is_strong_transport(text: str) -> bool:
+    """
+    🚀 Vérifie si le texte contient un mot-clé TRANSPORT FORT.
+    Si oui, on passe outre la blacklist e-commerce.
+    """
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in TRANSPORT_STRONG_KEYWORDS)
+
 def is_transport_email(subject: str, snippet: str, sender: str) -> bool:
     """
     Vérifie si un email concerne le TRANSPORT (et pas l'e-commerce).
-    Retourne True uniquement si c'est du transport.
+    
+    LOGIQUE AMÉLIORÉE:
+    1. Si TRANSPORT FORT détecté → True (ignore la blacklist)
+    2. Sinon, si E-COMMERCE détecté → False
+    3. Sinon, si TRANSPORT générique détecté → True
+    4. Sinon → False
     """
     blob = f"{subject or ''} {snippet or ''} {sender or ''}".lower()
     
-    # 🚫 BLOCAGE E-COMMERCE : Si un mot-clé e-commerce est présent → REJETER
+    # 🚀 PRIORITÉ 1: Transport FORT → On analyse toujours
+    if is_strong_transport(blob):
+        return True
+    
+    # 🚫 PRIORITÉ 2: E-commerce détecté (et pas de transport fort) → Rejeter
     if any(kw in blob for kw in ECOMMERCE_BLACKLIST):
         return False
     
-    # ✅ ACCEPTER : Si au moins un mot-clé transport est présent
+    # ✅ PRIORITÉ 3: Transport générique → Accepter
     if any(kw in blob for kw in TRANSPORT_KEYWORDS):
         return True
     
@@ -4775,21 +4832,28 @@ def scan_all():
             emails_scanned += 1
             
             # ════════════════════════════════════════════════════════════════
-            # 🛡️ FILTRAGE LOCAL (GRATUIT)
+            # 🛡️ FILTRAGE LOCAL (GRATUIT) - LOGIQUE AMÉLIORÉE
             # ════════════════════════════════════════════════════════════════
             
             blob = f"{subject} {snippet} {sender}".lower()
             
-            # 🚫 BLOCAGE E-COMMERCE STRICT - Si terme e-commerce détecté → SKIP
-            if any(kw in blob for kw in ECOMMERCE_BLACKLIST):
-                emails_skipped_ecommerce += 1
-                DEBUG_LOGS.append(f"🚫 E-commerce ignoré: {subject[:40]}...")
-                continue
+            # 🚀 PRIORITÉ 1: Vérifier si TRANSPORT FORT (SNCF, Air France, etc.)
+            # Si oui, on passe outre TOUTE la blacklist e-commerce
+            is_strong = is_strong_transport(blob)
             
-            # Vérifier que c'est bien du transport
-            if not is_transport_email(subject, snippet, sender):
-                emails_skipped += 1
-                continue
+            if is_strong:
+                DEBUG_LOGS.append(f"🚀 Transport FORT détecté: {subject[:40]}...")
+            else:
+                # 🚫 BLOCAGE E-COMMERCE - Seulement si PAS de transport fort
+                if any(kw in blob for kw in ECOMMERCE_BLACKLIST):
+                    emails_skipped_ecommerce += 1
+                    DEBUG_LOGS.append(f"🚫 E-commerce ignoré: {subject[:40]}...")
+                    continue
+                
+                # Vérifier que c'est bien du transport (générique)
+                if not is_transport_email(subject, snippet, sender):
+                    emails_skipped += 1
+                    continue
             
             # Ignorer nos propres mises en demeure
             if "mise en demeure" in blob and "justicio" in blob:
@@ -4806,8 +4870,8 @@ def scan_all():
                 emails_skipped += 1
                 continue
             
-            # Ignorer factures normales sans litige
-            if is_invoice_without_dispute(subject, snippet):
+            # Ignorer factures normales sans litige (sauf si transport fort)
+            if not is_strong and is_invoice_without_dispute(subject, snippet):
                 emails_skipped += 1
                 continue
             
@@ -5085,14 +5149,15 @@ def scan_all():
             </p>
         </div>
         
-        <!-- BOUTON RESET -->
+        <!-- BOUTON RESET avec confirmation -->
         <div style='text-align:center; margin-top:40px; padding-top:20px; border-top:1px solid rgba(255,255,255,0.1);'>
-            <a href='/reset-scan' style='color:rgba(255,255,255,0.4); font-size:0.8rem; text-decoration:none;
-                                          display:inline-flex; align-items:center; gap:5px;
-                                          padding:8px 15px; border-radius:8px; transition:all 0.2s;'
+            <a href='#' onclick="if(confirm('⚠️ ATTENTION\\n\\nCette action va :\\n- Effacer les résultats du scan\\n- SUPPRIMER vos dossiers de la base de données\\n\\nÊtes-vous sûr ?')) window.location='/reset-scan';" 
+               style='color:rgba(255,255,255,0.4); font-size:0.8rem; text-decoration:none;
+                      display:inline-flex; align-items:center; gap:5px;
+                      padding:8px 15px; border-radius:8px; transition:all 0.2s;'
                onmouseover="this.style.background='rgba(239,68,68,0.2)'; this.style.color='#f87171';"
                onmouseout="this.style.background='transparent'; this.style.color='rgba(255,255,255,0.4)';">
-                🗑️ Effacer les résultats et rescanner
+                🗑️ Effacer tout et rescanner (supprime les dossiers)
             </a>
         </div>
         """ + debug_html + WA_BTN + FOOTER
@@ -5193,32 +5258,53 @@ def update_detected_amount():
     return jsonify({"success": True, "amount": f"{amount}€", "total": total}), 200
 
 # ========================================
-# 🗑️ RESET SCAN - Effacer les résultats
+# 🗑️ RESET SCAN - Effacer les résultats (SESSION + BDD)
 # ========================================
 
 @app.route("/reset-scan")
 def reset_scan():
     """
-    🗑️ Efface les résultats du scan en session et redirige vers le dashboard.
-    Permet à l'utilisateur de refaire un scan propre.
+    🗑️ Efface les résultats du scan :
+    - Vide la session (detected_litigations, total_gain)
+    - Vide les logs de debug
+    - SUPPRIME les litiges de l'utilisateur en base de données
+    
+    ⚠️ Action destructive mais nécessaire pour le mode test/dev.
     """
-    # Effacer les données de scan en session
+    global DEBUG_LOGS  # Déclaration en début de fonction
+    deleted_count = 0
+    
+    # 1. Effacer les données de scan en session
     if 'detected_litigations' in session:
         del session['detected_litigations']
     if 'total_gain' in session:
         del session['total_gain']
     
-    # Vider aussi les logs de debug pour un scan propre
-    global DEBUG_LOGS
+    # 2. Supprimer les litiges en base de données pour cet utilisateur
+    user_email = session.get('email')
+    if user_email:
+        try:
+            # Récupérer et supprimer tous les litiges de l'utilisateur
+            user_lits = Litigation.query.filter_by(user_email=user_email).all()
+            deleted_count = len(user_lits)
+            
+            for lit in user_lits:
+                db.session.delete(lit)
+            
+            db.session.commit()
+            print(f"🗑️ RESET: {deleted_count} litige(s) supprimé(s) pour {user_email}")
+            
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Erreur suppression litiges: {str(e)[:100]}")
+            DEBUG_LOGS.append(f"❌ Erreur reset BDD: {str(e)[:50]}")
+    
+    # 3. Vider les logs de debug pour un scan propre
     DEBUG_LOGS = []
+    DEBUG_LOGS.append(f"🗑️ RESET complet: session vidée + {deleted_count} litige(s) supprimé(s) de la BDD")
     
-    DEBUG_LOGS.append("🗑️ Résultats du scan effacés par l'utilisateur")
-    
-    # Rediriger vers le dashboard (ou l'accueil si pas connecté)
-    if 'email' in session:
-        return redirect("/")
-    else:
-        return redirect("/")
+    # Rediriger vers l'accueil
+    return redirect("/")
 
 # ========================================
 # MISE À JOUR MONTANT (pour dossiers déjà en base)
