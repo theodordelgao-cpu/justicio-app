@@ -4872,36 +4872,111 @@ def scan_all():
     print(f"   Gain potentiel: {total_gain}€")
     
     # ════════════════════════════════════════════════════════════════
-    # 🎨 Générer l'interface résultat TRANSPORT
+    # 🎨 Générer l'interface résultat TRANSPORT - DESIGN V2 "TICKET DE VOL"
     # ════════════════════════════════════════════════════════════════
     
     html_cards = ""
     for i, lit in enumerate(detected_litigations):
-        # Badge toujours TRANSPORT (couleur or/jaune)
-        category_badge = "✈️ TRANSPORT"
-        category_color = "#f59e0b"
-        
+        company = lit.get('company', 'Transporteur')
         amount_display = lit.get('amount', 'À compléter')
         amount_editable = not is_valid_euro_amount(amount_display)
+        proof = lit.get('proof', '')[:120]
+        law = lit.get('law', 'Règlement UE 261/2004')
+        
+        # Déterminer l'icône selon le type de transport
+        company_lower = company.lower()
+        if any(x in company_lower for x in ['sncf', 'tgv', 'ouigo', 'eurostar', 'thalys', 'train', 'ter', 'inoui']):
+            transport_icon = "🚄"
+            transport_type = "TRAIN"
+        elif any(x in company_lower for x in ['uber', 'bolt', 'kapten', 'vtc', 'taxi', 'heetch']):
+            transport_icon = "🚗"
+            transport_type = "VTC"
+        else:
+            transport_icon = "✈️"
+            transport_type = "VOL"
+        
+        # Montant : input si éditable, sinon affichage
+        if amount_editable:
+            amount_html = f"""
+                <input type='number' id='amount-{i}' value='' placeholder='€' 
+                       style='width:80px; padding:8px; border-radius:8px; border:2px solid #10b981; 
+                              background:rgba(16,185,129,0.1); color:#10b981; font-size:1.5rem; 
+                              font-weight:700; text-align:center;'
+                       onchange='updateAmount({i})'>
+                <span style='color:#10b981; font-size:1.5rem; font-weight:700;'>€</span>
+            """
+        else:
+            amount_html = f"<span style='color:#10b981; font-size:2rem; font-weight:700;'>{amount_display}</span>"
         
         html_cards += f"""
-        <div style='background:rgba(255,255,255,0.05); border-radius:16px; padding:20px; margin-bottom:15px;
-                    border-left:4px solid {category_color};'>
-            <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;'>
-                <span style='background:{category_color}; color:white; padding:4px 12px; border-radius:20px; font-size:0.75rem;'>
-                    {category_badge}
-                </span>
-                <span style='color:rgba(255,255,255,0.5); font-size:0.8rem;'>#{i+1}</span>
+        <!-- CARTE TICKET DE VOL #{i+1} -->
+        <div style='background:white; border-radius:16px; margin-bottom:20px; overflow:hidden;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.15), 0 2px 10px rgba(0,0,0,0.1);
+                    position:relative;'>
+            
+            <!-- EN-TÊTE : Compagnie + Montant -->
+            <div style='background:linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); 
+                        padding:20px 25px; display:flex; justify-content:space-between; align-items:center;'>
+                <div style='display:flex; align-items:center; gap:15px;'>
+                    <span style='font-size:2.5rem;'>{transport_icon}</span>
+                    <div>
+                        <div style='color:rgba(255,255,255,0.6); font-size:0.75rem; text-transform:uppercase; letter-spacing:1px;'>
+                            {transport_type}
+                        </div>
+                        <div style='color:white; font-size:1.4rem; font-weight:700;'>{company}</div>
+                    </div>
+                </div>
+                <div style='text-align:right;'>
+                    <div style='color:rgba(255,255,255,0.6); font-size:0.7rem; text-transform:uppercase; margin-bottom:4px;'>
+                        Indemnisation estimée
+                    </div>
+                    {amount_html}
+                </div>
             </div>
-            <h3 style='color:white; margin:0 0 8px 0;'>{lit.get('company', 'Transporteur')}</h3>
-            <p style='color:rgba(255,255,255,0.6); font-size:0.9rem; margin:0 0 10px 0;'>
-                {lit.get('proof', '')[:80]}...
-            </p>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span style='color:#10b981; font-weight:600; font-size:1.2rem;'>
-                    {"<input type='number' id='amount-" + str(i) + "' value='' placeholder='Montant €' style='width:100px; padding:5px; border-radius:5px; border:1px solid #10b981; background:rgba(16,185,129,0.1); color:#10b981;' onchange='updateAmount(" + str(i) + ")'>" if amount_editable else amount_display}
-                </span>
-                <span style='color:rgba(255,255,255,0.4); font-size:0.8rem;'>{lit.get('law', '')[:30]}</span>
+            
+            <!-- SÉPARATEUR PERFORÉ -->
+            <div style='position:relative; height:20px; background:#f8fafc;'>
+                <div style='position:absolute; left:-10px; top:50%; transform:translateY(-50%); 
+                            width:20px; height:20px; background:#0f172a; border-radius:50%;'></div>
+                <div style='position:absolute; right:-10px; top:50%; transform:translateY(-50%); 
+                            width:20px; height:20px; background:#0f172a; border-radius:50%;'></div>
+                <div style='border-top:2px dashed #cbd5e1; position:absolute; top:50%; left:20px; right:20px;'></div>
+            </div>
+            
+            <!-- CORPS : Preuve + Loi -->
+            <div style='padding:20px 25px; background:#f8fafc;'>
+                <!-- Preuve / Pourquoi -->
+                <div style='margin-bottom:15px;'>
+                    <div style='color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;'>
+                        📝 Motif du litige
+                    </div>
+                    <p style='color:#334155; font-size:0.95rem; font-style:italic; margin:0; line-height:1.5;'>
+                        "{proof}..."
+                    </p>
+                </div>
+                
+                <!-- Base légale -->
+                <div style='display:flex; align-items:center; gap:8px; padding:12px 15px; 
+                            background:rgba(99,102,241,0.1); border-radius:10px; border-left:3px solid #6366f1;'>
+                    <span style='font-size:1.2rem;'>⚖️</span>
+                    <div>
+                        <div style='color:#6366f1; font-size:0.7rem; text-transform:uppercase; font-weight:600;'>Base légale</div>
+                        <div style='color:#4338ca; font-size:0.9rem; font-weight:500;'>{law}</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- FOOTER : Explication -->
+            <div style='padding:12px 25px; background:#f1f5f9; border-top:1px solid #e2e8f0;'>
+                <p style='margin:0; color:#94a3b8; font-size:0.75rem; text-align:center;'>
+                    💡 Montant estimé selon la durée du retard et la distance parcourue (Règlement CE 261/2004)
+                </p>
+            </div>
+            
+            <!-- NUMÉRO DE DOSSIER -->
+            <div style='position:absolute; top:25px; right:25px; background:rgba(255,255,255,0.2); 
+                        padding:4px 10px; border-radius:5px;'>
+                <span style='color:rgba(255,255,255,0.8); font-size:0.7rem; font-family:monospace;'>#{i+1}</span>
             </div>
         </div>
         """
@@ -4934,6 +5009,7 @@ def scan_all():
             .then(data => {
                 if (data.success) {
                     input.style.borderColor = '#10b981';
+                    input.style.background = 'rgba(16,185,129,0.2)';
                     const totalEl = document.getElementById('total-gain');
                     if (totalEl) totalEl.textContent = data.total + '€';
                 }
@@ -4961,7 +5037,7 @@ def scan_all():
             </p>
         </div>
         
-        <div style='max-width:600px; margin:0 auto;'>
+        <div style='max-width:500px; margin:0 auto; padding:0 15px;'>
             {html_cards}
         </div>
         
@@ -4980,6 +5056,17 @@ def scan_all():
             <p style='color:rgba(255,255,255,0.4); font-size:0.85rem;'>
                 📦 Un litige e-commerce ? <a href='/declare' style='color:#a78bfa;'>Déclarez-le manuellement</a>
             </p>
+        </div>
+        
+        <!-- BOUTON RESET -->
+        <div style='text-align:center; margin-top:40px; padding-top:20px; border-top:1px solid rgba(255,255,255,0.1);'>
+            <a href='/reset-scan' style='color:rgba(255,255,255,0.4); font-size:0.8rem; text-decoration:none;
+                                          display:inline-flex; align-items:center; gap:5px;
+                                          padding:8px 15px; border-radius:8px; transition:all 0.2s;'
+               onmouseover="this.style.background='rgba(239,68,68,0.2)'; this.style.color='#f87171';"
+               onmouseout="this.style.background='transparent'; this.style.color='rgba(255,255,255,0.4)';">
+                🗑️ Effacer les résultats et rescanner
+            </a>
         </div>
         """ + debug_html + WA_BTN + FOOTER
     else:
@@ -5036,6 +5123,34 @@ def update_detected_amount():
     session['total_gain'] = total
     
     return jsonify({"success": True, "amount": f"{amount}€", "total": total}), 200
+
+# ========================================
+# 🗑️ RESET SCAN - Effacer les résultats
+# ========================================
+
+@app.route("/reset-scan")
+def reset_scan():
+    """
+    🗑️ Efface les résultats du scan en session et redirige vers le dashboard.
+    Permet à l'utilisateur de refaire un scan propre.
+    """
+    # Effacer les données de scan en session
+    if 'detected_litigations' in session:
+        del session['detected_litigations']
+    if 'total_gain' in session:
+        del session['total_gain']
+    
+    # Vider aussi les logs de debug pour un scan propre
+    global DEBUG_LOGS
+    DEBUG_LOGS = []
+    
+    DEBUG_LOGS.append("🗑️ Résultats du scan effacés par l'utilisateur")
+    
+    # Rediriger vers le dashboard (ou l'accueil si pas connecté)
+    if 'email' in session:
+        return redirect("/")
+    else:
+        return redirect("/")
 
 # ========================================
 # MISE À JOUR MONTANT (pour dossiers déjà en base)
