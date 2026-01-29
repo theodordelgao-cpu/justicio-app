@@ -4495,24 +4495,24 @@ def index():
         <!-- CARTES D'ACTION -->
         <div style='display:flex; flex-wrap:wrap; justify-content:center; gap:25px; margin-bottom:40px;'>
             
-            <!-- CARTE SCAN UNIQUE -->
+            <!-- CARTE SCAN TRANSPORT -->
             <a href='/scan-all' class='action-card' onclick='showLoading("scan")'>
-                <div class='icon'>🔍</div>
-                <div class='title'>SCAN COMPLET</div>
+                <div class='icon'>✈️</div>
+                <div class='title'>SCAN VOYAGES</div>
                 <div class='description'>
-                    E-commerce + Voyages en un seul scan<br>
-                    <b>Colis perdus, vols retardés, remboursements...</b>
+                    Train, Avion, VTC uniquement<br>
+                    <b>Retards, annulations, correspondances...</b>
                 </div>
                 <span class='badge badge-fast'>⚡ Analyse IA • 365 jours</span>
             </a>
             
-            <!-- CARTE DÉCLARER -->
+            <!-- CARTE DÉCLARER (E-commerce + autres) -->
             <a href='/declare' class='action-card travel' onclick='showLoading("declare")'>
-                <div class='icon'>✍️</div>
+                <div class='icon'>📦</div>
                 <div class='title'>DÉCLARER UN LITIGE</div>
                 <div class='description'>
-                    Vous avez un litige spécifique ?<br>
-                    <b>Déclarez-le manuellement</b>
+                    Colis, remboursement, e-commerce...<br>
+                    <b>Déclarez manuellement tout autre litige</b>
                 </div>
                 <span class='badge badge-premium'>📝 Manuel</span>
             </a>
@@ -4588,58 +4588,75 @@ def scan_travel():
     return redirect("/scan-all")
 
 # ========================================
-# 🔍 SCAN UNIFIÉ - E-COMMERCE + VOYAGES
+# ✈️ SCAN TRANSPORT UNIQUEMENT (Train/Avion/VTC)
 # ========================================
+# ⚠️ PIVOT STRATÉGIQUE: Le scan auto ne détecte QUE les litiges transport.
+# L'e-commerce est géré exclusivement via /declare (déclaration manuelle).
 
-# Mots-clés pour classification locale
-TRAVEL_KEYWORDS = [
-    "sncf", "ouigo", "eurostar", "thalys", "ter", "tgv", "train", "rail",
+# Mots-clés TRANSPORT (seuls acceptés par le scan auto)
+TRANSPORT_KEYWORDS = [
+    # Compagnies ferroviaires
+    "sncf", "ouigo", "eurostar", "thalys", "ter", "tgv", "inoui", "intercités",
+    "trainline", "trenitalia", "renfe", "deutsche bahn", "db",
+    # Compagnies aériennes
     "air france", "easyjet", "ryanair", "transavia", "vueling", "volotea",
-    "lufthansa", "klm", "british airways", "tap", "iberia", "swiss",
-    "vol", "flight", "aéroport", "airport", "embarquement", "boarding",
-    "retard vol", "flight delay", "annulation vol", "cancelled flight",
-    "compensation", "règlement 261", "ec 261", "bagage perdu", "lost baggage",
-    "correspondance ratée", "missed connection"
+    "lufthansa", "klm", "british airways", "tap", "iberia", "swiss", "emirates",
+    "qatar airways", "turkish airlines", "norwegian", "wizzair", "flybe",
+    # VTC / Mobilité
+    "uber", "bolt", "kapten", "heetch", "freenow", "blablacar", "flixbus",
+    # Termes génériques transport
+    "vol", "flight", "train", "rail", "avion", "aéroport", "airport",
+    "embarquement", "boarding", "correspondance", "connection",
+    "retard", "delay", "annulation", "cancel", "compensation", "indemnisation",
+    "règlement 261", "ec 261", "règlement européen",
+    "bagage perdu", "lost baggage", "bagage endommagé", "damaged luggage"
 ]
 
-ECOMMERCE_KEYWORDS = [
+# Mots-clés E-COMMERCE (à BANNIR du scan auto)
+ECOMMERCE_BLACKLIST = [
+    # Termes e-commerce
     "commande", "order", "colis", "package", "livraison", "delivery",
+    "panier", "cart", "achat", "purchase", "expédition", "shipment",
+    # Plateformes e-commerce
     "amazon", "cdiscount", "fnac", "darty", "zalando", "asos", "zara",
-    "vinted", "leboncoin", "aliexpress", "shein", "temu", "wish",
-    "retour", "return", "remboursement", "refund", "défectueux", "defective",
-    "non reçu", "not received", "jamais reçu", "never received",
-    "colis perdu", "lost package", "article manquant", "missing item"
+    "vinted", "leboncoin", "aliexpress", "shein", "temu", "wish", "ebay",
+    "rakuten", "backmarket", "boulanger", "ldlc", "materiel.net",
+    "decathlon", "ikea", "leroy merlin", "castorama", "manomano",
+    "veepee", "showroomprive", "asphalte", "sezane", "maje", "sandro",
+    # Termes produits
+    "article", "produit", "retour produit", "défectueux", "defective",
+    "colis perdu", "lost package", "non reçu", "not received"
 ]
 
-def classify_email_category(subject: str, snippet: str, sender: str) -> str:
+def is_transport_email(subject: str, snippet: str, sender: str) -> bool:
     """
-    Classifie un email en 'travel' ou 'ecommerce' basé sur les mots-clés.
-    Retourne la catégorie avec le plus de matchs.
+    Vérifie si un email concerne le TRANSPORT (et pas l'e-commerce).
+    Retourne True uniquement si c'est du transport.
     """
     blob = f"{subject or ''} {snippet or ''} {sender or ''}".lower()
     
-    travel_score = sum(1 for kw in TRAVEL_KEYWORDS if kw in blob)
-    ecommerce_score = sum(1 for kw in ECOMMERCE_KEYWORDS if kw in blob)
+    # 🚫 BLOCAGE E-COMMERCE : Si un mot-clé e-commerce est présent → REJETER
+    if any(kw in blob for kw in ECOMMERCE_BLACKLIST):
+        return False
     
-    if travel_score > ecommerce_score:
-        return "travel"
-    elif ecommerce_score > travel_score:
-        return "ecommerce"
-    else:
-        # Par défaut, e-commerce (plus fréquent)
-        return "ecommerce"
+    # ✅ ACCEPTER : Si au moins un mot-clé transport est présent
+    if any(kw in blob for kw in TRANSPORT_KEYWORDS):
+        return True
+    
+    return False
 
 @app.route("/scan-all")
 def scan_all():
     """
-    🔍 SCAN UNIFIÉ V1 - E-Commerce + Voyages
+    ✈️ SCAN TRANSPORT V2 - Train / Avion / VTC UNIQUEMENT
     
-    Scan unique qui:
-    - Liste Gmail sur 365 jours
-    - Filtre localement (gratuit) les spam/newsletters/success
-    - Classifie localement en travel vs ecommerce
-    - Appelle l'IA uniquement sur les candidats
-    - MAX_AI_CALLS global pour limiter les coûts
+    ⚠️ PIVOT STRATÉGIQUE: Ce scan ne détecte QUE les litiges de transport passagers.
+    Les litiges e-commerce sont gérés via /declare (déclaration manuelle).
+    
+    Fonctionnement:
+    - Query Gmail ciblée sur le transport (compagnies, retards, annulations)
+    - Exclusion stricte des termes e-commerce
+    - Analyse IA uniquement via analyze_litigation_strict(scan_type="travel")
     """
     if "credentials" not in session:
         return redirect("/login")
@@ -4648,7 +4665,7 @@ def scan_all():
         creds = Credentials(**session["credentials"])
         service = build('gmail', 'v1', credentials=creds)
     except Exception as e:
-        DEBUG_LOGS.append(f"❌ Scan-All: Erreur auth Gmail - {str(e)[:50]}")
+        DEBUG_LOGS.append(f"❌ Scan Transport: Erreur auth Gmail - {str(e)[:50]}")
         return STYLE + f"""
         <div style='text-align:center; padding:50px;'>
             <h1 style='color:white;'>❌ Erreur d'authentification</h1>
@@ -4658,56 +4675,61 @@ def scan_all():
         """ + FOOTER
     
     # ════════════════════════════════════════════════════════════════
-    # 📅 Query Gmail large sur 365 jours
+    # 📅 Query Gmail TRANSPORT UNIQUEMENT sur 365 jours
     # ════════════════════════════════════════════════════════════════
     from datetime import timedelta
     one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y/%m/%d")
     
+    # Query ciblée TRANSPORT - Exclut explicitement l'e-commerce
     query = f"""
     label:INBOX 
     after:{one_year_ago}
     (
-        (commande OR colis OR livraison OR order OR delivery OR package)
-        OR
-        (sncf OR "air france" OR easyjet OR ryanair OR train OR vol OR flight)
-        OR
-        (retard OR delay OR annulation OR cancel OR remboursement OR refund)
-        OR
-        (réclamation OR complaint OR litige OR dispute)
-        OR
-        ("non reçu" OR "pas reçu" OR "jamais reçu" OR perdu OR lost)
+        sncf OR ouigo OR eurostar OR thalys OR tgv OR inoui OR trainline
+        OR "air france" OR easyjet OR ryanair OR transavia OR vueling OR volotea
+        OR lufthansa OR klm OR "british airways" OR wizzair OR flixbus
+        OR uber OR bolt OR blablacar OR heetch
+        OR (vol AND (retard OR annulation OR delay OR cancel))
+        OR (train AND (retard OR annulation OR delay OR cancel))
+        OR (flight AND (delay OR cancelled OR compensation))
+        OR "bagage perdu" OR "lost baggage"
+        OR compensation OR indemnisation
+        OR "règlement 261" OR "ec 261"
     )
+    -commande -colis -livraison -order -delivery -package -shipment
+    -amazon -zalando -fnac -darty -shein -temu -aliexpress -vinted -cdiscount
+    -asphalte -asos -zara -wish -ebay -leboncoin -rakuten -backmarket
     -category:promotions 
     -category:social
     -subject:"MISE EN DEMEURE"
     -subject:newsletter
     -subject:unsubscribe
-    -from:noreply
-    -from:no-reply
     """
     
     print("\n" + "="*70)
-    print("🔍 SCAN UNIFIÉ V1 - DÉMARRAGE")
+    print("✈️ SCAN TRANSPORT V2 - DÉMARRAGE")
+    print("🚫 E-commerce exclu - Transport passagers uniquement")
     print("="*70)
     
-    DEBUG_LOGS.append(f"🔍 SCAN-ALL lancé - Mode unifié E-commerce + Voyages")
+    DEBUG_LOGS.append(f"✈️ SCAN TRANSPORT lancé - Mode TRANSPORT UNIQUEMENT")
     
     try:
-        results = service.users().messages().list(userId='me', q=query, maxResults=200).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=150).execute()
         messages = results.get('messages', [])
     except Exception as e:
-        DEBUG_LOGS.append(f"❌ Scan-All: Erreur liste Gmail - {str(e)[:50]}")
+        DEBUG_LOGS.append(f"❌ Scan Transport: Erreur liste Gmail - {str(e)[:50]}")
         return STYLE + f"<h1 style='color:white;'>Erreur lecture Gmail : {str(e)[:100]}</h1><a href='/login'>Se reconnecter</a>" + FOOTER
     
-    print(f"📧 {len(messages)} emails trouvés")
+    print(f"📧 {len(messages)} emails transport trouvés")
     
     # ════════════════════════════════════════════════════════════════
-    # 🔄 Analyse des emails
+    # 🔄 Analyse des emails TRANSPORT
     # ════════════════════════════════════════════════════════════════
     
     detected_litigations = []
     emails_scanned = 0
     emails_skipped = 0
+    emails_skipped_ecommerce = 0
     emails_errors = 0
     ai_calls = 0
     MAX_AI_CALLS = 40
@@ -4730,7 +4752,18 @@ def scan_all():
             # 🛡️ FILTRAGE LOCAL (GRATUIT)
             # ════════════════════════════════════════════════════════════════
             
-            blob = f"{subject} {snippet}".lower()
+            blob = f"{subject} {snippet} {sender}".lower()
+            
+            # 🚫 BLOCAGE E-COMMERCE STRICT - Si terme e-commerce détecté → SKIP
+            if any(kw in blob for kw in ECOMMERCE_BLACKLIST):
+                emails_skipped_ecommerce += 1
+                DEBUG_LOGS.append(f"🚫 E-commerce ignoré: {subject[:40]}...")
+                continue
+            
+            # Vérifier que c'est bien du transport
+            if not is_transport_email(subject, snippet, sender):
+                emails_skipped += 1
+                continue
             
             # Ignorer nos propres mises en demeure
             if "mise en demeure" in blob and "justicio" in blob:
@@ -4738,17 +4771,12 @@ def scan_all():
                 continue
             
             # Ignorer newsletters/promos
-            if any(kw in blob for kw in ["newsletter", "unsubscribe", "désinscri", "promo", "offre exclusive", "code promo"]):
+            if any(kw in blob for kw in ["newsletter", "unsubscribe", "désinscri", "promo", "offre exclusive"]):
                 emails_skipped += 1
                 continue
             
             # Ignorer SUCCESS (déjà remboursé)
             if any(kw in blob for kw in KEYWORDS_SUCCESS):
-                emails_skipped += 1
-                continue
-            
-            # Ignorer REFUS (pas de litige exploitable)
-            if any(kw in blob for kw in KEYWORDS_REFUSAL):
                 emails_skipped += 1
                 continue
             
@@ -4758,13 +4786,7 @@ def scan_all():
                 continue
             
             # ════════════════════════════════════════════════════════════════
-            # 🏷️ CLASSIFICATION LOCALE
-            # ════════════════════════════════════════════════════════════════
-            
-            category = classify_email_category(subject, snippet, sender)
-            
-            # ════════════════════════════════════════════════════════════════
-            # 🤖 ANALYSE IA (si quota pas atteint)
+            # 🤖 ANALYSE IA TRANSPORT (si quota pas atteint)
             # ════════════════════════════════════════════════════════════════
             
             if ai_calls >= MAX_AI_CALLS:
@@ -4778,22 +4800,21 @@ def scan_all():
             except:
                 body_text = snippet
             
-            # Extraire le domaine expéditeur
-            sender_domain = ""
-            email_match = re.search(r'@([a-zA-Z0-9.-]+)', sender)
-            if email_match:
-                sender_domain = email_match.group(1).split('.')[0]
-            
-            # Appeler l'IA selon la catégorie
+            # Appeler l'IA - UNIQUEMENT analyze_litigation_strict en mode TRAVEL
             ai_calls += 1
+            result = analyze_litigation_strict(body_text, subject, sender, to_field, scan_type="travel")
             
-            if category == "travel":
-                result = analyze_litigation_strict(body_text, subject, sender, to_field, scan_type="travel")
-            else:
-                result = analyze_ecommerce_flexible(body_text, subject, sender, to_field)
-            
-            # Vérifier si litige détecté
+            # Vérifier si litige TRANSPORT détecté
             if result.get("is_valid") and result.get("litige"):
+                # Double vérification: L'IA a-t-elle détecté du transport ?
+                company = result.get("company", "").lower()
+                
+                # Rejeter si l'IA a retourné une entreprise e-commerce par erreur
+                ecommerce_companies = ["amazon", "zalando", "fnac", "darty", "cdiscount", "shein", "temu", "asphalte", "vinted"]
+                if any(ec in company for ec in ecommerce_companies):
+                    DEBUG_LOGS.append(f"🚫 IA a détecté e-commerce ({company}), ignoré")
+                    continue
+                
                 # Éviter les doublons
                 is_duplicate = False
                 for existing in detected_litigations:
@@ -4807,20 +4828,20 @@ def scan_all():
                 
                 if not is_duplicate:
                     detected_litigations.append({
-                        "company": result.get("company", "Vendeur"),
+                        "company": result.get("company", "Transporteur"),
                         "amount": result.get("amount", "À compléter"),
-                        "law": result.get("law", ""),
+                        "law": result.get("law", "Règlement CE 261/2004"),
                         "proof": result.get("proof", subject[:100]),
                         "message_id": msg['id'],
-                        "category": category,
+                        "category": "travel",  # Toujours travel
                         "sender": sender,
                         "to_field": to_field
                     })
-                    DEBUG_LOGS.append(f"✅ LITIGE DÉTECTÉ [{category.upper()}]: {result.get('company')} - {result.get('amount')}")
+                    DEBUG_LOGS.append(f"✅ LITIGE TRANSPORT: {result.get('company')} - {result.get('amount')}")
         
         except Exception as e:
             emails_errors += 1
-            tb_str = traceback.format_exc()[:600]  # Traceback tronqué
+            tb_str = traceback.format_exc()[:600]
             DEBUG_LOGS.append(f"❌ Erreur email {msg.get('id', '?')[:8]}: {type(e).__name__}: {str(e)[:100]}")
             DEBUG_LOGS.append(f"   📋 Traceback: {tb_str}")
             continue
@@ -4841,22 +4862,24 @@ def scan_all():
     
     new_cases_count = len(detected_litigations)
     
-    print(f"\n📊 RÉSUMÉ SCAN UNIFIÉ")
+    print(f"\n📊 RÉSUMÉ SCAN TRANSPORT")
     print(f"   Emails analysés: {emails_scanned}")
-    print(f"   Emails ignorés: {emails_skipped}")
+    print(f"   Emails ignorés (non-transport): {emails_skipped}")
+    print(f"   Emails e-commerce bloqués: {emails_skipped_ecommerce}")
     print(f"   Erreurs: {emails_errors}")
     print(f"   Appels IA: {ai_calls}")
-    print(f"   Litiges détectés: {new_cases_count}")
+    print(f"   Litiges transport détectés: {new_cases_count}")
     print(f"   Gain potentiel: {total_gain}€")
     
     # ════════════════════════════════════════════════════════════════
-    # 🎨 Générer l'interface résultat
+    # 🎨 Générer l'interface résultat TRANSPORT
     # ════════════════════════════════════════════════════════════════
     
     html_cards = ""
     for i, lit in enumerate(detected_litigations):
-        category_badge = "📦 E-COMMERCE" if lit.get('category') == 'ecommerce' else "✈️ TRANSPORT"
-        category_color = "#4f46e5" if lit.get('category') == 'ecommerce' else "#f59e0b"
+        # Badge toujours TRANSPORT (couleur or/jaune)
+        category_badge = "✈️ TRANSPORT"
+        category_color = "#f59e0b"
         
         amount_display = lit.get('amount', 'À compléter')
         amount_editable = not is_valid_euro_amount(amount_display)
@@ -4870,7 +4893,7 @@ def scan_all():
                 </span>
                 <span style='color:rgba(255,255,255,0.5); font-size:0.8rem;'>#{i+1}</span>
             </div>
-            <h3 style='color:white; margin:0 0 8px 0;'>{lit.get('company', 'Vendeur')}</h3>
+            <h3 style='color:white; margin:0 0 8px 0;'>{lit.get('company', 'Transporteur')}</h3>
             <p style='color:rgba(255,255,255,0.6); font-size:0.9rem; margin:0 0 10px 0;'>
                 {lit.get('proof', '')[:80]}...
             </p>
@@ -4911,7 +4934,6 @@ def scan_all():
             .then(data => {
                 if (data.success) {
                     input.style.borderColor = '#10b981';
-                    // Mettre à jour le total si affiché
                     const totalEl = document.getElementById('total-gain');
                     if (totalEl) totalEl.textContent = data.total + '€';
                 }
@@ -4924,16 +4946,17 @@ def scan_all():
     if new_cases_count > 0:
         return STYLE + update_script + f"""
         <div style='text-align:center; padding:30px;'>
-            <div style='font-size:4rem; margin-bottom:15px;'>🔍</div>
-            <h1 style='color:white; margin-bottom:10px;'>Scan Terminé !</h1>
-            <p style='color:#10b981; font-size:1.4rem; font-weight:600;'>
-                {new_cases_count} litige(s) détecté(s) !
+            <div style='font-size:4rem; margin-bottom:15px;'>✈️</div>
+            <h1 style='color:white; margin-bottom:10px;'>Scan Transport Terminé !</h1>
+            <p style='color:#f59e0b; font-size:1.4rem; font-weight:600;'>
+                {new_cases_count} litige(s) de transport détecté(s) !
             </p>
             <p style='color:rgba(255,255,255,0.7);'>
                 💰 Gain potentiel: <b id='total-gain' style='color:#10b981; font-size:1.6rem;'>{total_gain:.0f}€</b>
             </p>
             <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
                 📧 {emails_scanned} emails analysés • 🤖 {ai_calls} appels IA
+                {f" • 🚫 {emails_skipped_ecommerce} e-commerce ignorés" if emails_skipped_ecommerce > 0 else ""}
                 {f" • ⚠️ {emails_errors} erreurs" if emails_errors > 0 else ""}
             </p>
         </div>
@@ -4944,29 +4967,39 @@ def scan_all():
         
         <div style='text-align:center; margin:40px 0;'>
             <a href='/setup-payment' class='btn-success' style='padding:20px 50px; font-size:1.2rem;
-                                                                 background:linear-gradient(135deg, #10b981, #059669);
-                                                                 box-shadow:0 15px 40px rgba(16, 185, 129, 0.4);'>
+                                                                 background:linear-gradient(135deg, #f59e0b, #d97706);
+                                                                 box-shadow:0 15px 40px rgba(245, 158, 11, 0.4);'>
                 🚀 RÉCUPÉRER MES {total_gain:.0f}€
             </a>
             <p style='color:rgba(255,255,255,0.5); margin-top:15px; font-size:0.9rem;'>
                 Commission 25% uniquement en cas de succès
             </p>
         </div>
+        
+        <div style='text-align:center; margin-top:20px;'>
+            <p style='color:rgba(255,255,255,0.4); font-size:0.85rem;'>
+                📦 Un litige e-commerce ? <a href='/declare' style='color:#a78bfa;'>Déclarez-le manuellement</a>
+            </p>
+        </div>
         """ + debug_html + WA_BTN + FOOTER
     else:
         return STYLE + f"""
         <div style='text-align:center; padding:50px;'>
-            <div style='font-size:4rem; margin-bottom:20px;'>✅</div>
-            <h1 style='color:white;'>Aucun litige détecté</h1>
+            <div style='font-size:4rem; margin-bottom:20px;'>✈️</div>
+            <h1 style='color:white;'>Aucun litige de transport détecté</h1>
             <p style='color:rgba(255,255,255,0.6);'>
                 Nous avons analysé {emails_scanned} emails sur les 12 derniers mois.<br>
-                Aucun litige exploitable n'a été identifié.
+                Aucun retard/annulation de vol ou train n'a été identifié.
             </p>
             <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
                 📧 {emails_skipped} emails ignorés • 🤖 {ai_calls} appels IA
+                {f" • 🚫 {emails_skipped_ecommerce} e-commerce ignorés" if emails_skipped_ecommerce > 0 else ""}
             </p>
             <br>
-            <a href='/' class='btn-success'>Retour à l'accueil</a>
+            <div style='display:flex; gap:15px; justify-content:center; flex-wrap:wrap;'>
+                <a href='/' class='btn-success'>Retour à l'accueil</a>
+                <a href='/declare' class='btn-success' style='background:#a78bfa;'>📦 Déclarer un litige e-commerce</a>
+            </div>
         </div>
         """ + debug_html + FOOTER
 # ========================================
@@ -8477,8 +8510,10 @@ def test_detective():
 @app.route("/admin/test-scan")
 def admin_test_scan():
     """
-    🧪 Tests automatisés des fonctions de filtrage et classification.
+    🧪 Tests automatisés des fonctions de filtrage TRANSPORT.
     Protégé par session admin_authenticated.
+    
+    ⚠️ PIVOT: Le scan auto ne détecte QUE le transport.
     """
     if not session.get('admin_authenticated'):
         return STYLE + """
@@ -8490,21 +8525,27 @@ def admin_test_scan():
         """ + FOOTER
     
     # ════════════════════════════════════════════════════════════════
-    # 📋 DÉFINITION DES CAS DE TEST
+    # 📋 CAS DE TEST - TRANSPORT vs E-COMMERCE (pivot stratégique)
     # ════════════════════════════════════════════════════════════════
     
     test_cases = [
-        # (subject, snippet, expected_invoice_filter, expected_category, description)
-        ("Votre facture Orange du 15/01", "Montant: 45.99€ - Prélèvement le 20/01", True, None, "Facture normale - IGNORER"),
-        ("Confirmation de paiement Netflix", "Merci pour votre abonnement mensuel", True, None, "Abonnement normal - IGNORER"),
-        ("Newsletter FNAC - Soldes d'hiver", "Profitez de -50% sur la tech", True, None, "Newsletter promo - IGNORER"),
-        ("Votre remboursement a été effectué", "Nous avons crédité 89€ sur votre compte", False, "ecommerce", "Remboursement déjà fait - SUCCESS"),
-        ("Colis non reçu - Commande #123456", "Votre colis Amazon n'a pas été livré", False, "ecommerce", "Colis non reçu - LITIGE E-COMMERCE"),
-        ("Vol AF1234 retardé de 4h", "Air France vous informe d'un retard", False, "travel", "Vol retardé - LITIGE VOYAGE"),
-        ("Réclamation train SNCF - TGV annulé", "Votre TGV Paris-Lyon a été annulé", False, "travel", "Train annulé - LITIGE VOYAGE"),
-        ("Votre commande Zalando", "Livraison prévue demain", True, None, "Confirmation commande - IGNORER"),
-        ("Problème livraison - Commande jamais reçue", "Nous n'avons pas reçu notre colis SHEIN", False, "ecommerce", "Jamais reçu SHEIN - LITIGE"),
-        ("Bagage perdu vol EasyJet", "Votre bagage n'est pas arrivé à destination", False, "travel", "Bagage perdu - LITIGE VOYAGE"),
+        # (subject, snippet, sender, should_be_transport, description)
+        # ✈️ TRANSPORT - Doivent être détectés
+        ("Vol AF1234 retardé de 4h", "Air France vous informe d'un retard", "noreply@airfrance.fr", True, "✈️ Vol retardé Air France - TRANSPORT"),
+        ("Réclamation train SNCF - TGV annulé", "Votre TGV Paris-Lyon a été annulé", "sncf@sncf.fr", True, "🚄 Train annulé SNCF - TRANSPORT"),
+        ("Bagage perdu vol EasyJet", "Votre bagage n'est pas arrivé", "support@easyjet.com", True, "🧳 Bagage perdu - TRANSPORT"),
+        ("Retard Eurostar compensation", "Votre train a eu 2h de retard", "eurostar@eurostar.com", True, "🚄 Eurostar retard - TRANSPORT"),
+        ("Uber course annulée", "Votre chauffeur a annulé", "noreply@uber.com", True, "🚗 VTC annulé - TRANSPORT"),
+        
+        # 📦 E-COMMERCE - Ne doivent PAS être détectés (pivot)
+        ("Colis non reçu - Commande Amazon", "Votre colis n'a pas été livré", "shipping@amazon.fr", False, "📦 Colis Amazon - E-COMMERCE (ignoré)"),
+        ("Problème livraison SHEIN", "Commande jamais reçue", "support@shein.com", False, "📦 SHEIN - E-COMMERCE (ignoré)"),
+        ("Remboursement refusé Zalando", "Votre retour a été refusé", "service@zalando.fr", False, "📦 Zalando - E-COMMERCE (ignoré)"),
+        ("Commande Asphalte défectueuse", "Produit non conforme", "contact@asphalte.com", False, "📦 Asphalte - E-COMMERCE (ignoré)"),
+        
+        # ❌ REJETS - Ne doivent PAS être détectés
+        ("Votre facture Orange", "Prélèvement SEPA le 20/01", "facture@orange.fr", False, "📄 Facture normale - IGNORÉ"),
+        ("Newsletter SNCF - Promos", "Voyagez moins cher cet été", "newsletter@sncf.fr", False, "📧 Newsletter - IGNORÉ"),
     ]
     
     # ════════════════════════════════════════════════════════════════
@@ -8515,20 +8556,11 @@ def admin_test_scan():
     passed = 0
     failed = 0
     
-    for i, (subject, snippet, expect_invoice_filter, expect_category, description) in enumerate(test_cases):
-        # Test 1: is_invoice_without_dispute
-        actual_invoice = is_invoice_without_dispute(subject, snippet)
-        invoice_pass = (actual_invoice == expect_invoice_filter)
+    for i, (subject, snippet, sender, should_be_transport, description) in enumerate(test_cases):
+        # Test: is_transport_email
+        actual_is_transport = is_transport_email(subject, snippet, sender)
+        test_pass = (actual_is_transport == should_be_transport)
         
-        # Test 2: classify_email_category (si pas filtré)
-        category_pass = True
-        actual_category = None
-        if not expect_invoice_filter and expect_category:
-            actual_category = classify_email_category(subject, snippet, "")
-            category_pass = (actual_category == expect_category)
-        
-        # Résultat global
-        test_pass = invoice_pass and category_pass
         if test_pass:
             passed += 1
             status_icon = "✅"
@@ -8546,13 +8578,12 @@ def admin_test_scan():
             </div>
             <div style='color:rgba(255,255,255,0.6); font-size:0.85rem; margin-top:8px;'>
                 <div>📧 Subject: <code>{subject[:50]}...</code></div>
-                <div>📝 Snippet: <code>{snippet[:50]}...</code></div>
+                <div>👤 Sender: <code>{sender}</code></div>
                 <div style='margin-top:5px;'>
-                    🔍 Invoice filter: <span style='color:{"#10b981" if invoice_pass else "#ef4444"};'>
-                        attendu={expect_invoice_filter}, obtenu={actual_invoice}
+                    ✈️ is_transport_email: <span style='color:{"#10b981" if test_pass else "#ef4444"};'>
+                        attendu={should_be_transport}, obtenu={actual_is_transport}
                     </span>
                 </div>
-                {"<div>🏷️ Category: <span style='color:" + ("#10b981" if category_pass else "#ef4444") + ";'>attendu=" + str(expect_category) + ", obtenu=" + str(actual_category) + "</span></div>" if not expect_invoice_filter else ""}
             </div>
         </div>
         """
@@ -8568,7 +8599,8 @@ def admin_test_scan():
     return STYLE + f"""
     <div style='text-align:center; padding:30px;'>
         <div style='font-size:4rem; margin-bottom:15px;'>🧪</div>
-        <h1 style='color:white;'>Tests Scan - Résultats</h1>
+        <h1 style='color:white;'>Tests Scan Transport - Résultats</h1>
+        <p style='color:rgba(255,255,255,0.5);'>⚠️ PIVOT: Le scan auto ne détecte QUE le transport</p>
         <div style='display:flex; justify-content:center; gap:30px; margin:20px 0;'>
             <div style='background:rgba(16,185,129,0.2); padding:20px 30px; border-radius:10px;'>
                 <div style='font-size:2rem; color:#10b981; font-weight:700;'>{passed}</div>
@@ -8644,34 +8676,35 @@ if __name__ == "__main__":
 #       Billet: 145€. Référence: EURXYZ789.
 #
 # ═══════════════════════════════════════════════════════════════════════════════
-# 📦 ECOMMERCE - DOIVENT ÊTRE DÉTECTÉS
+# 📦 E-COMMERCE - ⚠️ NE SERONT PAS DÉTECTÉS PAR LE SCAN AUTO (PIVOT STRATÉGIQUE)
+# Ces litiges doivent être déclarés manuellement via /declare
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# TEST ECOMMERCE 1 - Colis non reçu Amazon
+# TEST ECOMMERCE 1 - Colis non reçu Amazon → DÉCLARER MANUELLEMENT
 # Subject: Problème avec votre commande Amazon #123-4567890
 # Body: Bonjour, vous nous avez signalé ne pas avoir reçu votre colis. Commande #123-4567890
 #       passée le 05/01/2026. Montant: 67,99€. Livraison prévue le 10/01.
 #       Si vous n'avez toujours pas reçu votre colis, merci de nous recontacter.
 #
-# TEST ECOMMERCE 2 - Produit défectueux Cdiscount
+# TEST ECOMMERCE 2 - Produit défectueux Cdiscount → DÉCLARER MANUELLEMENT
 # Subject: Réclamation produit défectueux - Commande CD789456
 # Body: Suite à votre réclamation concernant l'article défectueux reçu (TV Samsung 55"),
 #       nous vous informons que votre demande de remboursement de 499€ est en cours d'examen.
 #       Commande CD789456 du 01/01/2026.
 #
-# TEST ECOMMERCE 3 - Remboursement refusé Zalando
+# TEST ECOMMERCE 3 - Remboursement refusé Zalando → DÉCLARER MANUELLEMENT
 # Subject: Votre demande de retour Zalando - Refusée
 # Body: Cher client, votre demande de retour pour la commande ZAL2024-1234 (chaussures Nike, 129€)
 #       a été refusée car l'article présente des traces d'usure. 
 #       Si vous contestez cette décision, vous pouvez faire une réclamation.
 #
-# TEST ECOMMERCE 4 - Article manquant Fnac
+# TEST ECOMMERCE 4 - Article manquant Fnac → DÉCLARER MANUELLEMENT
 # Subject: Article manquant dans votre colis Fnac
 # Body: Nous avons bien reçu votre signalement. Il manque 1 article dans votre commande FNAC-567890.
 #       Article manquant: Casque Sony WH-1000XM5 (349€). 
 #       Notre service client traite votre dossier sous 48h.
 #
-# TEST ECOMMERCE 5 - Livraison jamais reçue SHEIN
+# TEST ECOMMERCE 5 - Livraison jamais reçue SHEIN → DÉCLARER MANUELLEMENT
 # Subject: Where is my SHEIN order? Never received!
 # Body: Order #SH987654321 placed on January 3rd, 2026. Total: 45.99€.
 #       Tracking shows delivered but I never received my package!
@@ -8695,6 +8728,19 @@ if __name__ == "__main__":
 # Subject: Votre remboursement a été effectué - Commande FNAC-123
 # Body: Bonne nouvelle! Nous avons procédé au remboursement de 149€ sur votre compte.
 #       Le crédit apparaîtra sous 3-5 jours ouvrés. Merci de votre patience.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# 📋 RÉSUMÉ PIVOT STRATÉGIQUE
+# ═══════════════════════════════════════════════════════════════════════════════
+# 
+# ✈️ SCAN AUTO (/scan-all) : Détecte UNIQUEMENT le transport (train, avion, VTC)
+#    - Tests TRAVEL 1-5 → Doivent être détectés
+#    - Tests ECOMMERCE 1-5 → Doivent être IGNORÉS par le scan
+#    - Tests REJET 1-3 → Doivent être IGNORÉS
+#
+# 📦 DÉCLARATION MANUELLE (/declare) : Pour TOUS les litiges e-commerce
+#    - Colis perdus, produits défectueux, remboursements refusés...
+#    - L'utilisateur déclare manuellement et lance la procédure
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIN DES TEST CASES
