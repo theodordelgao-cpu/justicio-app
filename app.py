@@ -4657,6 +4657,7 @@ def scan_all():
     - Query Gmail ciblée sur le transport (compagnies, retards, annulations)
     - Exclusion stricte des termes e-commerce
     - Analyse IA uniquement via analyze_litigation_strict(scan_type="travel")
+    - Anti-doublon: ignore les emails déjà traités en BDD
     """
     if "credentials" not in session:
         return redirect("/login")
@@ -4673,6 +4674,21 @@ def scan_all():
             <a href='/login' class='btn-success'>Se reconnecter</a>
         </div>
         """ + FOOTER
+    
+    # ════════════════════════════════════════════════════════════════
+    # 🔒 ANTI-DOUBLON: Récupérer les IDs déjà en base pour cet utilisateur
+    # ════════════════════════════════════════════════════════════════
+    existing_ids = set()
+    existing_cases_count = 0
+    try:
+        user_email = session.get('email', '')
+        if user_email:
+            existing_lits = Litigation.query.filter_by(user_email=user_email).all()
+            existing_ids = {lit.message_id for lit in existing_lits if lit.message_id}
+            existing_cases_count = len(existing_lits)
+            DEBUG_LOGS.append(f"🔒 Anti-doublon: {len(existing_ids)} message_id déjà en base ({existing_cases_count} dossiers)")
+    except Exception as e:
+        DEBUG_LOGS.append(f"⚠️ Erreur récupération doublons: {str(e)[:50]}")
     
     # ════════════════════════════════════════════════════════════════
     # 📅 Query Gmail TRANSPORT UNIQUEMENT sur 365 jours
@@ -4709,6 +4725,7 @@ def scan_all():
     print("\n" + "="*70)
     print("✈️ SCAN TRANSPORT V2 - DÉMARRAGE")
     print("🚫 E-commerce exclu - Transport passagers uniquement")
+    print(f"🔒 {len(existing_ids)} emails déjà traités seront ignorés")
     print("="*70)
     
     DEBUG_LOGS.append(f"✈️ SCAN TRANSPORT lancé - Mode TRANSPORT UNIQUEMENT")
@@ -4730,12 +4747,21 @@ def scan_all():
     emails_scanned = 0
     emails_skipped = 0
     emails_skipped_ecommerce = 0
+    emails_skipped_existing = 0  # Compteur pour les doublons BDD
     emails_errors = 0
     ai_calls = 0
     MAX_AI_CALLS = 40
     
     for msg in messages:
         try:
+            # ════════════════════════════════════════════════════════════════
+            # 🔒 ANTI-DOUBLON: Ignorer si déjà en base
+            # ════════════════════════════════════════════════════════════════
+            if msg['id'] in existing_ids:
+                emails_skipped_existing += 1
+                DEBUG_LOGS.append(f"⏩ Doublon ignoré (déjà en BDD): {msg['id'][:12]}...")
+                continue
+            
             # Récupérer metadata (Subject, From, To, snippet)
             msg_data = service.users().messages().get(userId='me', id=msg['id'], format='metadata',
                                                        metadataHeaders=['Subject', 'From', 'To']).execute()
@@ -4866,6 +4892,7 @@ def scan_all():
     print(f"   Emails analysés: {emails_scanned}")
     print(f"   Emails ignorés (non-transport): {emails_skipped}")
     print(f"   Emails e-commerce bloqués: {emails_skipped_ecommerce}")
+    print(f"   Emails déjà traités (doublons): {emails_skipped_existing}")
     print(f"   Erreurs: {emails_errors}")
     print(f"   Appels IA: {ai_calls}")
     print(f"   Litiges transport détectés: {new_cases_count}")
@@ -5070,25 +5097,66 @@ def scan_all():
         </div>
         """ + debug_html + WA_BTN + FOOTER
     else:
-        return STYLE + f"""
-        <div style='text-align:center; padding:50px;'>
-            <div style='font-size:4rem; margin-bottom:20px;'>✈️</div>
-            <h1 style='color:white;'>Aucun litige de transport détecté</h1>
-            <p style='color:rgba(255,255,255,0.6);'>
-                Nous avons analysé {emails_scanned} emails sur les 12 derniers mois.<br>
-                Aucun retard/annulation de vol ou train n'a été identifié.
-            </p>
-            <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
-                📧 {emails_skipped} emails ignorés • 🤖 {ai_calls} appels IA
-                {f" • 🚫 {emails_skipped_ecommerce} e-commerce ignorés" if emails_skipped_ecommerce > 0 else ""}
-            </p>
-            <br>
-            <div style='display:flex; gap:15px; justify-content:center; flex-wrap:wrap;'>
-                <a href='/' class='btn-success'>Retour à l'accueil</a>
-                <a href='/declare' class='btn-success' style='background:#a78bfa;'>📦 Déclarer un litige e-commerce</a>
+        # ════════════════════════════════════════════════════════════════
+        # 📭 AUCUN NOUVEAU LITIGE - Message intelligent selon le contexte
+        # ════════════════════════════════════════════════════════════════
+        
+        # Cas 1: Des dossiers existent déjà en base
+        if existing_cases_count > 0:
+            return STYLE + f"""
+            <div style='text-align:center; padding:50px;'>
+                <div style='font-size:4rem; margin-bottom:20px;'>✅</div>
+                <h1 style='color:white;'>Aucun nouveau litige détecté</h1>
+                
+                <div style='background:linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.1)); 
+                            padding:25px; border-radius:15px; margin:25px auto; max-width:450px;
+                            border:1px solid rgba(16,185,129,0.3);'>
+                    <p style='color:#10b981; font-size:1.1rem; margin:0 0 10px 0; font-weight:600;'>
+                        📂 Vous avez déjà {existing_cases_count} dossier(s) en cours
+                    </p>
+                    <p style='color:rgba(255,255,255,0.6); font-size:0.9rem; margin:0;'>
+                        {f"({emails_skipped_existing} email(s) déjà traité(s) ignoré(s))" if emails_skipped_existing > 0 else "Tous vos litiges sont en cours de traitement."}
+                    </p>
+                </div>
+                
+                <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
+                    📧 {emails_scanned} emails analysés • 🤖 {ai_calls} appels IA
+                    {f" • 🔒 {emails_skipped_existing} doublons ignorés" if emails_skipped_existing > 0 else ""}
+                </p>
+                
+                <div style='display:flex; gap:15px; justify-content:center; flex-wrap:wrap; margin-top:25px;'>
+                    <a href='/dashboard' class='btn-success' style='padding:15px 30px; font-size:1.1rem;'>
+                        📂 Voir mes dossiers existants
+                    </a>
+                </div>
+                
+                <div style='margin-top:25px;'>
+                    <a href='/' style='color:rgba(255,255,255,0.4); font-size:0.85rem;'>← Retour à l'accueil</a>
+                </div>
             </div>
-        </div>
-        """ + debug_html + FOOTER
+            """ + debug_html + FOOTER
+        
+        # Cas 2: Aucun dossier existant, vraiment rien trouvé
+        else:
+            return STYLE + f"""
+            <div style='text-align:center; padding:50px;'>
+                <div style='font-size:4rem; margin-bottom:20px;'>✈️</div>
+                <h1 style='color:white;'>Aucun litige de transport détecté</h1>
+                <p style='color:rgba(255,255,255,0.6);'>
+                    Nous avons analysé {emails_scanned} emails sur les 12 derniers mois.<br>
+                    Aucun retard/annulation de vol ou train n'a été identifié.
+                </p>
+                <p style='color:rgba(255,255,255,0.5); font-size:0.85rem;'>
+                    📧 {emails_skipped} emails ignorés • 🤖 {ai_calls} appels IA
+                    {f" • 🚫 {emails_skipped_ecommerce} e-commerce ignorés" if emails_skipped_ecommerce > 0 else ""}
+                </p>
+                <br>
+                <div style='display:flex; gap:15px; justify-content:center; flex-wrap:wrap;'>
+                    <a href='/' class='btn-success'>Retour à l'accueil</a>
+                    <a href='/declare' class='btn-success' style='background:#a78bfa;'>📦 Déclarer un litige e-commerce</a>
+                </div>
+            </div>
+            """ + debug_html + FOOTER
 # ========================================
 # MISE À JOUR MONTANT EN SESSION (avant paiement)
 # ========================================
