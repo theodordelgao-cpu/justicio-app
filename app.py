@@ -7305,8 +7305,9 @@ def check_refunds():
             service = build('gmail', 'v1', credentials=creds)
             
             # ════════════════════════════════════════════════════════════════
-            # 🎣 QUERY "GRAND FILET" - Sans le nom d'entreprise !
+            # 🎣 QUERY "GRAND FILET" + TEST CATCHER
             # Cherche TOUS les emails financiers sur 30 jours
+            # + Capture TOUS les emails avec "test" dans le sujet
             # ════════════════════════════════════════════════════════════════
             query = '''(
                 subject:virement OR subject:remboursement OR subject:refund 
@@ -7317,12 +7318,14 @@ def check_refunds():
                 OR "bon d'achat" OR "avoir" OR "voucher" OR "geste commercial"
                 OR "code promo" OR "crédit boutique"
                 OR "annulation" OR "annulée" OR "cancelled" OR "commande annulée"
-                OR subject:TEST
+                OR subject:test OR subject:TEST OR subject:Test
+                OR subject:godmode OR subject:GODMODE
+                OR test OR TEST
             ) newer_than:30d -subject:"MISE EN DEMEURE"'''
             
-            logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🎣 Query GRAND FILET (30 jours, sans entreprise)</p>")
+            logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🎣 Query GRAND FILET + TEST (30 jours)</p>")
             
-            results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
+            results = service.users().messages().list(userId='me', q=query, maxResults=100).execute()
             messages = results.get('messages', [])
             
             logs.append(f"<p style='margin-left:20px;'>📧 <b>{len(messages)}</b> email(s) financiers trouvés</p>")
