@@ -7222,18 +7222,20 @@ def generate_company_variants(company_name: str) -> list:
     return list(set(variants))  # Dédupliquer
 
 
+
 @app.route("/cron/check-refunds")
 def check_refunds():
     """
-    💰 AGENT 2 : L'ENCAISSEUR
-    Vérifie les remboursements et prélève la commission
+    💰 AGENT ENCAISSEUR V3 - MATCHING IA RELATIONNEL
     
-    GÈRE 3 SCÉNARIOS :
-    1. Remboursement PARTIEL → Accepter et facturer sur le montant réel
-    2. Bon d'achat/Avoir → Fermer le dossier SANS facturer
-    3. Remboursement IMPLICITE → Utiliser le montant du dossier
+    Architecture révolutionnaire :
+    1. FILET LARGE : Récupère TOUS les emails financiers (30 jours)
+    2. CERVEAU IA : Pour chaque email, demande à GPT de faire le matching avec les dossiers
+    3. ACTION : Si match → Update BDD avec montant RÉEL + Commission Stripe
     
-    V2: Query Gmail "Grand Filet" + Filtrage Python intelligent
+    L'IA fait le lien même si:
+    - Le montant est différent (estimation 0€ vs remboursement réel 100€)
+    - Le nom d'entreprise est écrit différemment (SNCF = TGV = Train)
     """
     
     # Vérification du token de sécurité
@@ -7241,63 +7243,82 @@ def check_refunds():
     if SCAN_TOKEN and token != SCAN_TOKEN:
         return "⛔ Accès refusé - Token invalide", 403
     
-    logs = ["<h3>💰 AGENT ENCAISSEUR V2 - GRAND FILET</h3>"]
+    logs = ["<h3>💰 AGENT ENCAISSEUR V3 - MATCHING IA</h3>"]
     logs.append(f"<p>🕐 Scan lancé à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>")
     
     # Statistiques
     stats = {
-        "dossiers_scannes": 0,
-        "remboursements_cash": 0,
-        "remboursements_voucher": 0,
-        "remboursements_partiels": 0,
-        "annulations": 0,
+        "utilisateurs_scannes": 0,
+        "emails_analyses": 0,
+        "matchs_ia": 0,
         "commissions_prelevees": 0,
         "total_commission": 0,
-        "rejets_securite": 0,
-        "emails_filtres": 0,  # Emails non pertinents filtrés
-        "montants_mis_a_jour": 0  # Montants corrigés en BDD
+        "montants_mis_a_jour": 0,
+        "erreurs": 0
     }
     
     # ════════════════════════════════════════════════════════════════
-    # FILTRE ÉLARGI : Surveiller TOUS les dossiers actifs
+    # ÉTAPE 1 : Récupérer tous les utilisateurs avec des dossiers actifs
     # ════════════════════════════════════════════════════════════════
     
     STATUTS_ACTIFS = [
         "En attente de remboursement",
-        "En cours juridique",
+        "En cours juridique", 
         "En cours",
         "Envoyé",
         "En attente d'analyse",
-        "Détecté"
+        "Détecté",
+        "sent",
+        "pending",
+        "detected",
+        "processing"
     ]
     
+    # Récupérer tous les dossiers actifs
     active_cases = Litigation.query.filter(
         Litigation.status.in_(STATUTS_ACTIFS)
     ).all()
     
-    logs.append(f"<p>📂 {len(active_cases)} dossier(s) actifs à surveiller</p>")
-    logs.append(f"<p style='font-size:0.8rem; color:#64748b;'>Statuts surveillés : {', '.join(STATUTS_ACTIFS)}</p>")
-    
-    # ANTI-DOUBLON : Tracker les emails déjà utilisés
-    used_email_ids = set()
-    
+    # Grouper par utilisateur
+    users_cases = {}
     for case in active_cases:
-        stats["dossiers_scannes"] += 1
+        if case.user_email not in users_cases:
+            users_cases[case.user_email] = []
+        users_cases[case.user_email].append(case)
+    
+    logs.append(f"<p>👥 {len(users_cases)} utilisateur(s) avec dossiers actifs</p>")
+    logs.append(f"<p>📂 {len(active_cases)} dossier(s) total à surveiller</p>")
+    
+    # Liste des expéditeurs à ignorer (newsletters, pubs)
+    IGNORED_SENDERS = [
+        "airbnb", "uber eats", "ubereats", "deliveroo", "netflix", "spotify",
+        "amazon prime", "linkedin", "facebook", "twitter", "instagram",
+        "newsletter", "noreply", "no-reply", "marketing", "promo",
+        "jow", "yoojo", "leboncoin", "vinted"
+    ]
+    
+    # ════════════════════════════════════════════════════════════════
+    # ÉTAPE 2 : Pour chaque utilisateur, scanner ses emails
+    # ════════════════════════════════════════════════════════════════
+    
+    for user_email, cases in users_cases.items():
+        stats["utilisateurs_scannes"] += 1
         
-        company_clean = case.company.strip().lower()
-        company_variants = generate_company_variants(company_clean)  # Variantes du nom
-        expected_amount = extract_numeric_amount(case.amount)
+        logs.append(f"<hr><h4>👤 {user_email}</h4>")
+        logs.append(f"<p style='margin-left:20px;'>📂 {len(cases)} dossier(s) actif(s)</p>")
         
-        logs.append(f"<hr>📂 <b>{company_clean.upper()}</b> - {case.amount} (attendu: {expected_amount}€)")
-        logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>Variantes recherchées: {', '.join(company_variants[:5])}...</p>")
+        # Préparer la liste des dossiers pour le prompt IA
+        dossiers_info = []
+        for c in cases:
+            montant = extract_numeric_amount(c.amount) if c.amount else 0
+            dossiers_info.append(f"- ID #{c.id}: {c.company} (estimé: {montant}€)")
         
-        user = User.query.filter_by(email=case.user_email).first()
+        logs.append(f"<pre style='margin-left:20px; font-size:0.8rem; background:#f1f5f9; padding:10px; border-radius:5px;'>" + "\n".join(dossiers_info) + "</pre>")
+        
+        # Récupérer l'utilisateur et ses credentials
+        user = User.query.filter_by(email=user_email).first()
         if not user or not user.refresh_token:
             logs.append("<p style='margin-left:20px; color:#dc2626;'>❌ Pas de refresh token</p>")
-            continue
-        
-        if not user.stripe_customer_id:
-            logs.append("<p style='margin-left:20px; color:#dc2626;'>❌ Pas de carte enregistrée</p>")
             continue
         
         try:
@@ -7305,391 +7326,308 @@ def check_refunds():
             service = build('gmail', 'v1', credentials=creds)
             
             # ════════════════════════════════════════════════════════════════
-            # 🎣 QUERY "GRAND FILET" + TEST CATCHER
-            # Cherche TOUS les emails financiers sur 30 jours
-            # + Capture TOUS les emails avec "test" dans le sujet
+            # 🎣 QUERY GMAIL "GRAND FILET" (30 jours, mots-clés financiers)
             # ════════════════════════════════════════════════════════════════
+            
             query = '''(
                 subject:virement OR subject:remboursement OR subject:refund 
-                OR subject:indemnisation OR subject:compensation OR subject:crédit
-                OR "avis de virement" OR "compte crédité" OR "has been refunded"
-                OR "remboursement effectué" OR "votre compte a été crédité"
-                OR "montant remboursé" OR "refund processed" OR "payment received"
-                OR "bon d'achat" OR "avoir" OR "voucher" OR "geste commercial"
-                OR "code promo" OR "crédit boutique"
-                OR "annulation" OR "annulée" OR "cancelled" OR "commande annulée"
-                OR subject:test OR subject:TEST OR subject:Test
-                OR subject:godmode OR subject:GODMODE
-                OR test OR TEST
-            ) newer_than:30d -subject:"MISE EN DEMEURE"'''
+                OR subject:indemnisation OR subject:compensation
+                OR "avis de virement" OR "compte crédité" OR "a été crédité"
+                OR "remboursement effectué" OR "montant remboursé"
+                OR subject:test OR subject:TEST OR test
+            ) newer_than:30d'''
             
-            logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🎣 Query GRAND FILET + TEST (30 jours)</p>")
-            
-            results = service.users().messages().list(userId='me', q=query, maxResults=100).execute()
+            results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
             messages = results.get('messages', [])
             
-            logs.append(f"<p style='margin-left:20px;'>📧 <b>{len(messages)}</b> email(s) financiers trouvés</p>")
+            logs.append(f"<p style='margin-left:20px;'>📧 {len(messages)} email(s) financiers trouvés</p>")
             
-            if len(messages) == 0:
-                logs.append("<p style='margin-left:20px; color:#f59e0b;'>⚠️ Aucun email financier détecté</p>")
+            if not messages:
+                logs.append("<p style='margin-left:20px; color:#6b7280;'>Aucun email financier récent</p>")
                 continue
             
-            found_valid_refund = False
+            # ════════════════════════════════════════════════════════════════
+            # 🧠 ÉTAPE 3 : Analyse IA de chaque email
+            # ════════════════════════════════════════════════════════════════
             
-            for msg in messages:
+            for msg in messages[:20]:  # Limiter à 20 emails par utilisateur
                 msg_id = msg['id']
                 
-                if msg_id in used_email_ids:
-                    continue
-                
-                msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-                snippet = msg_data.get('snippet', '')
-                
-                headers = msg_data['payload'].get('headers', [])
-                email_date = next((h['value'] for h in headers if h['name'].lower() == 'date'), "Date inconnue")
-                email_subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
-                email_from = next((h['value'] for h in headers if h['name'].lower() == 'from'), "")
-                
-                # Extraire le body pour analyse
                 try:
-                    body_text = safe_extract_body_text(msg_data)
-                except:
-                    body_text = snippet
-                
-                # ════════════════════════════════════════════════════════════════
-                # 🔱 GOD MODE - SELF-TEST OVERRIDE
-                # Si l'email vient de l'utilisateur lui-même, on force l'acceptation
-                # ════════════════════════════════════════════════════════════════
-                
-                user_email_lower = case.user_email.lower() if case.user_email else ""
-                email_from_lower = email_from.lower()
-                
-                # Détecter si c'est un self-test (email envoyé par l'utilisateur à lui-même)
-                is_self_test = False
-                if user_email_lower and (
-                    user_email_lower in email_from_lower or
-                    "me" in email_from_lower.split() or
-                    "moi" in email_from_lower.split() or
-                    email_from_lower.startswith(user_email_lower.split("@")[0])
-                ):
-                    is_self_test = True
-                
-                # GOD MODE activé si self-test OU si sujet contient "TEST" OU "GODMODE"
-                god_mode = is_self_test or "godmode" in email_subject.lower() or "[test]" in email_subject.lower()
-                
-                if god_mode:
-                    print(f"🔱 GOD MODE ACTIVÉ pour: {email_subject[:50]}")
-                    logs.append(f"<p style='margin-left:30px; color:#f59e0b; font-weight:bold;'>🔱 GOD MODE ACTIVÉ - Self-test détecté</p>")
+                    msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+                    snippet = msg_data.get('snippet', '')
                     
-                    # En GOD MODE, on extrait le montant directement par regex avant l'IA
-                    montant_regex = extract_amount_from_text(f"{email_subject} {snippet} {body_text}")
+                    headers = msg_data['payload'].get('headers', [])
+                    email_subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
+                    email_from = next((h['value'] for h in headers if h['name'].lower() == 'from'), "")
                     
-                    if montant_regex and montant_regex > 0:
-                        logs.append(f"<p style='margin-left:40px; color:#10b981;'>💰 Montant extrait (regex): <b>{montant_regex}€</b></p>")
-                        
-                        # Mettre à jour le dossier directement
-                        old_amount = case.amount
-                        case.amount = f"{montant_regex}€"
-                        case.status = "Remboursé (Test)"
-                        case.updated_at = datetime.utcnow()
-                        db.session.commit()
-                        
-                        stats["montants_mis_a_jour"] += 1
-                        logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 MONTANT MIS À JOUR : {old_amount} → {montant_regex}€</p>")
-                        
-                        # Calculer la commission (30%)
-                        commission = max(1, int(montant_regex * 0.30))
-                        logs.append(f"<p style='margin-left:40px; color:#10b981;'>💵 Commission théorique: <b>{commission}€</b> (30% de {montant_regex}€)</p>")
-                        
-                        # Marquer l'email comme utilisé
-                        used_email_ids.add(msg_id)
-                        
-                        # Notification
-                        send_telegram_notif(f"🔱 GOD MODE TEST 🔱\n\n{company_clean.upper()}: {montant_regex}€\nCommission: {commission}€\nClient: {user.email}\nDossier #{case.id}\n⚠️ MODE TEST - Pas de prélèvement réel")
-                        
-                        logs.append(f"<p style='margin-left:30px; color:#f59e0b; font-weight:bold;'>✅ DOSSIER FERMÉ EN MODE TEST (pas de prélèvement Stripe)</p>")
-                        
-                        found_valid_refund = True
-                        break
-                    else:
-                        logs.append(f"<p style='margin-left:40px; color:#dc2626;'>⚠️ Aucun montant trouvé dans l'email - Passage à l'IA</p>")
-                        # Continuer vers l'analyse IA normale
-                
-                # ════════════════════════════════════════════════════════════════
-                # 🔍 FILTRAGE PYTHON INTELLIGENT (si pas en GOD MODE)
-                # Vérifier si l'email correspond à cette entreprise
-                # ════════════════════════════════════════════════════════════════
-                
-                if not god_mode:
-                    email_blob = f"{email_subject} {snippet} {body_text} {email_from}".lower()
-                    
-                    # Accepter si :
-                    # 1. Le nom de l'entreprise (ou variante) est dans l'email
-                    # 2. OU c'est un email de TEST (pour les tests admin)
-                    # 3. OU l'email vient d'un admin connu
-                    is_company_match = any(variant in email_blob for variant in company_variants)
-                    is_test_email = "test" in email_subject.lower() or "test" in email_from.lower()
-                    is_admin_email = any(admin in email_from.lower() for admin in ["admin@", "theodor", "justicio"])
-                    
-                    if not is_company_match and not is_test_email and not is_admin_email:
-                        stats["emails_filtres"] += 1
-                        continue  # Pas le bon email, passer au suivant
-                
-                if "MISE EN DEMEURE" in email_subject.upper():
-                    continue
-                
-                logs.append(f"<p style='margin-left:30px;'>📩 <b>{email_subject[:60]}...</b></p>")
-                logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>De: {email_from[:40]} | {email_date[:20]}</p>")
-                
-                if god_mode:
-                    logs.append(f"<p style='margin-left:40px; color:#f59e0b; font-size:0.85rem;'>🔱 GOD MODE - Analyse IA forcée</p>")
-                
-                if not OPENAI_API_KEY:
-                    logs.append("<p style='margin-left:30px; color:#dc2626;'>❌ Pas d'API OpenAI</p>")
-                    continue
-                
-                # ANALYSE IA SÉCURISÉE
-                verdict_result = analyze_refund_email(
-                    company_clean, 
-                    expected_amount, 
-                    email_subject, 
-                    snippet, 
-                    email_from,
-                    case_order_id=getattr(case, 'order_id', None)
-                )
-                
-                verdict = verdict_result.get("verdict", "NON")
-                montant_reel = verdict_result.get("montant_reel", 0)
-                type_remboursement = verdict_result.get("type", "UNKNOWN")
-                order_id_found = verdict_result.get("order_id", None)
-                is_credit = verdict_result.get("is_credit", True)
-                is_partial = verdict_result.get("is_partial", False)
-                is_cancelled = verdict_result.get("is_cancelled", False)
-                confidence = verdict_result.get("confidence", "LOW")
-                raison = verdict_result.get("raison", "")
-                
-                # 🔱 GOD MODE OVERRIDE : Si pas de verdict positif mais GOD MODE actif, forcer OUI
-                if god_mode and verdict != "OUI" and montant_reel > 0:
-                    logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>🔱 GOD MODE: Verdict forcé OUI (était {verdict})</p>")
-                    verdict = "OUI"
-                    type_remboursement = "CASH"
-                    confidence = "HIGH"
-                
-                logs.append(f"<p style='margin-left:30px;'>🤖 Verdict: <b>{verdict}</b> | Montant: <b>{montant_reel}€</b> | Type: <b>{type_remboursement}</b> | Partiel: <b>{'OUI' if is_partial else 'NON'}</b> | Confiance: <b>{confidence}</b></p>")
-                if order_id_found:
-                    logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>📦 N° Commande trouvé: {order_id_found}</p>")
-                if raison:
-                    logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {raison[:100]}</p>")
-                
-                # ════════════════════════════════════════════════════════════════
-                # 💾 MISE À JOUR DU MONTANT EN BDD (si différent)
-                # ════════════════════════════════════════════════════════════════
-                
-                if verdict == "OUI" and montant_reel > 0 and montant_reel != expected_amount:
-                    old_amount = case.amount
-                    case.amount = f"{montant_reel}€"
-                    db.session.commit()
-                    stats["montants_mis_a_jour"] += 1
-                    logs.append(f"<p style='margin-left:30px; color:#3b82f6;'>📝 MONTANT MIS À JOUR : {old_amount} → {montant_reel}€</p>")
-                    # Recalculer expected_amount pour la suite
-                    expected_amount = montant_reel
-                
-                # ═══════════════════════════════════════════════════════════
-                # 🚫 CAS SPÉCIAL : ANNULATION SANS DÉBIT
-                # ═══════════════════════════════════════════════════════════
-                
-                if verdict == "ANNULE" or is_cancelled or type_remboursement == "CANCELLED":
-                    logs.append(f"<p style='margin-left:30px; color:#8b5cf6;'>🚫 ANNULATION DÉTECTÉE : Commande annulée sans débit</p>")
-                    logs.append(f"<p style='margin-left:40px; color:#8b5cf6; font-size:0.85rem;'>→ Aucune transaction financière - Pas de commission à prélever</p>")
-                    
-                    used_email_ids.add(msg_id)
-                    stats["annulations"] += 1
-                    
-                    case.status = "Annulé (sans débit)"
-                    case.updated_at = datetime.utcnow()
-                    db.session.commit()
-                    
-                    logs.append(f"<p style='margin-left:30px; color:#8b5cf6; font-weight:bold;'>✅ Dossier fermé - Annulation confirmée</p>")
-                    
-                    send_telegram_notif(f"🚫 ANNULATION DÉTECTÉE 🚫\n\n{company_clean.upper()} : Commande annulée sans débit\nClient: {user.email}\nDossier #{case.id}\n⚠️ PAS DE COMMISSION (0€)")
-                    
-                    found_valid_refund = True
-                    break
-                
-                # ═══════════════════════════════════════════════════════════
-                # 🔒 VALIDATIONS DE SÉCURITÉ - ANTI FAUX-POSITIFS
-                # ═══════════════════════════════════════════════════════════
-                
-                if verdict == "OUI":
-                    
-                    # SÉCURITÉ 1 : Vérifier que c'est un CRÉDIT (pas une facture)
-                    if not is_credit:
-                        logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET : C'est une FACTURE (débit), pas un remboursement (crédit)</p>")
-                        stats["rejets_securite"] += 1
+                    # Ignorer les newsletters/pubs
+                    email_from_lower = email_from.lower()
+                    if any(ignored in email_from_lower for ignored in IGNORED_SENDERS):
                         continue
                     
-                    # SÉCURITÉ 2 : Vérifier le montant (règle des 90%)
-                    # EXCEPTION : Si is_partial=True, accepter même si < 90%
-                    if montant_reel > 0 and expected_amount > 0:
-                        ratio = montant_reel / expected_amount
+                    # Extraire le body
+                    try:
+                        body_text = safe_extract_body_text(msg_data)
+                    except:
+                        body_text = snippet
+                    
+                    stats["emails_analyses"] += 1
+                    
+                    # ════════════════════════════════════════════════════════════════
+                    # 🤖 APPEL IA - MATCHING RELATIONNEL
+                    # ════════════════════════════════════════════════════════════════
+                    
+                    if not OPENAI_API_KEY:
+                        continue
+                    
+                    match_result = ia_matching_dossier(
+                        email_subject=email_subject,
+                        email_body=body_text[:2000],
+                        email_from=email_from,
+                        dossiers=cases
+                    )
+                    
+                    if match_result.get("match"):
+                        stats["matchs_ia"] += 1
+                        dossier_id = match_result.get("dossier_id")
+                        real_amount = match_result.get("real_amount", 0)
+                        match_reason = match_result.get("reason", "")
                         
-                        # Si le montant trouvé est < 90% du montant attendu
-                        if ratio < 0.90:
-                            # L'IA ou Python a détecté un PARTIEL → ACCEPTER
-                            if is_partial:
-                                logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>✅ PARTIEL DÉTECTÉ : {montant_reel}€ sur {expected_amount}€ ({ratio*100:.0f}%)</p>")
-                                logs.append(f"<p style='margin-left:40px; color:#f59e0b; font-size:0.85rem;'>→ Contexte partiel identifié (geste commercial, frais déduits, etc.)</p>")
-                                # CONTINUER - ne pas rejeter
-                            else:
-                                # Pas de contexte partiel → REJET (probablement autre commande)
-                                logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET SÉCURITÉ : Montant trouvé ({montant_reel}€) ≠ Montant dossier ({expected_amount}€)</p>")
-                                logs.append(f"<p style='margin-left:40px; color:#dc2626; font-size:0.85rem;'>→ Ratio: {ratio*100:.0f}% < 90% et aucun contexte partiel - Probablement une AUTRE commande !</p>")
-                                stats["rejets_securite"] += 1
-                                continue
-                        else:
-                            logs.append(f"<p style='margin-left:30px; color:#10b981;'>✅ Montant validé : {montant_reel}€ ≈ {expected_amount}€ ({ratio*100:.0f}%)</p>")
-                    
-                    # SÉCURITÉ 3 : Comparer les numéros de commande (si disponibles)
-                    case_order_id = getattr(case, 'order_id', None)
-                    if case_order_id and order_id_found:
-                        # Normaliser les deux IDs pour comparaison
-                        case_id_clean = str(case_order_id).strip().lower().replace("#", "").replace("-", "")
-                        found_id_clean = str(order_id_found).strip().lower().replace("#", "").replace("-", "")
+                        logs.append(f"<p style='margin-left:30px; color:#10b981; font-weight:bold;'>✅ MATCH IA TROUVÉ !</p>")
+                        logs.append(f"<p style='margin-left:40px;'>📩 Email: <b>{email_subject[:50]}...</b></p>")
+                        logs.append(f"<p style='margin-left:40px;'>📂 Dossier ID: <b>#{dossier_id}</b></p>")
+                        logs.append(f"<p style='margin-left:40px;'>💰 Montant réel: <b>{real_amount}€</b></p>")
+                        logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {match_reason}</p>")
                         
-                        if case_id_clean != found_id_clean:
-                            logs.append(f"<p style='margin-left:30px; color:#dc2626;'>🚫 REJET : Numéros de commande DIFFÉRENTS !</p>")
-                            logs.append(f"<p style='margin-left:40px; color:#dc2626; font-size:0.85rem;'>→ Dossier: {case_order_id} | Email: {order_id_found}</p>")
-                            stats["rejets_securite"] += 1
-                            continue
-                        else:
-                            logs.append(f"<p style='margin-left:30px; color:#10b981;'>✅ Numéro de commande validé : {order_id_found}</p>")
-                    
-                    # SÉCURITÉ 4 : Niveau de confiance minimum
-                    if confidence == "LOW":
-                        logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ Confiance faible - Vérification manuelle recommandée</p>")
-                    
-                    # ═══════════════════════════════════════════════════════════
-                    # ✅ TOUTES LES SÉCURITÉS PASSÉES - TRAITEMENT DU REMBOURSEMENT
-                    # ═══════════════════════════════════════════════════════════
-                    
-                    used_email_ids.add(msg_id)
-                    
-                    # Utiliser is_partial de l'IA OU comparer les montants
-                    is_partial_final = is_partial or (montant_reel < expected_amount * 0.99)  # 1% de tolérance
-                    if is_partial_final:
-                        stats["remboursements_partiels"] += 1
-                        logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⚠️ PARTIEL CONFIRMÉ : {montant_reel}€ sur {expected_amount}€</p>")
-                    
-                    # CAS 1 : CASH → DÉBITER STRIPE
-                    if type_remboursement == "CASH":
-                        stats["remboursements_cash"] += 1
-                        
-                        if montant_reel <= 0:
-                            logs.append("<p style='margin-left:30px; color:#dc2626;'>❌ Montant invalide</p>")
-                            continue
-                        
-                        commission = max(1, int(montant_reel * 0.30))
-                        logs.append(f"<p style='margin-left:30px;'>💰 Commission : <b>{commission}€</b> (30% de {montant_reel}€)</p>")
-                        
-                        try:
-                            payment_methods = stripe.PaymentMethod.list(customer=user.stripe_customer_id, type="card")
+                        # Récupérer le dossier
+                        matched_case = Litigation.query.get(dossier_id)
+                        if matched_case and matched_case.user_email == user_email:
                             
-                            if not payment_methods.data:
-                                logs.append("<p style='margin-left:30px; color:#dc2626;'>❌ Aucune carte</p>")
-                                continue
+                            # ════════════════════════════════════════════════════════════════
+                            # 💾 MISE À JOUR DU MONTANT RÉEL EN BDD (CRUCIAL)
+                            # ════════════════════════════════════════════════════════════════
                             
-                            payment_intent = stripe.PaymentIntent.create(
-                                amount=commission * 100,
-                                currency='eur',
-                                customer=user.stripe_customer_id,
-                                payment_method=payment_methods.data[0].id,
-                                off_session=True,
-                                confirm=True,
-                                description=f"Commission Justicio 30% - {company_clean.upper()} - Dossier #{case.id}"
-                            )
+                            old_amount = matched_case.amount
+                            old_amount_num = extract_numeric_amount(old_amount) if old_amount else 0
                             
-                            if payment_intent.status == "succeeded":
-                                if is_partial_final:
-                                    case.status = f"Remboursé (Partiel: {montant_reel}€/{expected_amount}€)"
-                                else:
-                                    case.status = "Remboursé"
-                                case.updated_at = datetime.utcnow()
-                                db.session.commit()
+                            if real_amount > 0:
+                                matched_case.amount = f"{real_amount}€"
+                                stats["montants_mis_a_jour"] += 1
+                                logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Montant mis à jour: {old_amount} → {real_amount}€</p>")
+                            
+                            # Mise à jour du statut → REFUNDED
+                            matched_case.status = "Remboursé"
+                            matched_case.updated_at = datetime.utcnow()
+                            db.session.commit()
+                            
+                            # ════════════════════════════════════════════════════════════════
+                            # 💳 PRÉLÈVEMENT COMMISSION STRIPE (30%)
+                            # ════════════════════════════════════════════════════════════════
+                            
+                            # Utiliser le montant RÉEL trouvé par l'IA
+                            commission_base = real_amount if real_amount > 0 else old_amount_num
+                            
+                            if commission_base > 0 and user.stripe_customer_id:
+                                commission = max(1, int(commission_base * 0.30))  # 30%, minimum 1€
                                 
-                                stats["commissions_prelevees"] += 1
-                                stats["total_commission"] += commission
-                                
-                                logs.append(f"<p style='margin-left:30px; color:#10b981; font-weight:bold;'>✅ JACKPOT ! {commission}€ PRÉLEVÉS !</p>")
-                                
-                                partial_info = f" (PARTIEL: {montant_reel}€/{expected_amount}€)" if is_partial_final else ""
-                                send_telegram_notif(f"💰💰💰 JUSTICIO JACKPOT 💰💰💰\n\n{commission}€ prélevés sur {company_clean.upper()}{partial_info}\nClient: {user.email}\nDossier #{case.id}\nType: CASH")
+                                logs.append(f"<p style='margin-left:40px;'>💳 Commission: <b>{commission}€</b> (30% de {commission_base}€)</p>")
                                 
                                 try:
-                                    service.users().messages().modify(userId='me', id=msg_id, body={'removeLabelIds': ['INBOX']}).execute()
-                                except:
-                                    pass
-                                
-                                found_valid_refund = True
-                                break
+                                    payment_methods = stripe.PaymentMethod.list(
+                                        customer=user.stripe_customer_id, 
+                                        type="card"
+                                    )
+                                    
+                                    if payment_methods.data:
+                                        payment_intent = stripe.PaymentIntent.create(
+                                            amount=commission * 100,  # En centimes
+                                            currency='eur',
+                                            customer=user.stripe_customer_id,
+                                            payment_method=payment_methods.data[0].id,
+                                            off_session=True,
+                                            confirm=True,
+                                            description=f"Commission Justicio 30% - {matched_case.company} - Dossier #{dossier_id}"
+                                        )
+                                        
+                                        if payment_intent.status == "succeeded":
+                                            stats["commissions_prelevees"] += 1
+                                            stats["total_commission"] += commission
+                                            
+                                            logs.append(f"<p style='margin-left:40px; color:#10b981; font-weight:bold;'>💰 JACKPOT ! {commission}€ PRÉLEVÉS !</p>")
+                                            
+                                            # Notification Telegram
+                                            send_telegram_notif(
+                                                f"💰💰💰 JUSTICIO JACKPOT 💰💰💰\n\n"
+                                                f"Commission: {commission}€\n"
+                                                f"Entreprise: {matched_case.company}\n"
+                                                f"Montant remboursé: {commission_base}€\n"
+                                                f"Client: {user_email}\n"
+                                                f"Dossier #{dossier_id}\n"
+                                                f"🤖 Matching IA V3"
+                                            )
+                                        else:
+                                            logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Paiement en attente: {payment_intent.status}</p>")
+                                    else:
+                                        logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Aucune carte enregistrée</p>")
+                                        
+                                except stripe.error.CardError as e:
+                                    logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Erreur carte: {e.user_message}</p>")
+                                    stats["erreurs"] += 1
+                                except Exception as e:
+                                    logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Erreur Stripe: {str(e)[:50]}</p>")
+                                    stats["erreurs"] += 1
+                            elif not user.stripe_customer_id:
+                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Pas de carte Stripe enregistrée</p>")
                             else:
-                                logs.append(f"<p style='margin-left:30px; color:#dc2626;'>❌ Paiement non confirmé</p>")
-                        
-                        except stripe.error.CardError as e:
-                            logs.append(f"<p style='margin-left:30px; color:#dc2626;'>❌ Erreur carte : {e.user_message}</p>")
-                        except Exception as e:
-                            logs.append(f"<p style='margin-left:30px; color:#dc2626;'>❌ Erreur : {str(e)[:50]}</p>")
+                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Montant = 0€, pas de commission</p>")
+                        else:
+                            logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Dossier #{dossier_id} introuvable</p>")
+                            stats["erreurs"] += 1
                     
-                    # CAS 2 : VOUCHER → NE PAS DÉBITER
-                    elif type_remboursement == "VOUCHER":
-                        stats["remboursements_voucher"] += 1
-                        
-                        case.status = f"Résolu (Bon d'achat: {montant_reel}€)"
-                        case.updated_at = datetime.utcnow()
-                        db.session.commit()
-                        
-                        logs.append(f"<p style='margin-left:30px; color:#f59e0b; font-weight:bold;'>🎫 BON D'ACHAT - Fermé SANS commission</p>")
-                        
-                        send_telegram_notif(f"🎫 VOUCHER DÉTECTÉ 🎫\n\n{company_clean.upper()} : bon d'achat de {montant_reel}€\nClient: {user.email}\nDossier #{case.id}\n⚠️ PAS DE COMMISSION")
-                        
-                        try:
-                            service.users().messages().modify(userId='me', id=msg_id, body={'removeLabelIds': ['INBOX']}).execute()
-                        except:
-                            pass
-                        
-                        found_valid_refund = True
-                        break
-            
-            if not found_valid_refund:
-                logs.append(f"<p style='margin-left:20px; color:#6b7280;'>ℹ️ Aucun remboursement valide</p>")
-        
+                except Exception as e:
+                    stats["erreurs"] += 1
+                    DEBUG_LOGS.append(f"❌ Erreur email {msg_id[:8]}: {str(e)[:50]}")
+                    continue
+                    
         except Exception as e:
-            logs.append(f"<p style='color:#dc2626;'>❌ Erreur : {str(e)[:80]}</p>")
-            DEBUG_LOGS.append(f"CRON Error {company_clean}: {str(e)}")
+            stats["erreurs"] += 1
+            logs.append(f"<p style='margin-left:20px; color:#dc2626;'>❌ Erreur Gmail: {str(e)[:80]}</p>")
+            DEBUG_LOGS.append(f"CRON Error {user_email}: {str(e)}")
     
-    # RAPPORT FINAL
+    # ════════════════════════════════════════════════════════════════
+    # 📊 RAPPORT FINAL
+    # ════════════════════════════════════════════════════════════════
+    
     logs.append("<hr>")
-    logs.append("<h4>📊 Rapport de l'Encaisseur V2</h4>")
+    logs.append("<h4>📊 Rapport Agent Encaisseur V3 (IA Matching)</h4>")
     logs.append(f"""
     <div style='background:#f8fafc; padding:15px; border-radius:10px; margin:10px 0;'>
-        <p>📂 Dossiers scannés : <b>{stats['dossiers_scannes']}</b></p>
-        <p>🎣 Emails filtrés (non pertinents) : <b>{stats['emails_filtres']}</b></p>
-        <p>💵 Remboursements CASH : <b>{stats['remboursements_cash']}</b></p>
-        <p>🎫 Remboursements VOUCHER : <b>{stats['remboursements_voucher']}</b> (sans commission)</p>
-        <p>📉 Remboursements PARTIELS : <b>{stats['remboursements_partiels']}</b></p>
+        <p>👥 Utilisateurs scannés : <b>{stats['utilisateurs_scannes']}</b></p>
+        <p>📧 Emails analysés par IA : <b>{stats['emails_analyses']}</b></p>
+        <p style='color:#10b981;'>🎯 Matchs IA trouvés : <b>{stats['matchs_ia']}</b></p>
         <p style='color:#3b82f6;'>📝 Montants mis à jour : <b>{stats['montants_mis_a_jour']}</b></p>
-        <p style='color:#8b5cf6;'>🚫 Annulations (sans débit) : <b>{stats['annulations']}</b> (pas de commission)</p>
-        <p style='color:#dc2626;'>⚠️ Rejets SÉCURITÉ : <b>{stats['rejets_securite']}</b> (faux positifs évités)</p>
         <p style='color:#10b981; font-weight:bold;'>💰 Commissions prélevées : <b>{stats['commissions_prelevees']}</b> = <b>{stats['total_commission']}€</b></p>
+        <p style='color:#dc2626;'>❌ Erreurs : <b>{stats['erreurs']}</b></p>
     </div>
     """)
-    
-    if stats['rejets_securite'] > 0:
-        logs.append(f"<p style='color:#f59e0b;'>⚠️ {stats['rejets_securite']} faux positif(s) évité(s) grâce aux validations de sécurité</p>")
     
     logs.append(f"<p>✅ Scan terminé à {datetime.utcnow().strftime('%H:%M:%S')} UTC</p>")
     
     return STYLE + "<br>".join(logs) + "<br><br><a href='/' class='btn-success'>Retour</a>"
 
+
+def ia_matching_dossier(email_subject: str, email_body: str, email_from: str, dossiers: list) -> dict:
+    """
+    🤖 AGENT IA DE MATCHING RELATIONNEL
+    
+    Analyse un email et détermine s'il correspond à l'un des dossiers en cours.
+    L'IA fait le lien MÊME SI le montant ou le nom d'entreprise diffère.
+    
+    Args:
+        email_subject: Sujet de l'email
+        email_body: Corps de l'email (max 2000 chars)
+        email_from: Expéditeur
+        dossiers: Liste des objets Litigation
+    
+    Returns:
+        {"match": bool, "dossier_id": int, "real_amount": float, "reason": str}
+    """
+    
+    if not OPENAI_API_KEY:
+        return {"match": False, "reason": "Pas d'API OpenAI"}
+    
+    # Préparer la liste des dossiers en JSON
+    dossiers_list = []
+    for d in dossiers:
+        montant = extract_numeric_amount(d.amount) if d.amount else 0
+        dossiers_list.append({
+            "id": d.id,
+            "company": d.company,
+            "montant_estime": montant
+        })
+    
+    dossiers_json = json.dumps(dossiers_list, ensure_ascii=False, indent=2)
+    
+    system_prompt = """Tu es un expert en recouvrement et analyse d'emails bancaires/financiers.
+
+🎯 TA MISSION : Déterminer si cet email confirme un REMBOURSEMENT pour l'un des dossiers litiges en cours.
+
+📋 RÈGLES CRITIQUES :
+
+1. MONTANT FLEXIBLE : Le montant du remboursement peut être TRÈS DIFFÉRENT de l'estimation du dossier.
+   - Dossier estimé à 0€ mais remboursement réel de 100€ → C'est un MATCH !
+   - Dossier estimé à 250€ mais remboursement de 150€ → C'est un MATCH (partiel) !
+
+2. NOMS D'ENTREPRISE FLEXIBLES : Fais le lien même si les noms diffèrent :
+   - "SNCF" = "TGV" = "OUIGO" = "Train" = "TER" = "Intercités" = "Trainline"
+   - "Air France" = "AF" = "Transavia" = "HOP"
+   - "EasyJet" = "Easy Jet" = "U2"
+   - "Ryanair" = "FR" = "RYR"
+
+3. IGNORER complètement :
+   - Les newsletters et pubs (Airbnb, Uber Eats, Netflix, etc.)
+   - Les factures à PAYER (ce n'est pas un remboursement)
+   - Les simples accusés de réception sans montant
+   - Les emails marketing
+
+4. EMAIL DE TEST : Si le sujet contient "test" ou "TEST" et mentionne un montant, c'est un MATCH avec le premier dossier disponible.
+
+5. EXTRAIRE LE MONTANT RÉEL : Cherche le montant exact dans l'email (ex: "250,00 €", "150€", "100.00 EUR").
+
+📤 RÉPONSE JSON OBLIGATOIRE :
+- Si MATCH : {"match": true, "dossier_id": 123, "real_amount": 250.0, "reason": "Virement SNCF de 250€ confirmé"}
+- Si PAS DE MATCH : {"match": false, "reason": "Newsletter Airbnb, pas de remboursement"}"""
+
+    user_prompt = f"""📧 EMAIL À ANALYSER :
+
+EXPÉDITEUR: {email_from}
+SUJET: {email_subject}
+CONTENU:
+{email_body[:1500]}
+
+📂 DOSSIERS LITIGES EN COURS :
+{dossiers_json}
+
+❓ Cet email confirme-t-il un remboursement pour l'un de ces dossiers ?
+
+Réponds UNIQUEMENT en JSON valide."""
+
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.1,
+            max_tokens=300
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Nettoyer le JSON
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(content)
+        
+        # Log pour debug
+        match_status = "✅ MATCH" if result.get("match") else "❌ No match"
+        DEBUG_LOGS.append(f"🤖 IA: {email_subject[:25]}... → {match_status}")
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        DEBUG_LOGS.append(f"❌ IA JSON error: {str(e)[:30]}")
+        return {"match": False, "reason": f"Erreur JSON: {str(e)[:30]}"}
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ IA error: {str(e)[:50]}")
+        return {"match": False, "reason": f"Erreur IA: {str(e)[:30]}"}
 
 def analyze_refund_email(company, expected_amount, subject, snippet, email_from, case_order_id=None):
     """
