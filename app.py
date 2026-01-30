@@ -7354,23 +7354,83 @@ def check_refunds():
                     body_text = snippet
                 
                 # ════════════════════════════════════════════════════════════════
-                # 🔍 FILTRAGE PYTHON INTELLIGENT
+                # 🔱 GOD MODE - SELF-TEST OVERRIDE
+                # Si l'email vient de l'utilisateur lui-même, on force l'acceptation
+                # ════════════════════════════════════════════════════════════════
+                
+                user_email_lower = case.user_email.lower() if case.user_email else ""
+                email_from_lower = email_from.lower()
+                
+                # Détecter si c'est un self-test (email envoyé par l'utilisateur à lui-même)
+                is_self_test = False
+                if user_email_lower and (
+                    user_email_lower in email_from_lower or
+                    "me" in email_from_lower.split() or
+                    "moi" in email_from_lower.split() or
+                    email_from_lower.startswith(user_email_lower.split("@")[0])
+                ):
+                    is_self_test = True
+                
+                # GOD MODE activé si self-test OU si sujet contient "TEST" OU "GODMODE"
+                god_mode = is_self_test or "godmode" in email_subject.lower() or "[test]" in email_subject.lower()
+                
+                if god_mode:
+                    print(f"🔱 GOD MODE ACTIVÉ pour: {email_subject[:50]}")
+                    logs.append(f"<p style='margin-left:30px; color:#f59e0b; font-weight:bold;'>🔱 GOD MODE ACTIVÉ - Self-test détecté</p>")
+                    
+                    # En GOD MODE, on extrait le montant directement par regex avant l'IA
+                    montant_regex = extract_amount_from_text(f"{email_subject} {snippet} {body_text}")
+                    
+                    if montant_regex and montant_regex > 0:
+                        logs.append(f"<p style='margin-left:40px; color:#10b981;'>💰 Montant extrait (regex): <b>{montant_regex}€</b></p>")
+                        
+                        # Mettre à jour le dossier directement
+                        old_amount = case.amount
+                        case.amount = f"{montant_regex}€"
+                        case.status = "Remboursé (Test)"
+                        case.updated_at = datetime.utcnow()
+                        db.session.commit()
+                        
+                        stats["montants_mis_a_jour"] += 1
+                        logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 MONTANT MIS À JOUR : {old_amount} → {montant_regex}€</p>")
+                        
+                        # Calculer la commission (30%)
+                        commission = max(1, int(montant_regex * 0.30))
+                        logs.append(f"<p style='margin-left:40px; color:#10b981;'>💵 Commission théorique: <b>{commission}€</b> (30% de {montant_regex}€)</p>")
+                        
+                        # Marquer l'email comme utilisé
+                        used_email_ids.add(msg_id)
+                        
+                        # Notification
+                        send_telegram_notif(f"🔱 GOD MODE TEST 🔱\n\n{company_clean.upper()}: {montant_regex}€\nCommission: {commission}€\nClient: {user.email}\nDossier #{case.id}\n⚠️ MODE TEST - Pas de prélèvement réel")
+                        
+                        logs.append(f"<p style='margin-left:30px; color:#f59e0b; font-weight:bold;'>✅ DOSSIER FERMÉ EN MODE TEST (pas de prélèvement Stripe)</p>")
+                        
+                        found_valid_refund = True
+                        break
+                    else:
+                        logs.append(f"<p style='margin-left:40px; color:#dc2626;'>⚠️ Aucun montant trouvé dans l'email - Passage à l'IA</p>")
+                        # Continuer vers l'analyse IA normale
+                
+                # ════════════════════════════════════════════════════════════════
+                # 🔍 FILTRAGE PYTHON INTELLIGENT (si pas en GOD MODE)
                 # Vérifier si l'email correspond à cette entreprise
                 # ════════════════════════════════════════════════════════════════
                 
-                email_blob = f"{email_subject} {snippet} {body_text} {email_from}".lower()
-                
-                # Accepter si :
-                # 1. Le nom de l'entreprise (ou variante) est dans l'email
-                # 2. OU c'est un email de TEST (pour les tests admin)
-                # 3. OU l'email vient d'un admin connu
-                is_company_match = any(variant in email_blob for variant in company_variants)
-                is_test_email = "test" in email_subject.lower() or "test" in email_from.lower()
-                is_admin_email = any(admin in email_from.lower() for admin in ["admin@", "theodor", "justicio"])
-                
-                if not is_company_match and not is_test_email and not is_admin_email:
-                    stats["emails_filtres"] += 1
-                    continue  # Pas le bon email, passer au suivant
+                if not god_mode:
+                    email_blob = f"{email_subject} {snippet} {body_text} {email_from}".lower()
+                    
+                    # Accepter si :
+                    # 1. Le nom de l'entreprise (ou variante) est dans l'email
+                    # 2. OU c'est un email de TEST (pour les tests admin)
+                    # 3. OU l'email vient d'un admin connu
+                    is_company_match = any(variant in email_blob for variant in company_variants)
+                    is_test_email = "test" in email_subject.lower() or "test" in email_from.lower()
+                    is_admin_email = any(admin in email_from.lower() for admin in ["admin@", "theodor", "justicio"])
+                    
+                    if not is_company_match and not is_test_email and not is_admin_email:
+                        stats["emails_filtres"] += 1
+                        continue  # Pas le bon email, passer au suivant
                 
                 if "MISE EN DEMEURE" in email_subject.upper():
                     continue
@@ -7378,8 +7438,8 @@ def check_refunds():
                 logs.append(f"<p style='margin-left:30px;'>📩 <b>{email_subject[:60]}...</b></p>")
                 logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>De: {email_from[:40]} | {email_date[:20]}</p>")
                 
-                if is_test_email or is_admin_email:
-                    logs.append(f"<p style='margin-left:40px; color:#8b5cf6; font-size:0.85rem;'>🧪 Mode TEST accepté</p>")
+                if god_mode:
+                    logs.append(f"<p style='margin-left:40px; color:#f59e0b; font-size:0.85rem;'>🔱 GOD MODE - Analyse IA forcée</p>")
                 
                 if not OPENAI_API_KEY:
                     logs.append("<p style='margin-left:30px; color:#dc2626;'>❌ Pas d'API OpenAI</p>")
@@ -7404,6 +7464,13 @@ def check_refunds():
                 is_cancelled = verdict_result.get("is_cancelled", False)
                 confidence = verdict_result.get("confidence", "LOW")
                 raison = verdict_result.get("raison", "")
+                
+                # 🔱 GOD MODE OVERRIDE : Si pas de verdict positif mais GOD MODE actif, forcer OUI
+                if god_mode and verdict != "OUI" and montant_reel > 0:
+                    logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>🔱 GOD MODE: Verdict forcé OUI (était {verdict})</p>")
+                    verdict = "OUI"
+                    type_remboursement = "CASH"
+                    confidence = "HIGH"
                 
                 logs.append(f"<p style='margin-left:30px;'>🤖 Verdict: <b>{verdict}</b> | Montant: <b>{montant_reel}€</b> | Type: <b>{type_remboursement}</b> | Partiel: <b>{'OUI' if is_partial else 'NON'}</b> | Confiance: <b>{confidence}</b></p>")
                 if order_id_found:
