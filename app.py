@@ -7179,6 +7179,49 @@ Cordialement,
 SCAN_TOKEN = os.environ.get("SCAN_TOKEN")
 
 
+def generate_company_variants(company_name: str) -> list:
+    """
+    🔍 Génère les variantes possibles d'un nom d'entreprise pour le filtrage.
+    Ex: "Air France" → ["air france", "airfrance", "air-france", "af", "air france klm"]
+    """
+    company_lower = company_name.strip().lower()
+    variants = [company_lower]
+    
+    # Sans espaces
+    variants.append(company_lower.replace(" ", ""))
+    
+    # Avec tirets
+    variants.append(company_lower.replace(" ", "-"))
+    
+    # Acronymes connus
+    COMPANY_ACRONYMS = {
+        "air france": ["af", "air france klm"],
+        "sncf": ["ter", "tgv", "ouigo", "inoui", "intercités"],
+        "british airways": ["ba"],
+        "klm": ["klm royal dutch"],
+        "lufthansa": ["lh"],
+        "easy jet": ["easyjet"],
+        "easyjet": ["easy jet"],
+        "ryanair": ["ryr", "fr"],
+        "transavia": ["to", "hv"],
+    }
+    
+    if company_lower in COMPANY_ACRONYMS:
+        variants.extend(COMPANY_ACRONYMS[company_lower])
+    
+    # Chercher si c'est un acronyme inverse
+    for full_name, acronyms in COMPANY_ACRONYMS.items():
+        if company_lower in acronyms:
+            variants.append(full_name)
+    
+    # Mots individuels (si plus de 1 mot)
+    words = company_lower.split()
+    if len(words) > 1:
+        variants.extend(words)
+    
+    return list(set(variants))  # Dédupliquer
+
+
 @app.route("/cron/check-refunds")
 def check_refunds():
     """
@@ -7189,6 +7232,8 @@ def check_refunds():
     1. Remboursement PARTIEL → Accepter et facturer sur le montant réel
     2. Bon d'achat/Avoir → Fermer le dossier SANS facturer
     3. Remboursement IMPLICITE → Utiliser le montant du dossier
+    
+    V2: Query Gmail "Grand Filet" + Filtrage Python intelligent
     """
     
     # Vérification du token de sécurité
@@ -7196,7 +7241,7 @@ def check_refunds():
     if SCAN_TOKEN and token != SCAN_TOKEN:
         return "⛔ Accès refusé - Token invalide", 403
     
-    logs = ["<h3>💰 AGENT ENCAISSEUR ACTIF</h3>"]
+    logs = ["<h3>💰 AGENT ENCAISSEUR V2 - GRAND FILET</h3>"]
     logs.append(f"<p>🕐 Scan lancé à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>")
     
     # Statistiques
@@ -7205,18 +7250,16 @@ def check_refunds():
         "remboursements_cash": 0,
         "remboursements_voucher": 0,
         "remboursements_partiels": 0,
-        "annulations": 0,  # Annulations sans débit
+        "annulations": 0,
         "commissions_prelevees": 0,
         "total_commission": 0,
-        "rejets_securite": 0
+        "rejets_securite": 0,
+        "emails_filtres": 0,  # Emails non pertinents filtrés
+        "montants_mis_a_jour": 0  # Montants corrigés en BDD
     }
     
     # ════════════════════════════════════════════════════════════════
     # FILTRE ÉLARGI : Surveiller TOUS les dossiers actifs
-    # - "En attente de remboursement" : Dossiers SCAN classiques
-    # - "En cours juridique" : Mise en demeure envoyée (Agent Avocat)
-    # - "En cours" / "Envoyé" : Anciens statuts de compatibilité
-    # - "En attente d'analyse" : Dossiers manuels en cours
     # ════════════════════════════════════════════════════════════════
     
     STATUTS_ACTIFS = [
@@ -7242,9 +7285,11 @@ def check_refunds():
         stats["dossiers_scannes"] += 1
         
         company_clean = case.company.strip().lower()
+        company_variants = generate_company_variants(company_clean)  # Variantes du nom
         expected_amount = extract_numeric_amount(case.amount)
         
         logs.append(f"<hr>📂 <b>{company_clean.upper()}</b> - {case.amount} (attendu: {expected_amount}€)")
+        logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>Variantes recherchées: {', '.join(company_variants[:5])}...</p>")
         
         user = User.query.filter_by(email=case.user_email).first()
         if not user or not user.refresh_token:
@@ -7259,18 +7304,31 @@ def check_refunds():
             creds = get_refreshed_credentials(user.refresh_token)
             service = build('gmail', 'v1', credentials=creds)
             
-            # QUERY COMPLÈTE - Remboursements, bons d'achat, ET annulations
-            query = f'"{company_clean}" (remboursement OR refund OR virement OR "a été crédité" OR "has been refunded" OR "montant remboursé" OR "votre compte a été crédité" OR "remboursement effectué" OR "refund processed" OR "bon d\'achat" OR "avoir" OR "voucher" OR "carte cadeau" OR "gift card" OR "crédit boutique" OR "store credit" OR "code promo" OR "geste commercial" OR annulation OR annulée OR cancelled OR canceled OR voided OR "commande annulée" OR "order cancelled" OR "ne sera pas débité" OR "will not be charged") -subject:"MISE EN DEMEURE"'
+            # ════════════════════════════════════════════════════════════════
+            # 🎣 QUERY "GRAND FILET" - Sans le nom d'entreprise !
+            # Cherche TOUS les emails financiers sur 30 jours
+            # ════════════════════════════════════════════════════════════════
+            query = '''(
+                subject:virement OR subject:remboursement OR subject:refund 
+                OR subject:indemnisation OR subject:compensation OR subject:crédit
+                OR "avis de virement" OR "compte crédité" OR "has been refunded"
+                OR "remboursement effectué" OR "votre compte a été crédité"
+                OR "montant remboursé" OR "refund processed" OR "payment received"
+                OR "bon d'achat" OR "avoir" OR "voucher" OR "geste commercial"
+                OR "code promo" OR "crédit boutique"
+                OR "annulation" OR "annulée" OR "cancelled" OR "commande annulée"
+                OR subject:TEST
+            ) newer_than:30d -subject:"MISE EN DEMEURE"'''
             
-            logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🔍 Query: <code>{query[:100]}...</code></p>")
+            logs.append(f"<p style='margin-left:20px; color:#6b7280; font-size:0.85rem;'>🎣 Query GRAND FILET (30 jours, sans entreprise)</p>")
             
-            results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
+            results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
             messages = results.get('messages', [])
             
-            logs.append(f"<p style='margin-left:20px;'>📧 <b>{len(messages)}</b> email(s) trouvé(s)</p>")
+            logs.append(f"<p style='margin-left:20px;'>📧 <b>{len(messages)}</b> email(s) financiers trouvés</p>")
             
             if len(messages) == 0:
-                logs.append("<p style='margin-left:20px; color:#f59e0b;'>⚠️ Aucun email détecté</p>")
+                logs.append("<p style='margin-left:20px; color:#f59e0b;'>⚠️ Aucun email financier détecté</p>")
                 continue
             
             found_valid_refund = False
@@ -7279,7 +7337,6 @@ def check_refunds():
                 msg_id = msg['id']
                 
                 if msg_id in used_email_ids:
-                    logs.append(f"<p style='margin-left:30px; color:#f59e0b;'>⏭️ Email déjà utilisé - SKIP</p>")
                     continue
                 
                 msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
@@ -7290,24 +7347,52 @@ def check_refunds():
                 email_subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "Sans sujet")
                 email_from = next((h['value'] for h in headers if h['name'].lower() == 'from'), "")
                 
+                # Extraire le body pour analyse
+                try:
+                    body_text = safe_extract_body_text(msg_data)
+                except:
+                    body_text = snippet
+                
+                # ════════════════════════════════════════════════════════════════
+                # 🔍 FILTRAGE PYTHON INTELLIGENT
+                # Vérifier si l'email correspond à cette entreprise
+                # ════════════════════════════════════════════════════════════════
+                
+                email_blob = f"{email_subject} {snippet} {body_text} {email_from}".lower()
+                
+                # Accepter si :
+                # 1. Le nom de l'entreprise (ou variante) est dans l'email
+                # 2. OU c'est un email de TEST (pour les tests admin)
+                # 3. OU l'email vient d'un admin connu
+                is_company_match = any(variant in email_blob for variant in company_variants)
+                is_test_email = "test" in email_subject.lower() or "test" in email_from.lower()
+                is_admin_email = any(admin in email_from.lower() for admin in ["admin@", "theodor", "justicio"])
+                
+                if not is_company_match and not is_test_email and not is_admin_email:
+                    stats["emails_filtres"] += 1
+                    continue  # Pas le bon email, passer au suivant
+                
                 if "MISE EN DEMEURE" in email_subject.upper():
                     continue
                 
                 logs.append(f"<p style='margin-left:30px;'>📩 <b>{email_subject[:60]}...</b></p>")
                 logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>De: {email_from[:40]} | {email_date[:20]}</p>")
                 
+                if is_test_email or is_admin_email:
+                    logs.append(f"<p style='margin-left:40px; color:#8b5cf6; font-size:0.85rem;'>🧪 Mode TEST accepté</p>")
+                
                 if not OPENAI_API_KEY:
                     logs.append("<p style='margin-left:30px; color:#dc2626;'>❌ Pas d'API OpenAI</p>")
                     continue
                 
-                # ANALYSE IA SÉCURISÉE - Extrait maintenant numéro de commande et confiance
+                # ANALYSE IA SÉCURISÉE
                 verdict_result = analyze_refund_email(
                     company_clean, 
                     expected_amount, 
                     email_subject, 
                     snippet, 
                     email_from,
-                    case_order_id=getattr(case, 'order_id', None)  # Numéro de commande du dossier si disponible
+                    case_order_id=getattr(case, 'order_id', None)
                 )
                 
                 verdict = verdict_result.get("verdict", "NON")
@@ -7316,7 +7401,7 @@ def check_refunds():
                 order_id_found = verdict_result.get("order_id", None)
                 is_credit = verdict_result.get("is_credit", True)
                 is_partial = verdict_result.get("is_partial", False)
-                is_cancelled = verdict_result.get("is_cancelled", False)  # Nouveau champ
+                is_cancelled = verdict_result.get("is_cancelled", False)
                 confidence = verdict_result.get("confidence", "LOW")
                 raison = verdict_result.get("raison", "")
                 
@@ -7326,6 +7411,19 @@ def check_refunds():
                 if raison:
                     logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {raison[:100]}</p>")
                 
+                # ════════════════════════════════════════════════════════════════
+                # 💾 MISE À JOUR DU MONTANT EN BDD (si différent)
+                # ════════════════════════════════════════════════════════════════
+                
+                if verdict == "OUI" and montant_reel > 0 and montant_reel != expected_amount:
+                    old_amount = case.amount
+                    case.amount = f"{montant_reel}€"
+                    db.session.commit()
+                    stats["montants_mis_a_jour"] += 1
+                    logs.append(f"<p style='margin-left:30px; color:#3b82f6;'>📝 MONTANT MIS À JOUR : {old_amount} → {montant_reel}€</p>")
+                    # Recalculer expected_amount pour la suite
+                    expected_amount = montant_reel
+                
                 # ═══════════════════════════════════════════════════════════
                 # 🚫 CAS SPÉCIAL : ANNULATION SANS DÉBIT
                 # ═══════════════════════════════════════════════════════════
@@ -7334,18 +7432,15 @@ def check_refunds():
                     logs.append(f"<p style='margin-left:30px; color:#8b5cf6;'>🚫 ANNULATION DÉTECTÉE : Commande annulée sans débit</p>")
                     logs.append(f"<p style='margin-left:40px; color:#8b5cf6; font-size:0.85rem;'>→ Aucune transaction financière - Pas de commission à prélever</p>")
                     
-                    # Marquer l'email comme utilisé pour ne pas le retraiter
                     used_email_ids.add(msg_id)
                     stats["annulations"] += 1
                     
-                    # Fermer le dossier sans commission
                     case.status = "Annulé (sans débit)"
                     case.updated_at = datetime.utcnow()
                     db.session.commit()
                     
                     logs.append(f"<p style='margin-left:30px; color:#8b5cf6; font-weight:bold;'>✅ Dossier fermé - Annulation confirmée</p>")
                     
-                    # Notification Telegram
                     send_telegram_notif(f"🚫 ANNULATION DÉTECTÉE 🚫\n\n{company_clean.upper()} : Commande annulée sans débit\nClient: {user.email}\nDossier #{case.id}\n⚠️ PAS DE COMMISSION (0€)")
                     
                     found_valid_refund = True
@@ -7503,13 +7598,15 @@ def check_refunds():
     
     # RAPPORT FINAL
     logs.append("<hr>")
-    logs.append("<h4>📊 Rapport de l'Encaisseur</h4>")
+    logs.append("<h4>📊 Rapport de l'Encaisseur V2</h4>")
     logs.append(f"""
     <div style='background:#f8fafc; padding:15px; border-radius:10px; margin:10px 0;'>
         <p>📂 Dossiers scannés : <b>{stats['dossiers_scannes']}</b></p>
+        <p>🎣 Emails filtrés (non pertinents) : <b>{stats['emails_filtres']}</b></p>
         <p>💵 Remboursements CASH : <b>{stats['remboursements_cash']}</b></p>
         <p>🎫 Remboursements VOUCHER : <b>{stats['remboursements_voucher']}</b> (sans commission)</p>
         <p>📉 Remboursements PARTIELS : <b>{stats['remboursements_partiels']}</b></p>
+        <p style='color:#3b82f6;'>📝 Montants mis à jour : <b>{stats['montants_mis_a_jour']}</b></p>
         <p style='color:#8b5cf6;'>🚫 Annulations (sans débit) : <b>{stats['annulations']}</b> (pas de commission)</p>
         <p style='color:#dc2626;'>⚠️ Rejets SÉCURITÉ : <b>{stats['rejets_securite']}</b> (faux positifs évités)</p>
         <p style='color:#10b981; font-weight:bold;'>💰 Commissions prélevées : <b>{stats['commissions_prelevees']}</b> = <b>{stats['total_commission']}€</b></p>
