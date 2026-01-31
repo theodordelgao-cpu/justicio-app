@@ -5020,14 +5020,32 @@ def scan_all():
     # 🎨 Générer l'interface résultat TRANSPORT - DESIGN V2 "TICKET DE VOL"
     # ════════════════════════════════════════════════════════════════
     
+    # ════════════════════════════════════════════════════════════════
+    # 🎨 Générer les cartes HTML (base légale dynamique + UI plus propre)
+    # - Proof tronqué à 80 caractères (évite les descriptions brutes)
+    # - TRAIN vs AVION : correction automatique des règlements affichés
+    # ════════════════════════════════════════════════════════════════
+    def _truncate_ui(txt: str, max_len: int = 80) -> str:
+        txt = (txt or "").strip()
+        if len(txt) <= max_len:
+            return txt
+        return txt[: max_len - 3].rstrip() + "..."
+
     html_cards = ""
     for i, lit in enumerate(detected_litigations):
         company = lit.get('company', 'Transporteur')
         amount_display = lit.get('amount', 'À compléter')
         amount_editable = not is_valid_euro_amount(amount_display)
-        proof = lit.get('proof', '')[:120]
-        law = lit.get('law', 'Règlement UE 261/2004')
-        
+
+        proof_raw = (lit.get('proof') or "").strip()
+        proof_display = _truncate_ui(proof_raw, 80)
+        if not proof_display:
+            proof_display = "Motif à préciser"
+
+        # Base légale proposée par l'IA (fallback), mais on override pour TRAIN/AVION (fiabilité)
+        law_ai = (lit.get('law') or "").strip()
+        law = law_ai if law_ai else "Base légale à confirmer"
+
         # Déterminer l'icône selon le type de transport
         company_lower = company.lower()
         if any(x in company_lower for x in ['sncf', 'tgv', 'ouigo', 'eurostar', 'thalys', 'train', 'ter', 'inoui']):
@@ -5038,7 +5056,17 @@ def scan_all():
             transport_type = "VTC"
         else:
             transport_icon = "✈️"
-            transport_type = "VOL"
+            transport_type = "AVION"
+        
+        # ✅ Footer juridique dynamique (corrige TRAIN vs AVION)
+        if transport_type == "AVION":
+            law = "Règlement CE 261/2004"
+            footer_text = "💡 Selon le Règlement CE 261/2004 (Retard/Annulation)."
+        elif transport_type == "TRAIN":
+            law = "Règlement UE 2021/782"
+            footer_text = "💡 Selon le Règlement UE 2021/782 (Garantie G30/Retard)."
+        else:
+            footer_text = "💡 Montant estimé selon les conditions du transport."
         
         # Montant : input si éditable, sinon affichage
         if amount_editable:
@@ -5096,7 +5124,7 @@ def scan_all():
                         📝 Motif du litige
                     </div>
                     <p style='color:#334155; font-size:0.95rem; font-style:italic; margin:0; line-height:1.5;'>
-                        "{proof}..."
+                        "{proof_display}"
                     </p>
                 </div>
                 
@@ -5114,7 +5142,7 @@ def scan_all():
             <!-- FOOTER : Explication -->
             <div style='padding:12px 25px; background:#f1f5f9; border-top:1px solid #e2e8f0;'>
                 <p style='margin:0; color:#94a3b8; font-size:0.75rem; text-align:center;'>
-                    💡 Montant estimé selon la durée du retard et la distance parcourue (Règlement CE 261/2004)
+                    {footer_text}
                 </p>
             </div>
             
