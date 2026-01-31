@@ -7256,6 +7256,14 @@ def check_refunds():
         "montants_mis_a_jour": 0,
         "erreurs": 0
     }
+
+
+    # ════════════════════════════════════════════════════════════════
+    # 🔒 ANTI-DOUBLON (RUN) : Empêche plusieurs prélèvements sur le même dossier
+    # - Si l'IA matche 3 emails sur le même dossier dans ce même Cron → 1 seule action
+    # - On marque le dossier comme "traité" dès la 1ère fois (mémoire + session SQLAlchemy)
+    # ════════════════════════════════════════════════════════════════
+    processed_case_ids = set()
     
     # ════════════════════════════════════════════════════════════════
     # ÉTAPE 1 : Récupérer tous les utilisateurs avec des dossiers actifs
@@ -7405,42 +7413,76 @@ def check_refunds():
                         # Récupérer le dossier
                         matched_case = Litigation.query.get(dossier_id)
                         if matched_case and matched_case.user_email == user_email:
-                            
+
+                            # ════════════════════════════════════════════════════════════════
+                            # 🔒 ANTI-DOUBLON (STATUT + RUN)
+                            # ════════════════════════════════════════════════════════════════
+
+                            # Protection "boucle rapide" : même dossier matché plusieurs fois dans ce Cron
+                            if dossier_id in processed_case_ids:
+                                logs.append(f"<p style='margin-left:40px; color:#6b7280;'>🔒 Dossier #{dossier_id} déjà traité dans ce Cron - email ignoré</p>")
+                                continue
+
+                            current_status = (matched_case.status or "").strip().lower()
+                            is_already_refunded = current_status.startswith("rembours") or current_status == "refunded"
+
+                            # Montants (en € entiers, cohérent avec extract_numeric_amount)
+                            current_amount = extract_numeric_amount(matched_case.amount) if matched_case.amount else 0
+                            new_amount = int(real_amount) if real_amount else 0
+
+                            # Si déjà remboursé : on empêche tout prélèvement multiple
+                            if is_already_refunded:
+                                if new_amount > 0 and new_amount > current_amount:
+                                    # Complément détecté : on met à jour le montant, mais on ne prélève pas à nouveau (safe mode)
+                                    old_amount_str = matched_case.amount
+                                    matched_case.amount = f"{new_amount}€"
+                                    matched_case.updated_at = datetime.utcnow()
+                                    db.session.commit()
+
+                                    stats["montants_mis_a_jour"] += 1
+                                    logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Complément détecté sur dossier #{dossier_id}: {old_amount_str} → {new_amount}€ (pas de commission supplémentaire)</p>")
+                                else:
+                                    logs.append(f"<p style='margin-left:40px; color:#6b7280;'>🔒 Dossier #{dossier_id} déjà remboursé (montant actuel: {current_amount}€) - email ignoré</p>")
+
+                                processed_case_ids.add(dossier_id)
+                                continue
+
                             # ════════════════════════════════════════════════════════════════
                             # 💾 MISE À JOUR DU MONTANT RÉEL EN BDD (CRUCIAL)
                             # ════════════════════════════════════════════════════════════════
-                            
+
                             old_amount = matched_case.amount
-                            old_amount_num = extract_numeric_amount(old_amount) if old_amount else 0
-                            
-                            if real_amount > 0:
-                                matched_case.amount = f"{real_amount}€"
+                            old_amount_num = current_amount
+
+                            if new_amount > 0:
+                                matched_case.amount = f"{new_amount}€"
                                 stats["montants_mis_a_jour"] += 1
-                                logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Montant mis à jour: {old_amount} → {real_amount}€</p>")
-                            
-                            # Mise à jour du statut → REFUNDED
+                                logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Montant mis à jour: {old_amount} → {new_amount}€</p>")
+
+                            # ✅ Marquer comme remboursé IMMÉDIATEMENT (mémoire + BDD) pour bloquer les doublons
                             matched_case.status = "Remboursé"
                             matched_case.updated_at = datetime.utcnow()
+                            processed_case_ids.add(dossier_id)
                             db.session.commit()
-                            
+
                             # ════════════════════════════════════════════════════════════════
                             # 💳 PRÉLÈVEMENT COMMISSION STRIPE (30%)
                             # ════════════════════════════════════════════════════════════════
-                            
-                            # Utiliser le montant RÉEL trouvé par l'IA
-                            commission_base = real_amount if real_amount > 0 else old_amount_num
-                            
+
+                            # Utiliser le montant RÉEL trouvé par l'IA (sinon fallback sur ancien montant)
+                            commission_base = new_amount if new_amount > 0 else old_amount_num
+
                             if commission_base > 0 and user.stripe_customer_id:
                                 commission = max(1, int(commission_base * 0.30))  # 30%, minimum 1€
-                                
+
                                 logs.append(f"<p style='margin-left:40px;'>💳 Commission: <b>{commission}€</b> (30% de {commission_base}€)</p>")
-                                
+
                                 try:
                                     payment_methods = stripe.PaymentMethod.list(
                                         customer=user.stripe_customer_id, 
                                         type="card"
                                     )
-                                    
+
                                     if payment_methods.data:
                                         payment_intent = stripe.PaymentIntent.create(
                                             amount=commission * 100,  # En centimes
@@ -7451,13 +7493,13 @@ def check_refunds():
                                             confirm=True,
                                             description=f"Commission Justicio 30% - {matched_case.company} - Dossier #{dossier_id}"
                                         )
-                                        
+
                                         if payment_intent.status == "succeeded":
                                             stats["commissions_prelevees"] += 1
                                             stats["total_commission"] += commission
-                                            
+
                                             logs.append(f"<p style='margin-left:40px; color:#10b981; font-weight:bold;'>💰 JACKPOT ! {commission}€ PRÉLEVÉS !</p>")
-                                            
+
                                             # Notification Telegram
                                             send_telegram_notif(
                                                 f"💰💰💰 JUSTICIO JACKPOT 💰💰💰\n\n"
@@ -7472,7 +7514,7 @@ def check_refunds():
                                             logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Paiement en attente: {payment_intent.status}</p>")
                                     else:
                                         logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Aucune carte enregistrée</p>")
-                                        
+
                                 except stripe.error.CardError as e:
                                     logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Erreur carte: {e.user_message}</p>")
                                     stats["erreurs"] += 1
