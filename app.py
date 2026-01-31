@@ -764,7 +764,7 @@ def process_pending_litigations(user, litigations_data):
         
         if send_result["success"]:
             # Succès !
-            new_lit.status = "En attente de réponse"
+            new_lit.status = "En attente de remboursement"  # Statut surveillé par le Cron
             new_lit.legal_notice_sent = True
             new_lit.legal_notice_date = datetime.now()
             new_lit.legal_notice_message_id = send_result["message_id"]
@@ -7263,10 +7263,12 @@ def check_refunds():
     
     STATUTS_ACTIFS = [
         "En attente de remboursement",
+        "En attente de réponse",  # Après envoi mise en demeure
         "En cours juridique", 
         "En cours",
         "Envoyé",
         "En attente d'analyse",
+        "En traitement",
         "Détecté",
         "sent",
         "pending",
