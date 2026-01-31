@@ -7254,16 +7254,17 @@ def generate_company_variants(company_name: str) -> list:
 @app.route("/cron/check-refunds")
 def check_refunds():
     """
-    💰 AGENT ENCAISSEUR V3 - MATCHING IA RELATIONNEL
+    💰 AGENT ENCAISSEUR V4 - SÉCURISÉ ANTI-DOUBLONS
     
-    Architecture révolutionnaire :
-    1. FILET LARGE : Récupère TOUS les emails financiers (30 jours)
-    2. CERVEAU IA : Pour chaque email, demande à GPT de faire le matching avec les dossiers
-    3. ACTION : Si match → Update BDD avec montant RÉEL + Commission Stripe
+    🛡️ 3 RÈGLES D'OR IMPLÉMENTÉES :
+    1. RÈGLE D'UNICITÉ : Un dossier "Remboursé" ne peut PLUS être prélevé
+    2. RÈGLE BATCH : Un dossier ne peut être traité qu'UNE FOIS par exécution
+    3. RÈGLE DE LIAISON STRICTE : L'IA doit matcher l'entreprise exactement
     
-    L'IA fait le lien même si:
-    - Le montant est différent (estimation 0€ vs remboursement réel 100€)
-    - Le nom d'entreprise est écrit différemment (SNCF = TGV = Train)
+    Architecture :
+    1. FILET LARGE : Récupère les emails financiers (7 jours seulement)
+    2. CERVEAU IA STRICT : Matching entreprise obligatoire
+    3. ACTION SÉCURISÉE : Vérifications multiples avant prélèvement
     """
     
     # Vérification du token de sécurité
@@ -7271,35 +7272,37 @@ def check_refunds():
     if SCAN_TOKEN and token != SCAN_TOKEN:
         return "⛔ Accès refusé - Token invalide", 403
     
-    logs = ["<h3>💰 AGENT ENCAISSEUR V3 - MATCHING IA</h3>"]
+    logs = ["<h3>💰 AGENT ENCAISSEUR V4 - SÉCURISÉ</h3>"]
     logs.append(f"<p>🕐 Scan lancé à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>")
+    logs.append("<p style='color:#f59e0b;'>🛡️ Mode sécurisé : Anti-doublons activé</p>")
     
     # Statistiques
     stats = {
         "utilisateurs_scannes": 0,
         "emails_analyses": 0,
         "matchs_ia": 0,
+        "matchs_bloques_doublon": 0,  # NOUVEAU : Compteur anti-doublon
+        "matchs_bloques_entreprise": 0,  # NOUVEAU : Compteur liaison stricte
         "commissions_prelevees": 0,
         "total_commission": 0,
         "montants_mis_a_jour": 0,
         "erreurs": 0
     }
 
-
     # ════════════════════════════════════════════════════════════════
-    # 🔒 ANTI-DOUBLON (RUN) : Empêche plusieurs prélèvements sur le même dossier
-    # - Si l'IA matche 3 emails sur le même dossier dans ce même Cron → 1 seule action
-    # - On marque le dossier comme "traité" dès la 1ère fois (mémoire + session SQLAlchemy)
+    # 🛡️ RÈGLE 2 : PROTECTION BATCH
+    # Un dossier ne peut être traité qu'UNE FOIS par exécution du Cron
     # ════════════════════════════════════════════════════════════════
-    processed_case_ids = set()
+    processed_case_ids_this_run = set()
     
     # ════════════════════════════════════════════════════════════════
-    # ÉTAPE 1 : Récupérer tous les utilisateurs avec des dossiers actifs
+    # STATUTS QUI PERMETTENT UN PRÉLÈVEMENT
+    # "Remboursé" n'est PAS dans cette liste !
     # ════════════════════════════════════════════════════════════════
     
     STATUTS_ACTIFS = [
         "En attente de remboursement",
-        "En attente de réponse",  # Après envoi mise en demeure
+        "En attente de réponse",
         "En cours juridique", 
         "En cours",
         "Envoyé",
@@ -7312,7 +7315,7 @@ def check_refunds():
         "processing"
     ]
     
-    # Récupérer tous les dossiers actifs
+    # Récupérer UNIQUEMENT les dossiers NON remboursés
     active_cases = Litigation.query.filter(
         Litigation.status.in_(STATUTS_ACTIFS)
     ).all()
@@ -7325,35 +7328,43 @@ def check_refunds():
         users_cases[case.user_email].append(case)
     
     logs.append(f"<p>👥 {len(users_cases)} utilisateur(s) avec dossiers actifs</p>")
-    logs.append(f"<p>📂 {len(active_cases)} dossier(s) total à surveiller</p>")
+    logs.append(f"<p>📂 {len(active_cases)} dossier(s) NON remboursés à surveiller</p>")
     
-    # Liste des expéditeurs à ignorer (newsletters, pubs)
+    # Liste des expéditeurs à ignorer (newsletters, pubs, e-commerce généraliste)
     IGNORED_SENDERS = [
-        "airbnb", "uber eats", "ubereats", "deliveroo", "netflix", "spotify",
-        "amazon prime", "linkedin", "facebook", "twitter", "instagram",
+        "airbnb", "uber", "ubereats", "deliveroo", "netflix", "spotify",
+        "amazon", "linkedin", "facebook", "twitter", "instagram",
         "newsletter", "noreply", "no-reply", "marketing", "promo",
-        "jow", "yoojo", "leboncoin", "vinted"
+        "jow", "yoojo", "leboncoin", "vinted", "cdiscount", "fnac",
+        "darty", "boulanger", "zalando", "asos", "shein", "temu",
+        "aliexpress", "wish", "ebay", "etsy", "paypal"
     ]
     
     # ════════════════════════════════════════════════════════════════
-    # ÉTAPE 2 : Pour chaque utilisateur, scanner ses emails
+    # BOUCLE PRINCIPALE : Pour chaque utilisateur
     # ════════════════════════════════════════════════════════════════
     
     for user_email, cases in users_cases.items():
         stats["utilisateurs_scannes"] += 1
         
-        logs.append(f"<hr><h4>👤 {user_email}</h4>")
-        logs.append(f"<p style='margin-left:20px;'>📂 {len(cases)} dossier(s) actif(s)</p>")
+        # Filtrer les dossiers déjà traités dans cette exécution
+        cases_to_process = [c for c in cases if c.id not in processed_case_ids_this_run]
         
-        # Préparer la liste des dossiers pour le prompt IA
+        if not cases_to_process:
+            continue
+        
+        logs.append(f"<hr><h4>👤 {user_email}</h4>")
+        logs.append(f"<p style='margin-left:20px;'>📂 {len(cases_to_process)} dossier(s) à surveiller</p>")
+        
+        # Afficher les dossiers
         dossiers_info = []
-        for c in cases:
+        for c in cases_to_process:
             montant = extract_numeric_amount(c.amount) if c.amount else 0
-            dossiers_info.append(f"- ID #{c.id}: {c.company} (estimé: {montant}€)")
+            dossiers_info.append(f"- ID #{c.id}: {c.company.upper()} (estimé: {montant}€) [Status: {c.status}]")
         
         logs.append(f"<pre style='margin-left:20px; font-size:0.8rem; background:#f1f5f9; padding:10px; border-radius:5px;'>" + "\n".join(dossiers_info) + "</pre>")
         
-        # Récupérer l'utilisateur et ses credentials
+        # Récupérer l'utilisateur
         user = User.query.filter_by(email=user_email).first()
         if not user or not user.refresh_token:
             logs.append("<p style='margin-left:20px; color:#dc2626;'>❌ Pas de refresh token</p>")
@@ -7364,7 +7375,7 @@ def check_refunds():
             service = build('gmail', 'v1', credentials=creds)
             
             # ════════════════════════════════════════════════════════════════
-            # 🎣 QUERY GMAIL "GRAND FILET" (30 jours, mots-clés financiers)
+            # 🎣 QUERY GMAIL - RÉDUITE À 7 JOURS (plus précis)
             # ════════════════════════════════════════════════════════════════
             
             query = '''(
@@ -7372,23 +7383,23 @@ def check_refunds():
                 OR subject:indemnisation OR subject:compensation
                 OR "avis de virement" OR "compte crédité" OR "a été crédité"
                 OR "remboursement effectué" OR "montant remboursé"
-                OR subject:test OR subject:TEST OR test
-            ) newer_than:30d'''
+                OR subject:test OR subject:TEST
+            ) newer_than:7d'''
             
-            results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
+            results = service.users().messages().list(userId='me', q=query, maxResults=30).execute()
             messages = results.get('messages', [])
             
-            logs.append(f"<p style='margin-left:20px;'>📧 {len(messages)} email(s) financiers trouvés</p>")
+            logs.append(f"<p style='margin-left:20px;'>📧 {len(messages)} email(s) financiers (7 derniers jours)</p>")
             
             if not messages:
                 logs.append("<p style='margin-left:20px; color:#6b7280;'>Aucun email financier récent</p>")
                 continue
             
             # ════════════════════════════════════════════════════════════════
-            # 🧠 ÉTAPE 3 : Analyse IA de chaque email
+            # 🧠 ANALYSE IA - Avec vérifications de sécurité
             # ════════════════════════════════════════════════════════════════
             
-            for msg in messages[:20]:  # Limiter à 20 emails par utilisateur
+            for msg in messages[:15]:  # Limiter à 15 emails
                 msg_id = msg['id']
                 
                 try:
@@ -7413,17 +7424,24 @@ def check_refunds():
                     stats["emails_analyses"] += 1
                     
                     # ════════════════════════════════════════════════════════════════
-                    # 🤖 APPEL IA - MATCHING RELATIONNEL
+                    # 🤖 APPEL IA - MATCHING STRICT
                     # ════════════════════════════════════════════════════════════════
                     
                     if not OPENAI_API_KEY:
                         continue
                     
-                    match_result = ia_matching_dossier(
+                    # Ne passer que les dossiers NON TRAITÉS à l'IA
+                    dossiers_pour_ia = [c for c in cases_to_process if c.id not in processed_case_ids_this_run]
+                    
+                    if not dossiers_pour_ia:
+                        logs.append("<p style='margin-left:30px; color:#6b7280;'>Tous les dossiers déjà traités - fin du scan</p>")
+                        break
+                    
+                    match_result = ia_matching_dossier_strict(
                         email_subject=email_subject,
                         email_body=body_text[:2000],
                         email_from=email_from,
-                        dossiers=cases
+                        dossiers=dossiers_pour_ia
                     )
                     
                     if match_result.get("match"):
@@ -7431,155 +7449,206 @@ def check_refunds():
                         dossier_id = match_result.get("dossier_id")
                         real_amount = match_result.get("real_amount", 0)
                         match_reason = match_result.get("reason", "")
+                        company_matched = match_result.get("company_matched", "")
                         
-                        logs.append(f"<p style='margin-left:30px; color:#10b981; font-weight:bold;'>✅ MATCH IA TROUVÉ !</p>")
-                        logs.append(f"<p style='margin-left:40px;'>📩 Email: <b>{email_subject[:50]}...</b></p>")
-                        logs.append(f"<p style='margin-left:40px;'>📂 Dossier ID: <b>#{dossier_id}</b></p>")
-                        logs.append(f"<p style='margin-left:40px;'>💰 Montant réel: <b>{real_amount}€</b></p>")
-                        logs.append(f"<p style='margin-left:40px; color:#6b7280; font-size:0.85rem;'>ℹ️ {match_reason}</p>")
+                        logs.append(f"<p style='margin-left:30px; color:#10b981; font-weight:bold;'>✅ MATCH IA : {email_subject[:40]}...</p>")
+                        logs.append(f"<p style='margin-left:40px;'>📂 Dossier: <b>#{dossier_id}</b> | Entreprise: <b>{company_matched}</b></p>")
+                        logs.append(f"<p style='margin-left:40px;'>💰 Montant trouvé: <b>{real_amount}€</b></p>")
                         
-                        # Récupérer le dossier
+                        # ════════════════════════════════════════════════════════════════
+                        # 🛡️ RÈGLE 1 : VÉRIFICATION D'UNICITÉ (Idempotence)
+                        # ════════════════════════════════════════════════════════════════
+                        
+                        # Rafraîchir le dossier depuis la BDD (état le plus récent)
                         matched_case = Litigation.query.get(dossier_id)
-                        if matched_case and matched_case.user_email == user_email:
-
-                            # ════════════════════════════════════════════════════════════════
-                            # 🔒 ANTI-DOUBLON (STATUT + RUN)
-                            # ════════════════════════════════════════════════════════════════
-
-                            # Protection "boucle rapide" : même dossier matché plusieurs fois dans ce Cron
-                            if dossier_id in processed_case_ids:
-                                logs.append(f"<p style='margin-left:40px; color:#6b7280;'>🔒 Dossier #{dossier_id} déjà traité dans ce Cron - email ignoré</p>")
-                                continue
-
-                            current_status = (matched_case.status or "").strip().lower()
-                            is_already_refunded = current_status.startswith("rembours") or current_status == "refunded"
-
-                            # Montants (en € entiers, cohérent avec extract_numeric_amount)
-                            current_amount = extract_numeric_amount(matched_case.amount) if matched_case.amount else 0
-                            new_amount = int(real_amount) if real_amount else 0
-
-                            # Si déjà remboursé : on empêche tout prélèvement multiple
-                            if is_already_refunded:
-                                if new_amount > 0 and new_amount > current_amount:
-                                    # Complément détecté : on met à jour le montant, mais on ne prélève pas à nouveau (safe mode)
-                                    old_amount_str = matched_case.amount
-                                    matched_case.amount = f"{new_amount}€"
-                                    matched_case.updated_at = datetime.utcnow()
-                                    db.session.commit()
-
-                                    stats["montants_mis_a_jour"] += 1
-                                    logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Complément détecté sur dossier #{dossier_id}: {old_amount_str} → {new_amount}€ (pas de commission supplémentaire)</p>")
-                                else:
-                                    logs.append(f"<p style='margin-left:40px; color:#6b7280;'>🔒 Dossier #{dossier_id} déjà remboursé (montant actuel: {current_amount}€) - email ignoré</p>")
-
-                                processed_case_ids.add(dossier_id)
-                                continue
-
-                            # ════════════════════════════════════════════════════════════════
-                            # 💾 MISE À JOUR DU MONTANT RÉEL EN BDD (CRUCIAL)
-                            # ════════════════════════════════════════════════════════════════
-
-                            old_amount = matched_case.amount
-                            old_amount_num = current_amount
-
-                            if new_amount > 0:
-                                matched_case.amount = f"{new_amount}€"
-                                stats["montants_mis_a_jour"] += 1
-                                logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Montant mis à jour: {old_amount} → {new_amount}€</p>")
-
-                            # ✅ Marquer comme remboursé IMMÉDIATEMENT (mémoire + BDD) pour bloquer les doublons
-                            matched_case.status = "Remboursé"
-                            matched_case.updated_at = datetime.utcnow()
-                            processed_case_ids.add(dossier_id)
-                            db.session.commit()
-
-                            # ════════════════════════════════════════════════════════════════
-                            # 💳 PRÉLÈVEMENT COMMISSION STRIPE (30%)
-                            # ════════════════════════════════════════════════════════════════
-
-                            # Utiliser le montant RÉEL trouvé par l'IA (sinon fallback sur ancien montant)
-                            commission_base = new_amount if new_amount > 0 else old_amount_num
-
-                            if commission_base > 0 and user.stripe_customer_id:
-                                commission = max(1, int(commission_base * 0.30))  # 30%, minimum 1€
-
-                                logs.append(f"<p style='margin-left:40px;'>💳 Commission: <b>{commission}€</b> (30% de {commission_base}€)</p>")
-
-                                try:
-                                    payment_methods = stripe.PaymentMethod.list(
-                                        customer=user.stripe_customer_id, 
-                                        type="card"
-                                    )
-
-                                    if payment_methods.data:
-                                        payment_intent = stripe.PaymentIntent.create(
-                                            amount=commission * 100,  # En centimes
-                                            currency='eur',
-                                            customer=user.stripe_customer_id,
-                                            payment_method=payment_methods.data[0].id,
-                                            off_session=True,
-                                            confirm=True,
-                                            description=f"Commission Justicio 30% - {matched_case.company} - Dossier #{dossier_id}"
-                                        )
-
-                                        if payment_intent.status == "succeeded":
-                                            stats["commissions_prelevees"] += 1
-                                            stats["total_commission"] += commission
-
-                                            logs.append(f"<p style='margin-left:40px; color:#10b981; font-weight:bold;'>💰 JACKPOT ! {commission}€ PRÉLEVÉS !</p>")
-
-                                            # Notification Telegram
-                                            send_telegram_notif(
-                                                f"💰💰💰 JUSTICIO JACKPOT 💰💰💰\n\n"
-                                                f"Commission: {commission}€\n"
-                                                f"Entreprise: {matched_case.company}\n"
-                                                f"Montant remboursé: {commission_base}€\n"
-                                                f"Client: {user_email}\n"
-                                                f"Dossier #{dossier_id}\n"
-                                                f"🤖 Matching IA V3"
-                                            )
-                                        else:
-                                            logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Paiement en attente: {payment_intent.status}</p>")
-                                    else:
-                                        logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Aucune carte enregistrée</p>")
-
-                                except stripe.error.CardError as e:
-                                    logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Erreur carte: {e.user_message}</p>")
-                                    stats["erreurs"] += 1
-                                except Exception as e:
-                                    logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Erreur Stripe: {str(e)[:50]}</p>")
-                                    stats["erreurs"] += 1
-                            elif not user.stripe_customer_id:
-                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Pas de carte Stripe enregistrée</p>")
-                            else:
-                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Montant = 0€, pas de commission</p>")
-                        else:
+                        if not matched_case:
                             logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Dossier #{dossier_id} introuvable</p>")
                             stats["erreurs"] += 1
+                            continue
+                        
+                        # Forcer le refresh depuis la BDD
+                        db.session.refresh(matched_case)
+                        
+                        # Vérifier que le dossier appartient bien à l'utilisateur
+                        if matched_case.user_email != user_email:
+                            logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Dossier #{dossier_id} n'appartient pas à {user_email}</p>")
+                            stats["erreurs"] += 1
+                            continue
+                        
+                        # 🛡️ RÈGLE 2 : Vérifier si déjà traité DANS CETTE EXÉCUTION
+                        if dossier_id in processed_case_ids_this_run:
+                            logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>🔒 BLOQUÉ : Dossier #{dossier_id} déjà traité dans ce Cron</p>")
+                            stats["matchs_bloques_doublon"] += 1
+                            continue
+                        
+                        # 🛡️ RÈGLE 1 : Vérifier si déjà remboursé EN BASE
+                        current_status = (matched_case.status or "").strip().lower()
+                        is_already_refunded = (
+                            "rembours" in current_status or 
+                            current_status == "refunded" or
+                            "résolu" in current_status or
+                            "payé" in current_status
+                        )
+                        
+                        current_amount = extract_numeric_amount(matched_case.amount) if matched_case.amount else 0
+                        new_amount = int(real_amount) if real_amount else 0
+                        
+                        if is_already_refunded:
+                            # Vérifier si c'est un complément (montant supérieur)
+                            if new_amount > 0 and new_amount > current_amount:
+                                # Complément détecté - mise à jour du montant SANS prélèvement
+                                old_amount_str = matched_case.amount
+                                matched_case.amount = f"{new_amount}€"
+                                matched_case.updated_at = datetime.utcnow()
+                                db.session.commit()
+                                
+                                stats["montants_mis_a_jour"] += 1
+                                logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Complément détecté: {old_amount_str} → {new_amount}€</p>")
+                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ PAS de commission supplémentaire (sécurité)</p>")
+                            else:
+                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>🔒 BLOQUÉ : Dossier #{dossier_id} DÉJÀ remboursé (status: {matched_case.status})</p>")
+                            
+                            stats["matchs_bloques_doublon"] += 1
+                            processed_case_ids_this_run.add(dossier_id)
+                            continue
+                        
+                        # 🛡️ RÈGLE 3 : Vérification de liaison stricte (double-check Python)
+                        company_in_case = (matched_case.company or "").lower()
+                        company_in_email = (company_matched or "").lower()
+                        email_content_lower = f"{email_subject} {email_from} {body_text[:500]}".lower()
+                        
+                        # Mapping des variantes d'entreprises
+                        COMPANY_ALIASES = {
+                            "sncf": ["sncf", "tgv", "ouigo", "ter", "intercités", "train", "inoui", "voyages-sncf", "oui.sncf"],
+                            "air france": ["air france", "airfrance", "af ", "transavia", "hop!"],
+                            "easyjet": ["easyjet", "easy jet", "u2"],
+                            "ryanair": ["ryanair", "fr "],
+                            "vueling": ["vueling", "vl "],
+                            "volotea": ["volotea"],
+                            "lufthansa": ["lufthansa", "lh "],
+                            "klm": ["klm", "kl "],
+                        }
+                        
+                        # Trouver les aliases de l'entreprise du dossier
+                        company_aliases = [company_in_case]
+                        for main_name, aliases in COMPANY_ALIASES.items():
+                            if any(alias in company_in_case for alias in aliases):
+                                company_aliases.extend(aliases)
+                                break
+                        
+                        # Vérifier que l'email mentionne bien l'entreprise
+                        company_found_in_email = any(alias in email_content_lower for alias in company_aliases)
+                        
+                        if not company_found_in_email and "test" not in email_subject.lower():
+                            logs.append(f"<p style='margin-left:40px; color:#dc2626;'>🚫 BLOQUÉ : L'email ne mentionne pas '{matched_case.company}'</p>")
+                            stats["matchs_bloques_entreprise"] += 1
+                            continue
+                        
+                        # ════════════════════════════════════════════════════════════════
+                        # ✅ TOUTES LES VÉRIFICATIONS PASSÉES - PRÉLÈVEMENT AUTORISÉ
+                        # ════════════════════════════════════════════════════════════════
+                        
+                        logs.append(f"<p style='margin-left:40px; color:#10b981;'>✅ Toutes les vérifications passées</p>")
+                        
+                        # Mise à jour du montant
+                        old_amount = matched_case.amount
+                        if new_amount > 0:
+                            matched_case.amount = f"{new_amount}€"
+                            stats["montants_mis_a_jour"] += 1
+                            logs.append(f"<p style='margin-left:40px; color:#3b82f6;'>📝 Montant: {old_amount} → {new_amount}€</p>")
+                        
+                        # ⚡ MARQUER COMME REMBOURSÉ IMMÉDIATEMENT (avant Stripe)
+                        matched_case.status = "Remboursé"
+                        matched_case.updated_at = datetime.utcnow()
+                        processed_case_ids_this_run.add(dossier_id)
+                        db.session.commit()
+                        
+                        # ════════════════════════════════════════════════════════════════
+                        # 💳 PRÉLÈVEMENT STRIPE (une seule fois)
+                        # ════════════════════════════════════════════════════════════════
+                        
+                        commission_base = new_amount if new_amount > 0 else current_amount
+                        
+                        if commission_base > 0 and user.stripe_customer_id:
+                            commission = max(1, int(commission_base * 0.30))
+                            
+                            logs.append(f"<p style='margin-left:40px;'>💳 Commission: <b>{commission}€</b> (30% de {commission_base}€)</p>")
+                            
+                            try:
+                                payment_methods = stripe.PaymentMethod.list(
+                                    customer=user.stripe_customer_id, 
+                                    type="card"
+                                )
+                                
+                                if payment_methods.data:
+                                    payment_intent = stripe.PaymentIntent.create(
+                                        amount=commission * 100,
+                                        currency='eur',
+                                        customer=user.stripe_customer_id,
+                                        payment_method=payment_methods.data[0].id,
+                                        off_session=True,
+                                        confirm=True,
+                                        description=f"Commission Justicio 30% - {matched_case.company} - Dossier #{dossier_id}",
+                                        idempotency_key=f"justicio-{dossier_id}-{datetime.utcnow().strftime('%Y%m%d')}"  # Anti-doublon Stripe
+                                    )
+                                    
+                                    if payment_intent.status == "succeeded":
+                                        stats["commissions_prelevees"] += 1
+                                        stats["total_commission"] += commission
+                                        
+                                        logs.append(f"<p style='margin-left:40px; color:#10b981; font-weight:bold;'>💰 JACKPOT ! {commission}€ PRÉLEVÉS !</p>")
+                                        
+                                        send_telegram_notif(
+                                            f"💰 JUSTICIO JACKPOT 💰\n\n"
+                                            f"Commission: {commission}€\n"
+                                            f"Entreprise: {matched_case.company}\n"
+                                            f"Montant: {commission_base}€\n"
+                                            f"Client: {user_email}\n"
+                                            f"Dossier #{dossier_id}\n"
+                                            f"🛡️ V4 Sécurisé"
+                                        )
+                                    else:
+                                        logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Paiement: {payment_intent.status}</p>")
+                                else:
+                                    logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Aucune carte</p>")
+                                    
+                            except stripe.error.CardError as e:
+                                logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Carte: {e.user_message}</p>")
+                                stats["erreurs"] += 1
+                            except stripe.error.IdempotencyError:
+                                logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>🔒 Paiement déjà effectué (idempotency)</p>")
+                            except Exception as e:
+                                logs.append(f"<p style='margin-left:40px; color:#dc2626;'>❌ Stripe: {str(e)[:50]}</p>")
+                                stats["erreurs"] += 1
+                        elif not user.stripe_customer_id:
+                            logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Pas de carte Stripe</p>")
+                        else:
+                            logs.append(f"<p style='margin-left:40px; color:#f59e0b;'>⚠️ Montant = 0€</p>")
                     
                 except Exception as e:
                     stats["erreurs"] += 1
-                    DEBUG_LOGS.append(f"❌ Erreur email {msg_id[:8]}: {str(e)[:50]}")
+                    DEBUG_LOGS.append(f"❌ Erreur email: {str(e)[:50]}")
                     continue
                     
         except Exception as e:
             stats["erreurs"] += 1
             logs.append(f"<p style='margin-left:20px; color:#dc2626;'>❌ Erreur Gmail: {str(e)[:80]}</p>")
-            DEBUG_LOGS.append(f"CRON Error {user_email}: {str(e)}")
     
     # ════════════════════════════════════════════════════════════════
     # 📊 RAPPORT FINAL
     # ════════════════════════════════════════════════════════════════
     
     logs.append("<hr>")
-    logs.append("<h4>📊 Rapport Agent Encaisseur V3 (IA Matching)</h4>")
+    logs.append("<h4>📊 Rapport Agent Encaisseur V4 (Sécurisé)</h4>")
     logs.append(f"""
     <div style='background:#f8fafc; padding:15px; border-radius:10px; margin:10px 0;'>
         <p>👥 Utilisateurs scannés : <b>{stats['utilisateurs_scannes']}</b></p>
-        <p>📧 Emails analysés par IA : <b>{stats['emails_analyses']}</b></p>
-        <p style='color:#10b981;'>🎯 Matchs IA trouvés : <b>{stats['matchs_ia']}</b></p>
+        <p>📧 Emails analysés : <b>{stats['emails_analyses']}</b></p>
+        <p style='color:#10b981;'>🎯 Matchs IA : <b>{stats['matchs_ia']}</b></p>
+        <p style='color:#f59e0b;'>🔒 Bloqués (doublon) : <b>{stats['matchs_bloques_doublon']}</b></p>
+        <p style='color:#f59e0b;'>🚫 Bloqués (entreprise) : <b>{stats['matchs_bloques_entreprise']}</b></p>
         <p style='color:#3b82f6;'>📝 Montants mis à jour : <b>{stats['montants_mis_a_jour']}</b></p>
-        <p style='color:#10b981; font-weight:bold;'>💰 Commissions prélevées : <b>{stats['commissions_prelevees']}</b> = <b>{stats['total_commission']}€</b></p>
+        <p style='color:#10b981; font-weight:bold;'>💰 Commissions : <b>{stats['commissions_prelevees']}</b> = <b>{stats['total_commission']}€</b></p>
         <p style='color:#dc2626;'>❌ Erreurs : <b>{stats['erreurs']}</b></p>
     </div>
     """)
@@ -7589,67 +7658,91 @@ def check_refunds():
     return STYLE + "<br>".join(logs) + "<br><br><a href='/' class='btn-success'>Retour</a>"
 
 
-def ia_matching_dossier(email_subject: str, email_body: str, email_from: str, dossiers: list) -> dict:
+def ia_matching_dossier_strict(email_subject: str, email_body: str, email_from: str, dossiers: list) -> dict:
     """
-    🤖 AGENT IA DE MATCHING RELATIONNEL
+    🤖 AGENT IA DE MATCHING STRICT V2
     
-    Analyse un email et détermine s'il correspond à l'un des dossiers en cours.
-    L'IA fait le lien MÊME SI le montant ou le nom d'entreprise diffère.
+    🛡️ RÈGLE 3 IMPLÉMENTÉE : LIAISON STRICTE ENTREPRISE
+    L'IA ne peut matcher que si l'entreprise dans l'email correspond au dossier.
     
     Args:
         email_subject: Sujet de l'email
         email_body: Corps de l'email (max 2000 chars)
         email_from: Expéditeur
-        dossiers: Liste des objets Litigation
+        dossiers: Liste des objets Litigation NON REMBOURSÉS
     
     Returns:
-        {"match": bool, "dossier_id": int, "real_amount": float, "reason": str}
+        {"match": bool, "dossier_id": int, "real_amount": float, "reason": str, "company_matched": str}
     """
     
     if not OPENAI_API_KEY:
         return {"match": False, "reason": "Pas d'API OpenAI"}
     
-    # Préparer la liste des dossiers en JSON
+    if not dossiers:
+        return {"match": False, "reason": "Aucun dossier actif"}
+    
+    # Préparer la liste des dossiers en JSON avec plus de détails
     dossiers_list = []
     for d in dossiers:
         montant = extract_numeric_amount(d.amount) if d.amount else 0
         dossiers_list.append({
             "id": d.id,
             "company": d.company,
-            "montant_estime": montant
+            "montant_estime": montant,
+            "status": d.status
         })
     
     dossiers_json = json.dumps(dossiers_list, ensure_ascii=False, indent=2)
     
-    system_prompt = """Tu es un expert en recouvrement et analyse d'emails bancaires/financiers.
+    # ════════════════════════════════════════════════════════════════
+    # 🛡️ PROMPT STRICT - L'IA doit vérifier l'entreprise
+    # ════════════════════════════════════════════════════════════════
+    
+    system_prompt = """Tu es un expert en analyse d'emails bancaires pour détecter les remboursements.
 
-🎯 TA MISSION : Déterminer si cet email confirme un REMBOURSEMENT pour l'un des dossiers litiges en cours.
+🚨 RÈGLES STRICTES - À RESPECTER ABSOLUMENT :
 
-📋 RÈGLES CRITIQUES :
+1. CORRESPONDANCE ENTREPRISE OBLIGATOIRE :
+   Tu ne peux MATCHER que si l'email parle EXPLICITEMENT de la même entreprise que le dossier.
+   
+   ✅ MATCHS VALIDES (même secteur, même groupe) :
+   - Dossier "SNCF" ↔ Email de "TGV", "OUIGO", "TER", "Intercités", "INOUI", "oui.sncf"
+   - Dossier "Air France" ↔ Email de "Transavia", "HOP!", "AF"
+   - Dossier "EasyJet" ↔ Email de "easyJet", "U2"
+   
+   ❌ MATCHS INVALIDES (secteurs différents) :
+   - Dossier "SNCF" ↔ Email de "Amazon" → IMPOSSIBLE
+   - Dossier "SNCF" ↔ Email de "Uber" → IMPOSSIBLE
+   - Dossier "Air France" ↔ Email de "Airbnb" → IMPOSSIBLE
+   - Dossier "EasyJet" ↔ Email de "Netflix" → IMPOSSIBLE
 
-1. MONTANT FLEXIBLE : Le montant du remboursement peut être TRÈS DIFFÉRENT de l'estimation du dossier.
-   - Dossier estimé à 0€ mais remboursement réel de 100€ → C'est un MATCH !
-   - Dossier estimé à 250€ mais remboursement de 150€ → C'est un MATCH (partiel) !
+2. PAS DE MATCH PAR DÉFAUT :
+   S'il n'y a qu'un seul dossier et que l'email ne mentionne PAS cette entreprise → match: false
+   Ne jamais forcer un match juste parce qu'il n'y a qu'un dossier !
 
-2. NOMS D'ENTREPRISE FLEXIBLES : Fais le lien même si les noms diffèrent :
-   - "SNCF" = "TGV" = "OUIGO" = "Train" = "TER" = "Intercités" = "Trainline"
-   - "Air France" = "AF" = "Transavia" = "HOP"
-   - "EasyJet" = "Easy Jet" = "U2"
-   - "Ryanair" = "FR" = "RYR"
+3. MONTANT OBLIGATOIRE :
+   Un remboursement DOIT contenir un montant (ex: "150€", "250,00 EUR", "100.00€")
+   Pas de montant clair → match: false
 
-3. IGNORER complètement :
-   - Les newsletters et pubs (Airbnb, Uber Eats, Netflix, etc.)
-   - Les factures à PAYER (ce n'est pas un remboursement)
-   - Les simples accusés de réception sans montant
-   - Les emails marketing
+4. EMAILS DE TEST :
+   Si le sujet contient "[TEST]" ou "GODMODE" ET mentionne un montant → match avec le 1er dossier SEULEMENT si le test mentionne la même entreprise.
 
-4. EMAIL DE TEST : Si le sujet contient "test" ou "TEST" et mentionne un montant, c'est un MATCH avec le premier dossier disponible.
+5. À IGNORER ABSOLUMENT :
+   - Newsletters, pubs, marketing
+   - Factures à payer (débit, pas crédit)
+   - Confirmations de commande (pas de remboursement)
+   - Accusés de réception sans montant
 
-5. EXTRAIRE LE MONTANT RÉEL : Cherche le montant exact dans l'email (ex: "250,00 €", "150€", "100.00 EUR").
+📤 FORMAT DE RÉPONSE JSON :
+{
+  "match": true ou false,
+  "dossier_id": 123 (si match),
+  "real_amount": 150.0 (montant en euros, si match),
+  "company_matched": "SNCF" (nom de l'entreprise détectée dans l'email),
+  "reason": "Explication courte"
+}
 
-📤 RÉPONSE JSON OBLIGATOIRE :
-- Si MATCH : {"match": true, "dossier_id": 123, "real_amount": 250.0, "reason": "Virement SNCF de 250€ confirmé"}
-- Si PAS DE MATCH : {"match": false, "reason": "Newsletter Airbnb, pas de remboursement"}"""
+Si pas de match : {"match": false, "reason": "Explication"}"""
 
     user_prompt = f"""📧 EMAIL À ANALYSER :
 
@@ -7658,10 +7751,10 @@ SUJET: {email_subject}
 CONTENU:
 {email_body[:1500]}
 
-📂 DOSSIERS LITIGES EN COURS :
+📂 DOSSIERS LITIGES EN COURS (non remboursés) :
 {dossiers_json}
 
-❓ Cet email confirme-t-il un remboursement pour l'un de ces dossiers ?
+⚠️ RAPPEL : Tu ne peux matcher QUE si l'email parle de la MÊME entreprise qu'un dossier !
 
 Réponds UNIQUEMENT en JSON valide."""
 
@@ -7674,7 +7767,7 @@ Réponds UNIQUEMENT en JSON valide."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.1,
+            temperature=0.0,  # Température 0 pour réponses plus strictes
             max_tokens=300
         )
         
@@ -7690,7 +7783,8 @@ Réponds UNIQUEMENT en JSON valide."""
         
         # Log pour debug
         match_status = "✅ MATCH" if result.get("match") else "❌ No match"
-        DEBUG_LOGS.append(f"🤖 IA: {email_subject[:25]}... → {match_status}")
+        company = result.get("company_matched", "?")
+        DEBUG_LOGS.append(f"🤖 IA Strict: {email_subject[:25]}... → {match_status} ({company})")
         
         return result
         
@@ -7700,6 +7794,12 @@ Réponds UNIQUEMENT en JSON valide."""
     except Exception as e:
         DEBUG_LOGS.append(f"❌ IA error: {str(e)[:50]}")
         return {"match": False, "reason": f"Erreur IA: {str(e)[:30]}"}
+
+
+# Garder l'ancienne fonction pour compatibilité (alias)
+def ia_matching_dossier(email_subject: str, email_body: str, email_from: str, dossiers: list) -> dict:
+    """Alias vers la version stricte"""
+    return ia_matching_dossier_strict(email_subject, email_body, email_from, dossiers)
 
 def analyze_refund_email(company, expected_amount, subject, snippet, email_from, case_order_id=None):
     """
