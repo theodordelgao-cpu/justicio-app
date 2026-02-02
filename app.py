@@ -7482,12 +7482,25 @@ def check_refunds():
                             continue
                         
                         # 🛡️ RÈGLE 1 : Vérifier si déjà remboursé EN BASE
+                        # ATTENTION : Ne bloquer QUE les statuts FINAUX (pas "En attente de remboursement")
                         current_status = (matched_case.status or "").strip().lower()
+                        
+                        # Liste des statuts FINAUX qui bloquent le prélèvement
+                        STATUTS_FINALISES = [
+                            "remboursé",
+                            "refunded",
+                            "résolu",
+                            "annulé",
+                            "fermé",
+                            "payé",
+                            "annulé (sans débit)"
+                        ]
+                        
+                        # Vérifier si c'est un statut final (pas "en attente de remboursement" !)
                         is_already_refunded = (
-                            "rembours" in current_status or 
-                            current_status == "refunded" or
-                            "résolu" in current_status or
-                            "payé" in current_status
+                            current_status in STATUTS_FINALISES or
+                            current_status.startswith("remboursé") or  # "Remboursé (Partiel: 100€/200€)"
+                            current_status.startswith("résolu")        # "Résolu (Bon d'achat: 50€)"
                         )
                         
                         current_amount = extract_numeric_amount(matched_case.amount) if matched_case.amount else 0
