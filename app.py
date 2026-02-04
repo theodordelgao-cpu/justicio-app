@@ -577,22 +577,96 @@ def send_mise_en_demeure_gmail(user, target_email, subject, html_body, text_body
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# 📧 ANNUAIRE OVERRIDE EMAILS ENTREPRISES (Priorité absolue)
+# 📧 ANNUAIRE OVERRIDE EMAILS ENTREPRISES (Priorité absolue) - PRODUCTION
 # ════════════════════════════════════════════════════════════════════════════════
 
 COMPANY_EMAIL_OVERRIDE = {
-    "sncf": "relationclient@sncf.fr",
-    "ouigo": "relationclient@ouigo.com",
+    # ═══════════════════════ TRAINS ═══════════════════════
+    "sncf": "reclamation-client@sncf.fr",
+    "ouigo": "relation.client@ouigo.com",
+    "tgv": "reclamation-client@sncf.fr",
+    "ter": "reclamation-client@sncf.fr",
+    "intercités": "reclamation-client@sncf.fr",
     "eurostar": "contactcentre@eurostar.com",
-    "air france": "customer@airfrance.fr",
-    "easyjet": "customerservices@easyjet.com",
-    "ryanair": "support@ryanair.com",
+    "thalys": "customer.services@thalys.com",
+    "flixbus": "service@flixbus.fr",
+    
+    # ═══════════════════════ AVIONS ═══════════════════════
+    "air france": "mail.customercare@airfrance.fr",
+    "airfrance": "mail.customercare@airfrance.fr",
     "transavia": "service.client@transavia.com",
+    "hop": "serviceclient@hop.fr",
+    "easyjet": "customerservices@easyjet.com",
+    "ryanair": "customerqueries@ryanair.com",
+    "vueling": "clientes@vueling.com",
+    "volotea": "customers@volotea.com",
+    "lufthansa": "customer.relations@lufthansa.com",
+    "klm": "klmcares@klm.com",
+    "british airways": "customer.relations@ba.com",
+    "iberia": "customer@iberia.es",
+    "swiss": "customer.relations@swiss.com",
+    "wizz air": "customerrelations@wizzair.com",
+    "norwegian": "feedback@norwegian.com",
+    
+    # ═══════════════════════ VTC / LIVRAISON ═══════════════════════
+    "uber": "support@uber.com",
+    "bolt": "support@bolt.eu",
+    "deliveroo": "support@deliveroo.fr",
+    "uber eats": "eats@uber.com",
+    "just eat": "aide@just-eat.fr",
+    
+    # ═══════════════════════ E-COMMERCE ═══════════════════════
     "amazon": "cs-reply@amazon.fr",
     "zalando": "service@zalando.fr",
     "fnac": "serviceclient@fnac.com",
     "darty": "serviceclient@darty.com",
     "cdiscount": "clients@cdiscount.com",
+    "boulanger": "serviceclient@boulanger.com",
+    "conforama": "serviceclient@conforama.fr",
+    "leroy merlin": "serviceclient@leroymerlin.fr",
+    "ikea": "serviceclient@ikea.com",
+    "decathlon": "contact@decathlon.fr",
+    "la redoute": "serviceclient@laredoute.fr",
+    "veepee": "contactvp@veepee.com",
+    "showroomprive": "contact@showroomprive.com",
+    "aliexpress": "ae.customercomplain@alibaba-inc.com",
+    
+    # ═══════════════════════ MODE ═══════════════════════
+    "shein": "frcsteam@shein.com",
+    "zara": "contacto@zara.com",
+    "h&m": "serviceclient@hm.com",
+    "asos": "serviceclient@asos.com",
+    "mango": "contact@mango.com",
+    "kiabi": "serviceclient@kiabi.com",
+    "vinted": "legal@vinted.fr",
+    
+    # ═══════════════════════ VOYAGE / HÉBERGEMENT ═══════════════════════
+    "booking": "customer.service@booking.com",
+    "airbnb": "support@airbnb.com",
+    "expedia": "serviceclients@expedia.fr",
+    "hotels.com": "serviceclients@hotels.com",
+    "opodo": "serviceclient@contact.opodo.fr",
+    
+    # ═══════════════════════ TECH ═══════════════════════
+    "apple": "contactfrancecustomerrelations@apple.com",
+    "samsung": "sav@samsung.fr",
+    "microsoft": "support@microsoft.com",
+    "sony": "eu-customersupport@sony.com",
+    "dyson": "askdyson@dyson.fr",
+    
+    # ═══════════════════════ TÉLÉCOMS ═══════════════════════
+    "orange": "service.consommateurs@orange.com",
+    "sfr": "serviceclient@sfr.fr",
+    "bouygues": "serviceclient@bouyguestelecom.fr",
+    "free": "reclamation@free.fr",
+    
+    # ═══════════════════════ LIVRAISON COLIS ═══════════════════════
+    "la poste": "service.consommateurs@laposte.fr",
+    "colissimo": "service.consommateurs@laposte.fr",
+    "chronopost": "serviceclient@chronopost.fr",
+    "ups": "francesupport@ups.com",
+    "dhl": "serviceclient.dhlparcel.fr@dhl.com",
+    "mondial relay": "serviceclient@mondialrelay.fr",
 }
 
 def normalize_company_key(name: str) -> str:
@@ -628,16 +702,18 @@ def get_company_email(company_name, sender_email=None, to_field=None):
         return LEGAL_DIRECTORY[company_key]["email"]
 
     variations = {
-        "air france": "customer@airfrance.fr",
-        "airfrance": "customer@airfrance.fr",
+        # Ces variations sont un fallback supplémentaire
+        # COMPANY_EMAIL_OVERRIDE a la priorité
+        "air france": "mail.customercare@airfrance.fr",
+        "airfrance": "mail.customercare@airfrance.fr",
         "easyjet": "customerservices@easyjet.com",
-        "ryanair": "support@ryanair.com",
+        "ryanair": "customerqueries@ryanair.com",
         "transavia": "service.client@transavia.com",
         "vueling": "clientes@vueling.com",
-        "volotea": "contact@volotea.com",
+        "volotea": "customers@volotea.com",
         "eurostar": "contactcentre@eurostar.com",
-        "ouigo": "relationclient@ouigo.com",
-        "thalys": "contact@thalys.com",
+        "ouigo": "relation.client@ouigo.com",
+        "thalys": "customer.services@thalys.com",
         "uber": "support@uber.com",
         "bolt": "support@bolt.eu",
         "amazon": "cs-reply@amazon.fr",
@@ -645,6 +721,12 @@ def get_company_email(company_name, sender_email=None, to_field=None):
         "fnac": "serviceclient@fnac.com",
         "darty": "serviceclient@darty.com",
         "cdiscount": "clients@cdiscount.com",
+        "sncf": "reclamation-client@sncf.fr",
+        "tgv": "reclamation-client@sncf.fr",
+        "train": "reclamation-client@sncf.fr",
+        "shein": "frcsteam@shein.com",
+        "booking": "customer.service@booking.com",
+        "airbnb": "support@airbnb.com",
     }
     for key, email in variations.items():
         if key in company_key:
@@ -857,34 +939,160 @@ BLACKLIST_KEYWORDS = [
 ]
 
 # ========================================
-# RÉPERTOIRE JURIDIQUE COMPLET
+# RÉPERTOIRE JURIDIQUE COMPLET - PRODUCTION
 # ========================================
 
 LEGAL_DIRECTORY = {
-    "amazon": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
-    "apple": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
-    "zalando": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour 14 jours)"},
-    "shein": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Conformité)"},
-    "zara": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
-    "h&m": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
-    "asos": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2011/83 (Retour)"},
-    "fnac": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
-    "darty": {"email": "theodordelgao@gmail.com", "loi": "l'Article L217-4 du Code de la consommation"},
-    "booking": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
-    "airbnb": {"email": "theodordelgao@gmail.com", "loi": "le Règlement Rome I (Protection consommateur)"},
-    "expedia": {"email": "theodordelgao@gmail.com", "loi": "la Directive UE 2015/2302"},
-    "ryanair": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "easyjet": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "lufthansa": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "air france": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "klm": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "british airways": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (CE) n° 261/2004"},
-    "sncf": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
-    "eurostar": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
-    "ouigo": {"email": "theodordelgao@gmail.com", "loi": "le Règlement (UE) 2021/782"},
-    "uber": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
-    "deliveroo": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"},
-    "bolt": {"email": "theodordelgao@gmail.com", "loi": "le Droit Européen de la Consommation"}
+    # ═══════════════════════════════════════════════════════════════
+    # ✈️ COMPAGNIES AÉRIENNES (Règlement CE 261/2004)
+    # ═══════════════════════════════════════════════════════════════
+    "air france": {"email": "mail.customercare@airfrance.fr", "loi": "le Règlement (CE) n° 261/2004"},
+    "airfrance": {"email": "mail.customercare@airfrance.fr", "loi": "le Règlement (CE) n° 261/2004"},
+    "transavia": {"email": "service.client@transavia.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "hop": {"email": "serviceclient@hop.fr", "loi": "le Règlement (CE) n° 261/2004"},
+    "easyjet": {"email": "customerservices@easyjet.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "ryanair": {"email": "customerqueries@ryanair.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "vueling": {"email": "clientes@vueling.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "volotea": {"email": "customers@volotea.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "lufthansa": {"email": "customer.relations@lufthansa.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "klm": {"email": "klmcares@klm.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "british airways": {"email": "customer.relations@ba.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "iberia": {"email": "customer@iberia.es", "loi": "le Règlement (CE) n° 261/2004"},
+    "tap portugal": {"email": "customer@flytap.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "swiss": {"email": "customer.relations@swiss.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "brussels airlines": {"email": "customerrelations@brusselsairlines.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "norwegian": {"email": "feedback@norwegian.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "wizz air": {"email": "customerrelations@wizzair.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "tuifly": {"email": "kundenservice@tuifly.com", "loi": "le Règlement (CE) n° 261/2004"},
+    "aegean": {"email": "customerservice@aegeanair.com", "loi": "le Règlement (CE) n° 261/2004"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🚄 TRANSPORT FERROVIAIRE (Règlement UE 2021/782)
+    # ═══════════════════════════════════════════════════════════════
+    "sncf": {"email": "reclamation-client@sncf.fr", "loi": "le Règlement (UE) 2021/782"},
+    "ouigo": {"email": "relation.client@ouigo.com", "loi": "le Règlement (UE) 2021/782"},
+    "tgv": {"email": "reclamation-client@sncf.fr", "loi": "le Règlement (UE) 2021/782"},
+    "eurostar": {"email": "contactcentre@eurostar.com", "loi": "le Règlement (UE) 2021/782"},
+    "thalys": {"email": "customer.services@thalys.com", "loi": "le Règlement (UE) 2021/782"},
+    "trenitalia": {"email": "customercare@trenitalia.it", "loi": "le Règlement (UE) 2021/782"},
+    "renfe": {"email": "atencioncliente@renfe.es", "loi": "le Règlement (UE) 2021/782"},
+    "deutsche bahn": {"email": "kundendialog@bahn.de", "loi": "le Règlement (UE) 2021/782"},
+    "flixbus": {"email": "service@flixbus.fr", "loi": "le Règlement (UE) 2021/782"},
+    "blablacar": {"email": "support@blablacar.com", "loi": "le Code de la consommation"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🚗 VTC / MOBILITÉ
+    # ═══════════════════════════════════════════════════════════════
+    "uber": {"email": "support@uber.com", "loi": "le Droit Européen de la Consommation"},
+    "bolt": {"email": "support@bolt.eu", "loi": "le Droit Européen de la Consommation"},
+    "free now": {"email": "support@free-now.com", "loi": "le Droit Européen de la Consommation"},
+    "heetch": {"email": "support@heetch.com", "loi": "le Droit Européen de la Consommation"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🍔 LIVRAISON / FOOD DELIVERY
+    # ═══════════════════════════════════════════════════════════════
+    "deliveroo": {"email": "support@deliveroo.fr", "loi": "le Droit Européen de la Consommation"},
+    "uber eats": {"email": "eats@uber.com", "loi": "le Droit Européen de la Consommation"},
+    "just eat": {"email": "aide@just-eat.fr", "loi": "le Droit Européen de la Consommation"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🏨 HÉBERGEMENT / VOYAGES (Directive 2015/2302)
+    # ═══════════════════════════════════════════════════════════════
+    "booking": {"email": "customer.service@booking.com", "loi": "la Directive UE 2015/2302 (Voyages à forfait)"},
+    "airbnb": {"email": "support@airbnb.com", "loi": "le Règlement Rome I (Protection consommateur)"},
+    "expedia": {"email": "serviceclients@expedia.fr", "loi": "la Directive UE 2015/2302"},
+    "hotels.com": {"email": "serviceclients@hotels.com", "loi": "la Directive UE 2015/2302"},
+    "trivago": {"email": "support@trivago.com", "loi": "la Directive UE 2015/2302"},
+    "opodo": {"email": "serviceclient@contact.opodo.fr", "loi": "la Directive UE 2015/2302"},
+    "lastminute": {"email": "customercare@lastminute.com", "loi": "la Directive UE 2015/2302"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🛒 E-COMMERCE GÉNÉRALISTE (Directive 2011/83)
+    # ═══════════════════════════════════════════════════════════════
+    "amazon": {"email": "cs-reply@amazon.fr", "loi": "la Directive UE 2011/83 (Droits des consommateurs)"},
+    "cdiscount": {"email": "clients@cdiscount.com", "loi": "la Directive UE 2011/83"},
+    "fnac": {"email": "serviceclient@fnac.com", "loi": "l'Article L217-4 du Code de la consommation"},
+    "darty": {"email": "serviceclient@darty.com", "loi": "l'Article L217-4 du Code de la consommation"},
+    "boulanger": {"email": "serviceclient@boulanger.com", "loi": "l'Article L217-4 du Code de la consommation"},
+    "conforama": {"email": "serviceclient@conforama.fr", "loi": "l'Article L217-4 du Code de la consommation"},
+    "but": {"email": "serviceclient@but.fr", "loi": "l'Article L217-4 du Code de la consommation"},
+    "leroy merlin": {"email": "serviceclient@leroymerlin.fr", "loi": "l'Article L217-4 du Code de la consommation"},
+    "castorama": {"email": "serviceclient@castorama.fr", "loi": "l'Article L217-4 du Code de la consommation"},
+    "ikea": {"email": "serviceclient@ikea.com", "loi": "l'Article L217-4 du Code de la consommation"},
+    "decathlon": {"email": "contact@decathlon.fr", "loi": "l'Article L217-4 du Code de la consommation"},
+    "la redoute": {"email": "serviceclient@laredoute.fr", "loi": "la Directive UE 2011/83"},
+    "3 suisses": {"email": "serviceclient@3suisses.fr", "loi": "la Directive UE 2011/83"},
+    "veepee": {"email": "contactvp@veepee.com", "loi": "la Directive UE 2011/83"},
+    "showroomprive": {"email": "contact@showroomprive.com", "loi": "la Directive UE 2011/83"},
+    "rakuten": {"email": "aide@priceminister.com", "loi": "la Directive UE 2011/83"},
+    "aliexpress": {"email": "ae.customercomplain@alibaba-inc.com", "loi": "la Directive UE 2011/83"},
+    "wish": {"email": "support@wish.com", "loi": "la Directive UE 2011/83"},
+    "temu": {"email": "support@temu.com", "loi": "la Directive UE 2011/83"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 👗 MODE / VÊTEMENTS (Directive 2011/83 Retour)
+    # ═══════════════════════════════════════════════════════════════
+    "zalando": {"email": "service@zalando.fr", "loi": "la Directive UE 2011/83 (Retour 14 jours)"},
+    "asos": {"email": "serviceclient@asos.com", "loi": "la Directive UE 2011/83 (Retour)"},
+    "shein": {"email": "frcsteam@shein.com", "loi": "la Directive UE 2011/83 (Conformité)"},
+    "zara": {"email": "contacto@zara.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
+    "h&m": {"email": "serviceclient@hm.com", "loi": "la Directive UE 2011/83 (Remboursement)"},
+    "mango": {"email": "contact@mango.com", "loi": "la Directive UE 2011/83"},
+    "uniqlo": {"email": "service@uniqlo.eu", "loi": "la Directive UE 2011/83"},
+    "kiabi": {"email": "serviceclient@kiabi.com", "loi": "la Directive UE 2011/83"},
+    "boohoo": {"email": "customerservices@boohoo.com", "loi": "la Directive UE 2011/83"},
+    "prettylittlething": {"email": "customerservices@prettylittlething.com", "loi": "la Directive UE 2011/83"},
+    "vinted": {"email": "legal@vinted.fr", "loi": "la Directive UE 2011/83"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 📱 TECH / ÉLECTRONIQUE (Garantie légale)
+    # ═══════════════════════════════════════════════════════════════
+    "apple": {"email": "contactfrancecustomerrelations@apple.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "samsung": {"email": "sav@samsung.fr", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "sony": {"email": "eu-customersupport@sony.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "microsoft": {"email": "support@microsoft.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "hp": {"email": "support@hp.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "dell": {"email": "support@dell.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "lenovo": {"email": "support@lenovo.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "xiaomi": {"email": "service.eu@xiaomi.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "huawei": {"email": "support.fr@huawei.com", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    "dyson": {"email": "askdyson@dyson.fr", "loi": "la Directive UE 1999/44 (Garantie légale)"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 📦 LIVRAISON / COLIS
+    # ═══════════════════════════════════════════════════════════════
+    "la poste": {"email": "service.consommateurs@laposte.fr", "loi": "le Code de la consommation"},
+    "colissimo": {"email": "service.consommateurs@laposte.fr", "loi": "le Code de la consommation"},
+    "chronopost": {"email": "serviceclient@chronopost.fr", "loi": "le Code de la consommation"},
+    "ups": {"email": "francesupport@ups.com", "loi": "le Code de la consommation"},
+    "dhl": {"email": "serviceclient.dhlparcel.fr@dhl.com", "loi": "le Code de la consommation"},
+    "fedex": {"email": "france@fedex.com", "loi": "le Code de la consommation"},
+    "mondial relay": {"email": "serviceclient@mondialrelay.fr", "loi": "le Code de la consommation"},
+    "relais colis": {"email": "relationclient@relaiscolis.com", "loi": "le Code de la consommation"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 📞 TÉLÉCOMS / OPÉRATEURS
+    # ═══════════════════════════════════════════════════════════════
+    "orange": {"email": "service.consommateurs@orange.com", "loi": "le Code des postes et communications électroniques"},
+    "sfr": {"email": "serviceclient@sfr.fr", "loi": "le Code des postes et communications électroniques"},
+    "bouygues": {"email": "serviceclient@bouyguestelecom.fr", "loi": "le Code des postes et communications électroniques"},
+    "free": {"email": "reclamation@free.fr", "loi": "le Code des postes et communications électroniques"},
+    "sosh": {"email": "service.consommateurs@orange.com", "loi": "le Code des postes et communications électroniques"},
+    "red": {"email": "serviceclient@sfr.fr", "loi": "le Code des postes et communications électroniques"},
+    "b&you": {"email": "serviceclient@bouyguestelecom.fr", "loi": "le Code des postes et communications électroniques"},
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🎮 DIVERTISSEMENT / STREAMING
+    # ═══════════════════════════════════════════════════════════════
+    "netflix": {"email": "support@netflix.com", "loi": "la Directive UE 2011/83"},
+    "spotify": {"email": "support@spotify.com", "loi": "la Directive UE 2011/83"},
+    "disney+": {"email": "support@disneyplus.com", "loi": "la Directive UE 2011/83"},
+    "canal+": {"email": "relationabonnes@canal-plus.com", "loi": "la Directive UE 2011/83"},
+    "deezer": {"email": "support@deezer.com", "loi": "la Directive UE 2011/83"},
+    "playstation": {"email": "service-consommateurs@sony.com", "loi": "la Directive UE 2011/83"},
+    "xbox": {"email": "support@microsoft.com", "loi": "la Directive UE 2011/83"},
+    "nintendo": {"email": "serviceconsommateur@nintendo.fr", "loi": "la Directive UE 2011/83"},
+    "steam": {"email": "support@steampowered.com", "loi": "la Directive UE 2011/83"},
 }
 
 # ========================================
@@ -6191,30 +6399,74 @@ def submit_litige():
         db.session.commit()
         
         # ════════════════════════════════════════════════════════════════
-        # 🕵️ AGENT DÉTECTIVE - Recherche automatique de l'email marchand
+        # 🕵️ RECHERCHE EMAIL MARCHAND (Priorité : Annuaire > Détective)
         # ════════════════════════════════════════════════════════════════
         
         merchant_result = {"email": None, "source": None}
         detective_status = "non_lance"
         
-        if url_site:
-            DEBUG_LOGS.append(f"🕵️ Lancement Agent Détective pour {url_site}")
-            merchant_result = find_merchant_email(url_site)
+        # ÉTAPE 1 : Vérifier d'abord dans notre annuaire (LEGAL_DIRECTORY + COMPANY_EMAIL_OVERRIDE)
+        company_lower = company.lower().strip()
+        
+        # Chercher dans COMPANY_EMAIL_OVERRIDE (priorité absolue)
+        if company_lower in COMPANY_EMAIL_OVERRIDE:
+            merchant_result["email"] = COMPANY_EMAIL_OVERRIDE[company_lower]
+            merchant_result["source"] = "Annuaire Justicio"
+            detective_status = "annuaire"
+            DEBUG_LOGS.append(f"📚 Email trouvé dans l'annuaire: {merchant_result['email']}")
+        else:
+            # Chercher par mots-clés partiels dans COMPANY_EMAIL_OVERRIDE
+            for key, email in COMPANY_EMAIL_OVERRIDE.items():
+                if key in company_lower or company_lower in key:
+                    merchant_result["email"] = email
+                    merchant_result["source"] = "Annuaire Justicio"
+                    detective_status = "annuaire"
+                    DEBUG_LOGS.append(f"📚 Email trouvé dans l'annuaire (partiel): {email}")
+                    break
+        
+        # Chercher dans LEGAL_DIRECTORY si pas encore trouvé
+        if not merchant_result["email"] and company_lower in LEGAL_DIRECTORY:
+            merchant_result["email"] = LEGAL_DIRECTORY[company_lower].get("email")
+            merchant_result["source"] = "Répertoire Juridique"
+            detective_status = "annuaire"
+            DEBUG_LOGS.append(f"📚 Email trouvé dans LEGAL_DIRECTORY: {merchant_result['email']}")
+        
+        # ÉTAPE 2 : Si pas trouvé dans l'annuaire, lancer l'Agent Détective
+        if not merchant_result["email"] and url_site:
+            DEBUG_LOGS.append(f"🕵️ Pas dans l'annuaire, lancement Agent Détective pour {url_site}")
+            detective_result = find_merchant_email(url_site)
             
-            if merchant_result["email"]:
-                # Email trouvé ! Mettre à jour le dossier
-                new_case.merchant_email = merchant_result["email"]
-                new_case.merchant_email_source = merchant_result["source"]
-                db.session.commit()
+            if detective_result.get("email"):
+                merchant_result["email"] = detective_result["email"]
+                merchant_result["source"] = detective_result.get("source", "Scraping web")
                 detective_status = "succes"
-                DEBUG_LOGS.append(f"🕵️ ✅ Email sauvegardé: {merchant_result['email']}")
+                DEBUG_LOGS.append(f"🕵️ ✅ Email trouvé par le Détective: {merchant_result['email']}")
             else:
                 detective_status = "echec"
                 DEBUG_LOGS.append(f"🕵️ ❌ Aucun email trouvé")
         
-        # Préparer l'affichage du résultat détective
+        # Sauvegarder l'email trouvé dans le dossier
+        if merchant_result["email"]:
+            new_case.merchant_email = merchant_result["email"]
+            new_case.merchant_email_source = merchant_result["source"]
+            db.session.commit()
+        
+        # Préparer l'affichage du résultat
         detective_html = ""
-        if detective_status == "succes":
+        if detective_status == "annuaire":
+            detective_html = f"""
+            <div style='background:linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); 
+                        padding:15px; border-radius:10px; margin-bottom:15px;
+                        border-left:4px solid #3b82f6;'>
+                <p style='margin:0; color:#1e40af;'>
+                    <b>📚 Annuaire Justicio :</b> Email officiel trouvé !<br>
+                    <span style='font-family:monospace; background:#eff6ff; padding:3px 8px; border-radius:4px;'>
+                        {merchant_result['email']}
+                    </span>
+                </p>
+            </div>
+            """
+        elif detective_status == "succes":
             detective_html = f"""
             <div style='background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
                         padding:15px; border-radius:10px; margin-bottom:15px;
@@ -7157,12 +7409,14 @@ def stripe_webhook():
                 try:
                     creds = get_refreshed_credentials(user.refresh_token)
                     company_key = lit.company.lower()
+                    
+                    # Utiliser get_company_email qui a la logique complète
+                    target_email = get_company_email(lit.company)
+                    
+                    # Récupérer la loi applicable depuis LEGAL_DIRECTORY
                     legal_info = LEGAL_DIRECTORY.get(company_key, {
-                        "email": "theodordelgao@gmail.com",
                         "loi": "le Droit Européen de la Consommation"
                     })
-                    
-                    target_email = legal_info["email"]
                     
                     corps = f"""MISE EN DEMEURE FORMELLE
 
