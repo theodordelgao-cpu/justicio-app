@@ -6725,78 +6725,149 @@ def force_reset():
 @app.route("/login")
 def login():
     """Initie le flux OAuth Google"""
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token"
-            }
-        },
-        scopes=[
-            "https://www.googleapis.com/auth/userinfo.profile",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/gmail.modify",
-            "openid"
-        ],
-        redirect_uri=url_for('callback', _external=True).replace("http://", "https://")
-    )
-    
-    url, state = flow.authorization_url(access_type='offline', prompt='consent')
-    session["state"] = state
-    return redirect(url)
+    try:
+        # Construire le redirect_uri en HTTPS
+        redirect_uri = url_for('callback', _external=True)
+        if redirect_uri.startswith("http://"):
+            redirect_uri = redirect_uri.replace("http://", "https://", 1)
+        
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            },
+            scopes=[
+                "https://www.googleapis.com/auth/userinfo.profile",
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "openid"
+            ],
+            redirect_uri=redirect_uri
+        )
+        
+        url, state = flow.authorization_url(access_type='offline', prompt='consent')
+        session["state"] = state
+        session["redirect_uri"] = redirect_uri  # Sauvegarder pour le callback
+        return redirect(url)
+    except Exception as e:
+        DEBUG_LOGS.append(f"❌ Erreur login OAuth: {str(e)}")
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Erreur de connexion</h1>
+            <p>Impossible d'initier la connexion Google.</p>
+            <p style='color:#dc2626; font-size:0.9rem;'>{str(e)[:100]}</p>
+            <br>
+            <a href='/' class='btn-success'>Retour à l'accueil</a>
+        </div>
+        """ + FOOTER
 
 @app.route("/callback")
 def callback():
-    """Callback OAuth Google"""
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token"
-            }
-        },
-        scopes=[
-            "https://www.googleapis.com/auth/userinfo.profile",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/gmail.modify",
-            "openid"
-        ],
-        redirect_uri=url_for('callback', _external=True).replace("http://", "https://")
-    )
-    
-    flow.fetch_token(authorization_response=request.url)
-    creds = flow.credentials
-    
-    info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
-    email = info.get('email')
-    name = info.get('name')
-    
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        user = User(email=email, name=name, refresh_token=creds.refresh_token)
-        db.session.add(user)
-    else:
-        if creds.refresh_token:
-            user.refresh_token = creds.refresh_token
-    
-    db.session.commit()
-    
-    session["credentials"] = {
-        'token': creds.token,
-        'refresh_token': creds.refresh_token,
-        'token_uri': creds.token_uri,
-        'client_id': creds.client_id,
-        'client_secret': creds.client_secret,
-        'scopes': creds.scopes
-    }
-    session["name"] = name
-    session["email"] = email
-    
-    return redirect("/")
+    """Callback OAuth Google - avec gestion d'erreur robuste"""
+    try:
+        # Vérifier si Google a renvoyé une erreur
+        error = request.args.get('error')
+        if error:
+            DEBUG_LOGS.append(f"❌ OAuth error from Google: {error}")
+            return STYLE + f"""
+            <div style='text-align:center; padding:50px;'>
+                <h1>❌ Connexion refusée</h1>
+                <p>Google a refusé l'accès : {error}</p>
+                <br>
+                <a href='/login' class='btn-success'>Réessayer</a>
+            </div>
+            """ + FOOTER
+        
+        # Récupérer le redirect_uri sauvegardé (ou le reconstruire)
+        redirect_uri = session.get("redirect_uri")
+        if not redirect_uri:
+            redirect_uri = url_for('callback', _external=True)
+            if redirect_uri.startswith("http://"):
+                redirect_uri = redirect_uri.replace("http://", "https://", 1)
+        
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            },
+            scopes=[
+                "https://www.googleapis.com/auth/userinfo.profile",
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "openid"
+            ],
+            redirect_uri=redirect_uri
+        )
+        
+        # CRUCIAL : Forcer l'URL de callback en HTTPS pour matcher le redirect_uri
+        authorization_response = request.url
+        if authorization_response.startswith("http://"):
+            authorization_response = authorization_response.replace("http://", "https://", 1)
+        
+        flow.fetch_token(authorization_response=authorization_response)
+        creds = flow.credentials
+        
+        info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
+        email = info.get('email')
+        name = info.get('name')
+        
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            user = User(email=email, name=name, refresh_token=creds.refresh_token)
+            db.session.add(user)
+        else:
+            if creds.refresh_token:
+                user.refresh_token = creds.refresh_token
+        
+        db.session.commit()
+        
+        session["credentials"] = {
+            'token': creds.token,
+            'refresh_token': creds.refresh_token,
+            'token_uri': creds.token_uri,
+            'client_id': creds.client_id,
+            'client_secret': creds.client_secret,
+            'scopes': creds.scopes
+        }
+        session["name"] = name
+        session["email"] = email
+        
+        # Nettoyer le redirect_uri temporaire
+        session.pop("redirect_uri", None)
+        
+        DEBUG_LOGS.append(f"✅ Connexion réussie: {email}")
+        
+        return redirect("/")
+        
+    except Exception as e:
+        error_msg = str(e)
+        DEBUG_LOGS.append(f"❌ Erreur callback OAuth: {error_msg}")
+        
+        # Message d'erreur user-friendly
+        if "invalid_grant" in error_msg.lower():
+            user_message = "Le code d'autorisation a expiré. Veuillez réessayer."
+        elif "redirect_uri" in error_msg.lower():
+            user_message = "Erreur de configuration (redirect_uri). Contactez le support."
+        else:
+            user_message = error_msg[:150]
+        
+        return STYLE + f"""
+        <div style='text-align:center; padding:50px;'>
+            <h1>❌ Erreur de connexion</h1>
+            <p>{user_message}</p>
+            <br>
+            <a href='/login' class='btn-success' style='margin-right:10px;'>🔄 Réessayer</a>
+            <a href='/' class='btn-logout'>Retour à l'accueil</a>
+        </div>
+        """ + FOOTER
 
 # ========================================
 # PAIEMENT STRIPE
