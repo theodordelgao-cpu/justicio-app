@@ -9562,120 +9562,33 @@ def admin_test_scan():
     """ + FOOTER
 
 # ========================================
+# INITIALISATION AUTOMATIQUE DE LA DB (FIX RENDER FREE TIER)
+# ========================================
+# Ce bloc s'exécute à chaque démarrage, que ce soit via:
+# - `python app.py` (développement local)
+# - `gunicorn app:app` (Render/Production)
+# Il crée les tables si elles n'existent pas.
+
+with app.app_context():
+    try:
+        # Créer toutes les tables définies dans les modèles
+        db.create_all()
+        print("✅ DATABASE: Tables créées/vérifiées avec succès!")
+        
+        # Log du nombre d'utilisateurs et de litiges (pour debug)
+        try:
+            user_count = User.query.count()
+            litigation_count = Litigation.query.count()
+            print(f"📊 DATABASE: {user_count} utilisateur(s), {litigation_count} litige(s)")
+        except:
+            print("📊 DATABASE: Tables vides (première initialisation)")
+            
+    except Exception as e:
+        print(f"❌ DATABASE ERROR: {e}")
+
+# ========================================
 # LANCEMENT
 # ========================================
 
 if __name__ == "__main__":
     app.run(debug=False)
-
-# ════════════════════════════════════════════════════════════════════════════════
-# 🧪 TEST CASES - Sujets et bodies à s'envoyer pour valider le scan
-# ════════════════════════════════════════════════════════════════════════════════
-#
-# INSTRUCTIONS: Envoyez ces emails depuis Proton/Outlook/Gmail vers votre adresse Gmail
-# connectée à Justicio. Le scan doit détecter les 5 travel + 5 ecommerce et ignorer les 3 rejets.
-#
-# ═══════════════════════════════════════════════════════════════════════════════
-# ✈️ TRAVEL - DOIVENT ÊTRE DÉTECTÉS
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# TEST TRAVEL 1 - Vol retardé Air France
-# Subject: Vol AF1234 retardé de 4 heures - Information passager
-# Body: Cher passager, nous vous informons que votre vol AF1234 Paris-Nice prévu le 15/01/2026 
-#       a subi un retard de 4 heures. Nouveau départ à 18h30. Air France vous présente ses excuses.
-#       Numéro de réservation: XYZABC. Montant du billet: 189€.
-#
-# TEST TRAVEL 2 - Train SNCF annulé
-# Subject: Annulation de votre TGV INOUI - Réservation 7894561
-# Body: Votre TGV INOUI n°6234 du 20/01/2026 Paris Gare de Lyon → Marseille a été annulé.
-#       Vous pouvez prétendre à une compensation selon le règlement européen.
-#       Prix du billet: 79€. Veuillez contacter le service client SNCF.
-#
-# TEST TRAVEL 3 - Bagage perdu EasyJet  
-# Subject: Réclamation bagage - Vol EZY4567
-# Body: Suite à votre vol EasyJet EZY4567 Londres-Paris du 10/01/2026, nous avons enregistré
-#       votre déclaration de bagage perdu. Référence PIR: CDGEZ12345. 
-#       Valeur déclarée des effets: 450€. Nous recherchons activement votre bagage.
-#
-# TEST TRAVEL 4 - Correspondance ratée Ryanair
-# Subject: Missed connection compensation request - FR8901
-# Body: Dear passenger, due to the delay of flight FR8901, you missed your connection FR8902.
-#       According to EC261/2004, you may be entitled to compensation up to 250€.
-#       Booking reference: ABC123. Please submit your claim within 30 days.
-#
-# TEST TRAVEL 5 - Retard Eurostar
-# Subject: Votre Eurostar retardé - Indemnisation possible
-# Body: Votre Eurostar 9014 Paris-Londres du 25/01/2026 est arrivé avec 2h30 de retard.
-#       Conformément à nos conditions, vous pouvez demander une compensation de 50% du prix.
-#       Billet: 145€. Référence: EURXYZ789.
-#
-# ═══════════════════════════════════════════════════════════════════════════════
-# 📦 E-COMMERCE - ⚠️ NE SERONT PAS DÉTECTÉS PAR LE SCAN AUTO (PIVOT STRATÉGIQUE)
-# Ces litiges doivent être déclarés manuellement via /declare
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# TEST ECOMMERCE 1 - Colis non reçu Amazon → DÉCLARER MANUELLEMENT
-# Subject: Problème avec votre commande Amazon #123-4567890
-# Body: Bonjour, vous nous avez signalé ne pas avoir reçu votre colis. Commande #123-4567890
-#       passée le 05/01/2026. Montant: 67,99€. Livraison prévue le 10/01.
-#       Si vous n'avez toujours pas reçu votre colis, merci de nous recontacter.
-#
-# TEST ECOMMERCE 2 - Produit défectueux Cdiscount → DÉCLARER MANUELLEMENT
-# Subject: Réclamation produit défectueux - Commande CD789456
-# Body: Suite à votre réclamation concernant l'article défectueux reçu (TV Samsung 55"),
-#       nous vous informons que votre demande de remboursement de 499€ est en cours d'examen.
-#       Commande CD789456 du 01/01/2026.
-#
-# TEST ECOMMERCE 3 - Remboursement refusé Zalando → DÉCLARER MANUELLEMENT
-# Subject: Votre demande de retour Zalando - Refusée
-# Body: Cher client, votre demande de retour pour la commande ZAL2024-1234 (chaussures Nike, 129€)
-#       a été refusée car l'article présente des traces d'usure. 
-#       Si vous contestez cette décision, vous pouvez faire une réclamation.
-#
-# TEST ECOMMERCE 4 - Article manquant Fnac → DÉCLARER MANUELLEMENT
-# Subject: Article manquant dans votre colis Fnac
-# Body: Nous avons bien reçu votre signalement. Il manque 1 article dans votre commande FNAC-567890.
-#       Article manquant: Casque Sony WH-1000XM5 (349€). 
-#       Notre service client traite votre dossier sous 48h.
-#
-# TEST ECOMMERCE 5 - Livraison jamais reçue SHEIN → DÉCLARER MANUELLEMENT
-# Subject: Where is my SHEIN order? Never received!
-# Body: Order #SH987654321 placed on January 3rd, 2026. Total: 45.99€.
-#       Tracking shows delivered but I never received my package!
-#       I've been waiting for 3 weeks. Please refund or reship my order.
-#
-# ═══════════════════════════════════════════════════════════════════════════════
-# ❌ REJETS - NE DOIVENT PAS ÊTRE DÉTECTÉS (factures normales, newsletters, success)
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# TEST REJET 1 - Facture normale Orange
-# Subject: Votre facture Orange du 15/01/2026
-# Body: Bonjour, votre facture Orange de janvier est disponible. Montant: 45,99€.
-#       Prélèvement SEPA le 20/01/2026. Merci pour votre confiance.
-#
-# TEST REJET 2 - Confirmation de commande (pas de problème)
-# Subject: Confirmation de votre commande Amazon #111-2222333
-# Body: Merci pour votre commande! Votre colis sera livré le 18/01/2026.
-#       Total: 89,99€. Suivez votre livraison sur notre site.
-#
-# TEST REJET 3 - Remboursement déjà effectué (SUCCESS)
-# Subject: Votre remboursement a été effectué - Commande FNAC-123
-# Body: Bonne nouvelle! Nous avons procédé au remboursement de 149€ sur votre compte.
-#       Le crédit apparaîtra sous 3-5 jours ouvrés. Merci de votre patience.
-#
-# ═══════════════════════════════════════════════════════════════════════════════
-# 📋 RÉSUMÉ PIVOT STRATÉGIQUE
-# ═══════════════════════════════════════════════════════════════════════════════
-# 
-# ✈️ SCAN AUTO (/scan-all) : Détecte UNIQUEMENT le transport (train, avion, VTC)
-#    - Tests TRAVEL 1-5 → Doivent être détectés
-#    - Tests ECOMMERCE 1-5 → Doivent être IGNORÉS par le scan
-#    - Tests REJET 1-3 → Doivent être IGNORÉS
-#
-# 📦 DÉCLARATION MANUELLE (/declare) : Pour TOUS les litiges e-commerce
-#    - Colis perdus, produits défectueux, remboursements refusés...
-#    - L'utilisateur déclare manuellement et lance la procédure
-#
-# ═══════════════════════════════════════════════════════════════════════════════
-# FIN DES TEST CASES
-# ═══════════════════════════════════════════════════════════════════════════════
