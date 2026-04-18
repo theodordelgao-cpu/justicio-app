@@ -7209,7 +7209,7 @@ def login():
         redirect_uri=url_for('callback', _external=True).replace("http://", "https://")
     )
     
-    url, state = flow.authorization_url(access_type='offline', prompt='consent')
+    url, state = flow.authorization_url(access_type='offline', prompt='consent', code_challenge_method=False)
     session["state"] = state
     if hasattr(flow, 'code_verifier'): session['code_verifier'] = flow.code_verifier
     return redirect(url)
