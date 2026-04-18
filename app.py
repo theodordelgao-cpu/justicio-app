@@ -7209,7 +7209,7 @@ def login():
         redirect_uri=url_for('callback', _external=True).replace("http://", "https://")
     )
     
-    url, state = flow.authorization_url(access_type='offline', prompt='consent', code_challenge_method=False)
+    url, state = flow.authorization_url(access_type='offline', prompt='consent')
     session["state"] = state
     if hasattr(flow, 'code_verifier'): session['code_verifier'] = flow.code_verifier
     return redirect(url)
@@ -7236,6 +7236,7 @@ def callback():
     )
 
     if 'code_verifier' in session: flow.code_verifier = session['code_verifier']
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     flow.fetch_token(authorization_response=request.url.replace("http://", "https://"))
     creds = flow.credentials
     
