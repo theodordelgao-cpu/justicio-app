@@ -1271,6 +1271,7 @@ class Litigation(db.Model):
     legal_notice_message_id = db.Column(db.String(100))  # ID Gmail du message envoyé
 
 with app.app_context():
+    db.create_all()
     try:
         # Migration : Ajoute les colonnes manquantes
         from sqlalchemy import text, inspect
@@ -10077,3 +10078,6 @@ if __name__ == "__main__":
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIN DES TEST CASES
 # ═══════════════════════════════════════════════════════════════════════════════
+
+if __name__ == '__main__':
+    app.run(debug=False)
