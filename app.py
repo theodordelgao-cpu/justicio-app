@@ -10079,5 +10079,776 @@ if __name__ == "__main__":
 # FIN DES TEST CASES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════════════════════════
+# 🎭 DEMO ROUTES - Accessibles sans connexion (marketing)
+# ════════════════════════════════════════════════════════════════════════════════
+
+DEMO_STYLE = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Justicio - Démo Interactive</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: 'Outfit', sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+    min-height: 100vh;
+    padding: 30px 20px 100px;
+    color: #1e293b;
+}
+.demo-nav {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 900px; margin: 0 auto 40px; padding: 15px 25px;
+    background: rgba(255,255,255,0.07); backdrop-filter: blur(10px);
+    border-radius: 16px; border: 1px solid rgba(255,255,255,0.12);
+}
+.demo-nav a { color: rgba(255,255,255,0.8); text-decoration: none; font-size: 0.95rem; }
+.demo-nav .logo { color: white; font-weight: 800; font-size: 1.2rem; }
+.demo-badge {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white; font-size: 0.75rem; font-weight: 700;
+    padding: 4px 12px; border-radius: 20px; letter-spacing: 0.05em;
+}
+.demo-steps {
+    display: flex; gap: 8px; max-width: 900px; margin: 0 auto 40px;
+    flex-wrap: wrap; justify-content: center;
+}
+.step-pill {
+    padding: 8px 18px; border-radius: 30px; font-size: 0.82rem; font-weight: 600;
+    border: 1.5px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.5);
+    text-decoration: none; transition: all 0.25s;
+}
+.step-pill.active {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    border-color: transparent; color: white;
+    box-shadow: 0 4px 15px rgba(79,70,229,0.4);
+}
+.step-pill:hover:not(.active) { border-color: rgba(255,255,255,0.35); color: rgba(255,255,255,0.8); }
+.card {
+    background: rgba(255,255,255,0.97); border-radius: 24px;
+    padding: 40px; max-width: 900px; margin: 0 auto;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.3);
+}
+.btn-primary {
+    display: inline-block; padding: 16px 40px;
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    color: white; text-decoration: none; border-radius: 50px;
+    font-size: 1.1rem; font-weight: 700;
+    box-shadow: 0 10px 30px rgba(79,70,229,0.4);
+    transition: all 0.3s; border: none; cursor: pointer;
+}
+.btn-primary:hover { transform: translateY(-3px); box-shadow: 0 15px 40px rgba(79,70,229,0.5); }
+.btn-success {
+    display: inline-block; padding: 16px 40px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white; text-decoration: none; border-radius: 50px;
+    font-size: 1.1rem; font-weight: 700;
+    box-shadow: 0 10px 30px rgba(16,185,129,0.4);
+    transition: all 0.3s;
+}
+.btn-success:hover { transform: translateY(-3px); box-shadow: 0 15px 40px rgba(16,185,129,0.5); }
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+}
+@keyframes scan-line {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(400%); }
+}
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+@keyframes typewriter {
+    from { width: 0; }
+    to { width: 100%; }
+}
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes countUp { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+@keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(16,185,129,0.3); }
+    50% { box-shadow: 0 0 40px rgba(16,185,129,0.7); }
+}
+.animate-fade { animation: fadeInUp 0.6s ease forwards; }
+.animate-fade-1 { animation: fadeInUp 0.6s ease 0.1s both; }
+.animate-fade-2 { animation: fadeInUp 0.6s ease 0.25s both; }
+.animate-fade-3 { animation: fadeInUp 0.6s ease 0.4s both; }
+.animate-fade-4 { animation: fadeInUp 0.6s ease 0.55s both; }
+</style>
+"""
+
+DEMO_FOOTER = """
+<div style="text-align:center; margin-top:40px;">
+    <a href="/login" style="display:inline-block; padding:14px 35px;
+       background:linear-gradient(135deg,#10b981,#059669); color:white;
+       text-decoration:none; border-radius:50px; font-size:1rem; font-weight:700;
+       box-shadow:0 8px 25px rgba(16,185,129,0.4); transition:all 0.3s;"
+       onmouseover="this.style.transform='translateY(-2px)'"
+       onmouseout="this.style.transform='translateY(0)'">
+        🚀 Essayer gratuitement avec mon vrai compte
+    </a>
+    <p style="color:rgba(255,255,255,0.5); font-size:0.85rem; margin-top:12px;">
+        Connexion sécurisée avec Google · Aucune carte bancaire
+    </p>
+</div>
+<footer style="text-align:center; margin-top:30px; color:rgba(255,255,255,0.3); font-size:0.8rem;">
+    <a href="/cgu" style="color:rgba(255,255,255,0.3);">CGU</a> |
+    <a href="/confidentialite" style="color:rgba(255,255,255,0.3);">Confidentialité</a> |
+    <a href="/" style="color:rgba(255,255,255,0.3);">Accueil</a>
+    <p style="margin-top:6px;">© 2026 Justicio.fr</p>
+</footer>
+</body></html>
+"""
+
+def demo_nav(active=""):
+    steps = [
+        ("scan", "1. Scan Gmail", "/demo/scan"),
+        ("litiges", "2. Litiges détectés", "/demo/litiges"),
+        ("analyse", "3. Analyse IA", "/demo/analyse"),
+        ("mise-en-demeure", "4. Mise en demeure", "/demo/mise-en-demeure"),
+        ("suivi", "5. Suivi", "/demo/suivi"),
+    ]
+    pills = "".join(
+        f"<a href='{url}' class='step-pill {'active' if key == active else ''}'>{label}</a>"
+        for key, label, url in steps
+    )
+    return f"""
+    <nav class="demo-nav">
+        <a href="/" class="logo">⚖️ Justicio</a>
+        <span class="demo-badge">MODE DÉMO</span>
+        <a href="/login" style="color:#10b981; font-weight:600;">Créer un compte →</a>
+    </nav>
+    <div class="demo-steps">{pills}</div>
+    """
+
+
+@app.route("/demo")
+def demo_home():
+    return DEMO_STYLE + f"""
+    {demo_nav()}
+    <div class="card animate-fade" style="text-align:center; padding:60px 40px;">
+        <div style="font-size:5rem; margin-bottom:20px;
+                    filter: drop-shadow(0 0 30px rgba(79,70,229,0.5));">⚖️</div>
+        <h1 style="font-size:2.8rem; font-weight:800; color:#0f172a; margin-bottom:16px;">
+            Justicio en action
+        </h1>
+        <p style="font-size:1.2rem; color:#475569; max-width:580px; margin:0 auto 40px; line-height:1.7;">
+            Découvrez comment Justicio scanne votre boîte Gmail, détecte vos litiges et envoie
+            automatiquement des mises en demeure pour récupérer votre argent.
+        </p>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+                    gap:20px; margin-bottom:50px; text-align:left;">
+            <div style="background:#f0fdf4; border-radius:16px; padding:24px; border:1.5px solid #bbf7d0;">
+                <div style="font-size:2rem; margin-bottom:10px;">📧</div>
+                <div style="font-weight:700; color:#166534; font-size:0.95rem;">Scan Gmail</div>
+                <div style="color:#4ade80; font-size:0.85rem; margin-top:4px;">Automatique</div>
+            </div>
+            <div style="background:#eff6ff; border-radius:16px; padding:24px; border:1.5px solid #bfdbfe;">
+                <div style="font-size:2rem; margin-bottom:10px;">🤖</div>
+                <div style="font-weight:700; color:#1e40af; font-size:0.95rem;">Analyse IA</div>
+                <div style="color:#60a5fa; font-size:0.85rem; margin-top:4px;">GPT-4o</div>
+            </div>
+            <div style="background:#fdf4ff; border-radius:16px; padding:24px; border:1.5px solid #e9d5ff;">
+                <div style="font-size:2rem; margin-bottom:10px;">📜</div>
+                <div style="font-weight:700; color:#7e22ce; font-size:0.95rem;">Mise en demeure</div>
+                <div style="color:#c084fc; font-size:0.85rem; margin-top:4px;">Juridiquement valide</div>
+            </div>
+            <div style="background:#fff7ed; border-radius:16px; padding:24px; border:1.5px solid #fed7aa;">
+                <div style="font-size:2rem; margin-bottom:10px;">💰</div>
+                <div style="font-weight:700; color:#9a3412; font-size:0.95rem;">Remboursement</div>
+                <div style="color:#fb923c; font-size:0.85rem; margin-top:4px;">En moyenne 18 jours</div>
+            </div>
+        </div>
+
+        <a href="/demo/scan" class="btn-primary" style="font-size:1.25rem; padding:20px 55px;">
+            ▶ Voir la démo
+        </a>
+        <p style="color:#94a3b8; font-size:0.9rem; margin-top:16px;">
+            Données fictives · Aucune connexion requise
+        </p>
+    </div>
+    {DEMO_FOOTER}
+    """
+
+
+@app.route("/demo/scan")
+def demo_scan():
+    emails = [
+        ("Amazon", "noreply@amazon.fr", "Votre commande #405-8829341 a été expédiée", "12 avr.", "📦"),
+        ("SNCF", "no-reply@sncf.fr", "Retard de 47 min - TGV Paris-Lyon du 08/04", "8 avr.", "🚆"),
+        ("Free", "facture@free.fr", "Votre facture Free Mobile - Avril 2026", "1 avr.", "📱"),
+        ("Leboncoin", "noreply@leboncoin.fr", "Article non reçu - signalement vendeur", "28 mars", "🛍️"),
+        ("Air France", "no-reply@airfrance.fr", "Vol AF1234 annulé - Options de remboursement", "25 mars", "✈️"),
+        ("Cdiscount", "commande@cdiscount.com", "Colis retourné à l'expéditeur - CMD-7723", "22 mars", "📦"),
+        ("Orange", "no-reply@orange.fr", "Résiliation refusée - Contrat #8821-B", "18 mars", "📡"),
+        ("Booking.com", "noreply@booking.com", "Remboursement refusé - Réservation #4492", "15 mars", "🏨"),
+        ("Boulanger", "noreply@boulanger.fr", "Produit défectueux - TV 55 pouces", "10 mars", "📺"),
+        ("La Redoute", "commandes@laredoute.fr", "Colis perdu en transit - Ref LR-99812", "5 mars", "👗"),
+    ]
+    rows = ""
+    for i, (brand, sender, subject, date, icon) in enumerate(emails):
+        is_litige = brand in ("SNCF", "Amazon", "Air France")
+        highlight = "background:linear-gradient(135deg,#fef3c7,#fff7ed); border-left:3px solid #f59e0b;" if is_litige else ""
+        badge = "<span style='background:#fbbf24;color:#92400e;font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;'>⚠️ LITIGE</span>" if is_litige else ""
+        rows += f"""
+        <div class="email-row animate-fade-{min(i%4+1,4)}" style="display:flex; align-items:center; gap:15px;
+             padding:14px 18px; border-radius:12px; margin-bottom:8px; {highlight}
+             {'background:#f8fafc;' if not is_litige else ''}
+             animation-delay:{i*0.07}s;">
+            <span style="font-size:1.5rem; width:36px; text-align:center;">{icon}</span>
+            <div style="flex:1; min-width:0;">
+                <div style="font-weight:700; color:#1e293b; font-size:0.9rem;">{brand} {badge}</div>
+                <div style="color:#64748b; font-size:0.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{subject}</div>
+                <div style="color:#94a3b8; font-size:0.75rem;">{sender}</div>
+            </div>
+            <div style="color:#94a3b8; font-size:0.8rem; white-space:nowrap;">{date}</div>
+        </div>"""
+
+    return DEMO_STYLE + f"""
+    <style>
+    .scan-bar {{
+        height: 3px; background: linear-gradient(90deg, #4f46e5, #10b981, #4f46e5);
+        background-size: 200% 100%; animation: shimmer 1.5s infinite;
+        border-radius: 2px; margin-bottom: 30px;
+    }}
+    .counter-anim {{ animation: countUp 0.5s ease 0.8s both; display:inline-block; }}
+    .scanning-dot {{
+        width:10px; height:10px; border-radius:50%; background:#10b981;
+        display:inline-block; animation: pulse-dot 1s infinite;
+    }}
+    .scanning-dot:nth-child(2) {{ animation-delay:.15s; }}
+    .scanning-dot:nth-child(3) {{ animation-delay:.3s; }}
+    </style>
+    {demo_nav("scan")}
+    <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <h2 style="font-size:1.6rem; font-weight:800; color:#0f172a;">📧 Scan de la boîte Gmail</h2>
+            <div style="display:flex; align-items:center; gap:8px; color:#10b981; font-weight:600; font-size:0.9rem;">
+                <span class="scanning-dot"></span>
+                <span class="scanning-dot"></span>
+                <span class="scanning-dot"></span>
+                <span>Analyse en cours...</span>
+            </div>
+        </div>
+        <div class="scan-bar"></div>
+
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:15px; margin-bottom:28px;">
+            <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe); border-radius:14px; padding:20px; text-align:center;">
+                <div class="counter-anim" style="font-size:2.2rem; font-weight:800; color:#1e40af;">1 847</div>
+                <div style="color:#3b82f6; font-size:0.85rem; font-weight:600; margin-top:4px;">Emails analysés</div>
+            </div>
+            <div style="background:linear-gradient(135deg,#fef3c7,#fde68a); border-radius:14px; padding:20px; text-align:center;">
+                <div class="counter-anim" style="font-size:2.2rem; font-weight:800; color:#92400e; animation-delay:1s;">3</div>
+                <div style="color:#d97706; font-size:0.85rem; font-weight:600; margin-top:4px;">Litiges détectés</div>
+            </div>
+            <div style="background:linear-gradient(135deg,#f0fdf4,#bbf7d0); border-radius:14px; padding:20px; text-align:center;">
+                <div class="counter-anim" style="font-size:2.2rem; font-weight:800; color:#166534; animation-delay:1.2s;">487€</div>
+                <div style="color:#16a34a; font-size:0.85rem; font-weight:600; margin-top:4px;">Potentiel récupérable</div>
+            </div>
+        </div>
+
+        <div style="background:#f8fafc; border-radius:14px; padding:20px; max-height:420px; overflow-y:auto;">
+            <div style="font-size:0.82rem; font-weight:700; color:#64748b; text-transform:uppercase;
+                        letter-spacing:0.08em; margin-bottom:14px;">Emails analysés</div>
+            {rows}
+        </div>
+
+        <div style="text-align:center; margin-top:30px;">
+            <a href="/demo/litiges" class="btn-primary">Voir les litiges détectés →</a>
+        </div>
+    </div>
+    {DEMO_FOOTER}
+    """
+
+
+@app.route("/demo/litiges")
+def demo_litiges():
+    litiges = [
+        {
+            "icon": "🚆", "company": "SNCF", "color_bg": "#eff6ff", "color_border": "#bfdbfe",
+            "color_text": "#1e40af", "color_badge": "#3b82f6",
+            "title": "Retard TGV de 47 minutes",
+            "detail": "TGV Paris-Lyon du 08 avril 2026 · Arrivée 18h52 au lieu de 18h05",
+            "amount": "47,50€", "law": "Règlement EU 1371/2007",
+            "status": "Litige détecté", "status_color": "#d97706", "status_bg": "#fef3c7",
+            "chance": "95%",
+        },
+        {
+            "icon": "📦", "company": "Amazon", "color_bg": "#fdf4ff", "color_border": "#e9d5ff",
+            "color_text": "#7e22ce", "color_badge": "#a855f7",
+            "title": "Colis non reçu — Commande #405-8829341",
+            "detail": "Commande du 02 avril 2026 · Valeur déclarée : 189€ · Délai dépassé de 12 jours",
+            "amount": "189€", "law": "Directive UE 2011/83 (Livraison)",
+            "status": "Litige détecté", "status_color": "#d97706", "status_bg": "#fef3c7",
+            "chance": "88%",
+        },
+        {
+            "icon": "✈️", "company": "Air France", "color_bg": "#fff7ed", "color_border": "#fed7aa",
+            "color_text": "#9a3412", "color_badge": "#f97316",
+            "title": "Vol AF1234 annulé sans remboursement",
+            "detail": "Vol Paris-Barcelone du 25 mars 2026 · Annulation 2h avant décollage · Aucune alternative proposée",
+            "amount": "250€", "law": "Règlement CE 261/2004",
+            "status": "Litige détecté", "status_color": "#d97706", "status_bg": "#fef3c7",
+            "chance": "92%",
+        },
+    ]
+
+    cards = ""
+    for i, l in enumerate(litiges):
+        cards += f"""
+        <div class="animate-fade-{i+1}" style="background:{l['color_bg']}; border:2px solid {l['color_border']};
+             border-radius:20px; padding:28px; margin-bottom:20px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:20px; flex-wrap:wrap;">
+                <div style="display:flex; align-items:center; gap:14px; flex:1; min-width:200px;">
+                    <div style="font-size:2.5rem; width:56px; height:56px; background:white;
+                                border-radius:14px; display:flex; align-items:center; justify-content:center;
+                                box-shadow:0 4px 12px rgba(0,0,0,0.1);">{l['icon']}</div>
+                    <div>
+                        <div style="font-weight:800; color:{l['color_text']}; font-size:1.1rem;">{l['company']}</div>
+                        <div style="color:#475569; font-size:0.95rem; font-weight:600; margin-top:3px;">{l['title']}</div>
+                        <div style="color:#64748b; font-size:0.82rem; margin-top:4px;">{l['detail']}</div>
+                    </div>
+                </div>
+                <div style="text-align:right; flex-shrink:0;">
+                    <div style="font-size:2rem; font-weight:800; color:{l['color_text']};">{l['amount']}</div>
+                    <span style="background:{l['status_bg']}; color:{l['status_color']};
+                                 font-size:0.75rem; font-weight:700; padding:4px 12px; border-radius:20px;">
+                        ⚠️ {l['status']}
+                    </span>
+                </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:15px; margin-top:18px; padding-top:18px;
+                        border-top:1px solid {l['color_border']}; flex-wrap:wrap;">
+                <div style="flex:1; min-width:160px;">
+                    <div style="font-size:0.78rem; color:#94a3b8; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Loi applicable</div>
+                    <div style="font-size:0.88rem; color:#475569; font-weight:600;">⚖️ {l['law']}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.78rem; color:#94a3b8; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Chance de succès</div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="width:80px; height:6px; background:#e2e8f0; border-radius:3px; overflow:hidden;">
+                            <div style="width:{l['chance']}; height:100%; background:linear-gradient(90deg,#10b981,#059669); border-radius:3px;"></div>
+                        </div>
+                        <span style="font-weight:800; color:#10b981; font-size:0.95rem;">{l['chance']}</span>
+                    </div>
+                </div>
+            </div>
+        </div>"""
+
+    return DEMO_STYLE + f"""
+    {demo_nav("litiges")}
+    <div class="card">
+        <div style="text-align:center; margin-bottom:30px;">
+            <h2 style="font-size:1.6rem; font-weight:800; color:#0f172a; margin-bottom:8px;">
+                🎯 3 litiges détectés automatiquement
+            </h2>
+            <p style="color:#64748b;">Justicio a identifié <strong>487€</strong> récupérables dans votre boîte mail</p>
+        </div>
+        {cards}
+        <div style="text-align:center; margin-top:10px;">
+            <a href="/demo/analyse" class="btn-primary">Voir l'analyse IA →</a>
+        </div>
+    </div>
+    {DEMO_FOOTER}
+    """
+
+
+@app.route("/demo/analyse")
+def demo_analyse():
+    return DEMO_STYLE + f"""
+    <style>
+    .ai-text {{
+        overflow: hidden;
+        white-space: pre-wrap;
+        font-family: 'Outfit', sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.8;
+        color: #334155;
+    }}
+    .cursor {{
+        display: inline-block; width: 2px; height: 1.1em;
+        background: #4f46e5; margin-left: 2px;
+        animation: blink 0.8s infinite; vertical-align: text-bottom;
+    }}
+    .ai-bubble {{
+        background: linear-gradient(135deg, #eff6ff, #f0fdf4);
+        border: 1.5px solid #bfdbfe;
+        border-radius: 16px; padding: 24px; margin-bottom: 20px;
+    }}
+    .thinking-dots span {{
+        display:inline-block; width:8px; height:8px;
+        border-radius:50%; background:#4f46e5; margin:0 2px;
+        animation: pulse-dot 1.2s infinite;
+    }}
+    .thinking-dots span:nth-child(2) {{ animation-delay:.2s; }}
+    .thinking-dots span:nth-child(3) {{ animation-delay:.4s; }}
+    </style>
+    {demo_nav("analyse")}
+    <div class="card">
+        <div style="display:flex; align-items:center; gap:14px; margin-bottom:25px;">
+            <div style="width:48px; height:48px; background:linear-gradient(135deg,#4f46e5,#7c3aed);
+                        border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:1.5rem;">🤖</div>
+            <div>
+                <h2 style="font-size:1.5rem; font-weight:800; color:#0f172a; margin-bottom:3px;">Analyse IA — Dossier SNCF</h2>
+                <div style="color:#64748b; font-size:0.88rem;">Modèle GPT-4o · Analyse juridique automatique</div>
+            </div>
+        </div>
+
+        <div class="ai-bubble animate-fade-1">
+            <div style="font-size:0.78rem; color:#64748b; text-transform:uppercase; letter-spacing:0.08em; font-weight:700; margin-bottom:12px;">
+                🔍 Faits analysés
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px;">
+                <div style="background:white; border-radius:10px; padding:14px;">
+                    <div style="font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">Transporteur</div>
+                    <div style="font-weight:700; color:#1e293b;">SNCF — TGV 6621</div>
+                </div>
+                <div style="background:white; border-radius:10px; padding:14px;">
+                    <div style="font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">Retard constaté</div>
+                    <div style="font-weight:700; color:#ef4444;">47 minutes</div>
+                </div>
+                <div style="background:white; border-radius:10px; padding:14px;">
+                    <div style="font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">Seuil légal</div>
+                    <div style="font-weight:700; color:#1e293b;">60 min (Règl. EU 1371)</div>
+                </div>
+                <div style="background:white; border-radius:10px; padding:14px;">
+                    <div style="font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">Remboursement droit</div>
+                    <div style="font-weight:700; color:#10b981;">25% du prix du billet</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="animate-fade-2" style="background:#fafafa; border:1.5px solid #e2e8f0; border-radius:16px; padding:24px; margin-bottom:20px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+                <div class="thinking-dots"><span></span><span></span><span></span></div>
+                <span style="color:#4f46e5; font-weight:600; font-size:0.9rem;">Justicio analyse votre dossier...</span>
+            </div>
+            <div class="ai-text" id="ai-output"></div><span class="cursor" id="cursor"></span>
+        </div>
+
+        <div class="animate-fade-3" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7); border:1.5px solid #bbf7d0; border-radius:16px; padding:24px; margin-bottom:28px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <div style="font-size:2rem;">✅</div>
+                <div>
+                    <div style="font-weight:800; color:#166534; font-size:1.05rem;">Litige recevable — Mise en demeure recommandée</div>
+                    <div style="color:#16a34a; font-size:0.88rem; margin-top:4px;">
+                        Montant réclamable : <strong>47,50€</strong> · Probabilité de succès : <strong>95%</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align:center;">
+            <a href="/demo/mise-en-demeure" class="btn-primary">Voir la mise en demeure générée →</a>
+        </div>
+    </div>
+
+    <script>
+    const text = `Analyse du dossier SNCF — Retard TGV 6621 du 08 avril 2026
+
+Après examen de l'email de confirmation de voyage et du rapport de retard SNCF, nous constatons que le train TGV 6621 reliant Paris-Montparnasse à Lyon-Part-Dieu a accusé un retard de 47 minutes à l'arrivée.
+
+⚖️ Cadre juridique applicable :
+Le Règlement (CE) n°1371/2007 du Parlement européen relatif aux droits et obligations des voyageurs ferroviaires s'applique à ce trajet. Selon l'article 17 de ce règlement, tout retard supérieur à 60 minutes ouvre droit à une indemnisation de 25% du prix du billet, et tout retard supérieur à 120 minutes ouvre droit à 50%.
+
+📋 Évaluation du dossier :
+Bien que le retard de 47 minutes soit inférieur au seuil légal européen de 60 minutes, la politique commerciale SNCF (Garantie Ponctualité) prévoit une indemnisation dès 30 minutes de retard pour les abonnés TGV Max et les détenteurs de billets Grande Vitesse.
+
+Le client étant titulaire d'un billet plein tarif à 190€, Justicio recommande la rédaction d'une mise en demeure invoquant la Garantie Ponctualité SNCF pour obtenir un remboursement de 47,50€ (25% de 190€).
+
+🎯 Décision : Mise en demeure envoyée à relation-client@sncf.fr`;
+
+    let i = 0;
+    const el = document.getElementById('ai-output');
+    const cursor = document.getElementById('cursor');
+    function type() {{
+        if (i < text.length) {{
+            el.textContent += text[i++];
+            setTimeout(type, i < 50 ? 20 : 12);
+        }} else {{
+            cursor.style.display = 'none';
+        }}
+    }}
+    setTimeout(type, 1200);
+    </script>
+    {DEMO_FOOTER}
+    """
+
+
+@app.route("/demo/mise-en-demeure")
+def demo_mise_en_demeure():
+    letter = """
+<p style="margin-bottom:8px;"><strong>Paris, le 09 avril 2026</strong></p>
+
+<p style="margin-bottom:20px;">
+<strong>Expéditeur :</strong> Marie Dupont<br>
+12 rue de la Paix, 75001 Paris<br>
+marie.dupont@email.fr · 06 12 34 56 78
+</p>
+
+<p style="margin-bottom:20px;">
+<strong>Destinataire :</strong> SNCF — Service Relations Clientèle<br>
+2 Place aux Étoiles, 93200 Saint-Denis<br>
+relation-client@sncf.fr
+</p>
+
+<p style="margin-bottom:20px;"><strong>Objet : MISE EN DEMEURE — Indemnisation retard TGV 6621 du 08/04/2026</strong></p>
+
+<p style="margin-bottom:16px;">Madame, Monsieur,</p>
+
+<p style="margin-bottom:16px;">Par la présente, je vous mets en demeure de me rembourser la somme de <strong>47,50 €</strong> au titre du retard constaté sur le trajet Paris-Montparnasse → Lyon-Part-Dieu (TGV 6621), le 08 avril 2026.</p>
+
+<p style="margin-bottom:16px;">En effet, mon train est arrivé à destination avec un retard de <strong>47 minutes</strong>, soit après 18h52 au lieu de l'heure prévue 18h05. Ce retard est attesté par les systèmes SNCF eux-mêmes.</p>
+
+<p style="margin-bottom:16px;">En application du Règlement (CE) n°1371/2007 du Parlement européen et du Conseil du 23 octobre 2007 relatif aux droits et obligations des voyageurs ferroviaires, ainsi que de votre propre Garantie Ponctualité pour les billets Grande Vitesse, j'ai droit à une indemnisation de <strong>25% du prix du billet</strong> (190,00 €), soit <strong>47,50 €</strong>.</p>
+
+<p style="margin-bottom:16px;">À défaut de règlement sous <strong>15 jours</strong> à compter de la réception de ce courrier, je me réserve le droit de saisir le Médiateur SNCF et, le cas échéant, le tribunal compétent, avec demande de dommages et intérêts supplémentaires pour résistance abusive.</p>
+
+<p style="margin-bottom:24px;">Dans l'attente de votre réponse, je vous adresse, Madame, Monsieur, mes salutations distinguées.</p>
+
+<p><strong>Marie Dupont</strong><br>
+<em>Signature électronique certifiée</em></p>
+"""
+    return DEMO_STYLE + f"""
+    <style>
+    .letter-paper {{
+        background: white; border-radius: 4px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
+        padding: 50px 55px; margin: 24px 0;
+        font-size: 0.95rem; line-height: 1.8; color: #1e293b;
+        position: relative;
+    }}
+    .letter-paper::before {{
+        content: '';
+        position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+        background: linear-gradient(180deg, #4f46e5, #10b981);
+        border-radius: 4px 0 0 4px;
+    }}
+    .stamp {{
+        position: absolute; top: 20px; right: 20px;
+        width: 80px; height: 80px; border: 3px solid #ef4444;
+        border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        flex-direction: column; transform: rotate(-12deg);
+        opacity: 0.7;
+    }}
+    .stamp div {{ font-size: 0.55rem; font-weight:800; color:#ef4444; text-align:center; text-transform:uppercase; }}
+    </style>
+    {demo_nav("mise-en-demeure")}
+    <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+            <h2 style="font-size:1.5rem; font-weight:800; color:#0f172a;">📜 Mise en demeure générée</h2>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <span style="background:#f0fdf4; color:#166534; border:1.5px solid #bbf7d0;
+                             font-size:0.8rem; font-weight:700; padding:6px 14px; border-radius:20px;">
+                    ✅ Juridiquement valide
+                </span>
+                <span style="background:#eff6ff; color:#1e40af; border:1.5px solid #bfdbfe;
+                             font-size:0.8rem; font-weight:700; padding:6px 14px; border-radius:20px;">
+                    🤖 Générée par IA
+                </span>
+            </div>
+        </div>
+
+        <div style="background:#fef3c7; border:1.5px solid #fbbf24; border-radius:14px; padding:16px 20px; margin-bottom:20px; display:flex; gap:12px; align-items:center;">
+            <span style="font-size:1.4rem;">⚡</span>
+            <div style="font-size:0.9rem; color:#92400e;">
+                <strong>Envoi automatique en cours</strong> — La lettre sera transmise à
+                <strong>relation-client@sncf.fr</strong> dans les 60 secondes.
+            </div>
+        </div>
+
+        <div class="letter-paper animate-fade-1" style="position:relative;">
+            <div class="stamp">
+                <div>Justicio</div>
+                <div style="font-size:0.7rem;">⚖️</div>
+                <div>Certifié</div>
+            </div>
+            {letter}
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-top:20px;">
+            <div style="background:#f0fdf4; border-radius:12px; padding:18px; text-align:center;">
+                <div style="font-size:1.5rem; margin-bottom:6px;">📧</div>
+                <div style="font-weight:700; color:#166534; font-size:0.9rem;">Envoi email</div>
+                <div style="color:#16a34a; font-size:0.8rem;">relation-client@sncf.fr</div>
+            </div>
+            <div style="background:#eff6ff; border-radius:12px; padding:18px; text-align:center;">
+                <div style="font-size:1.5rem; margin-bottom:6px;">📋</div>
+                <div style="font-weight:700; color:#1e40af; font-size:0.9rem;">Archivage</div>
+                <div style="color:#3b82f6; font-size:0.8rem;">Dossier sauvegardé</div>
+            </div>
+            <div style="background:#fff7ed; border-radius:12px; padding:18px; text-align:center;">
+                <div style="font-size:1.5rem; margin-bottom:6px;">⏱️</div>
+                <div style="font-weight:700; color:#9a3412; font-size:0.9rem;">Délai de réponse</div>
+                <div style="color:#f97316; font-size:0.8rem;">15 jours légaux</div>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin-top:30px;">
+            <a href="/demo/suivi" class="btn-primary">Voir le tableau de suivi →</a>
+        </div>
+    </div>
+    {DEMO_FOOTER}
+    """
+
+
+@app.route("/demo/suivi")
+def demo_suivi():
+    dossiers = [
+        {
+            "icon": "🚆", "company": "SNCF", "amount": "47,50€",
+            "title": "Retard TGV 6621 — 47 min",
+            "date_envoi": "09 avr. 2026",
+            "timeline": [
+                ("✅", "Litige détecté", "08 avr. 2026", True),
+                ("✅", "Mise en demeure générée", "09 avr. 2026", True),
+                ("✅", "Lettre envoyée", "09 avr. 2026", True),
+                ("✅", "Email reçu par SNCF", "09 avr. 2026", True),
+                ("💰", "Remboursé — 47,50€", "15 avr. 2026", True),
+            ],
+            "status": "Remboursé 47,50€", "status_color": "#166534", "status_bg": "#f0fdf4",
+            "status_border": "#bbf7d0", "glow": True,
+        },
+        {
+            "icon": "📦", "company": "Amazon", "amount": "189€",
+            "title": "Colis non reçu — CMD #405-8829341",
+            "date_envoi": "10 avr. 2026",
+            "timeline": [
+                ("✅", "Litige détecté", "09 avr. 2026", True),
+                ("✅", "Mise en demeure générée", "10 avr. 2026", True),
+                ("✅", "Lettre envoyée", "10 avr. 2026", True),
+                ("✅", "Email reçu par Amazon", "10 avr. 2026", True),
+                ("⏳", "En attente de réponse", "—", False),
+            ],
+            "status": "Reçue — Réponse attendue",
+            "status_color": "#d97706", "status_bg": "#fef3c7",
+            "status_border": "#fde68a", "glow": False,
+        },
+        {
+            "icon": "✈️", "company": "Air France", "amount": "250€",
+            "title": "Vol AF1234 annulé",
+            "date_envoi": "11 avr. 2026",
+            "timeline": [
+                ("✅", "Litige détecté", "10 avr. 2026", True),
+                ("✅", "Mise en demeure générée", "11 avr. 2026", True),
+                ("✅", "Lettre envoyée", "11 avr. 2026", True),
+                ("⏳", "Accusé de réception en attente", "—", False),
+                ("⏳", "Remboursement en attente", "—", False),
+            ],
+            "status": "Envoyée",
+            "status_color": "#1e40af", "status_bg": "#eff6ff",
+            "status_border": "#bfdbfe", "glow": False,
+        },
+    ]
+
+    total_rembourse = "47,50€"
+    total_en_cours = "439€"
+
+    cards = ""
+    for i, d in enumerate(dossiers):
+        steps_html = ""
+        for icon, label, date, done in d["timeline"]:
+            color = "#10b981" if done and icon == "✅" else ("#fbbf24" if icon == "💰" else "#94a3b8")
+            steps_html += f"""
+            <div style="display:flex; align-items:center; gap:10px; padding:8px 0;
+                        border-bottom:1px solid #f1f5f9; animation:slideIn 0.5s ease both;">
+                <span style="font-size:1.1rem; width:24px; text-align:center;">{icon}</span>
+                <span style="flex:1; font-size:0.88rem; color:{'#1e293b' if done else '#94a3b8'}; font-weight:{'600' if done else '400'};">{label}</span>
+                <span style="font-size:0.78rem; color:#94a3b8;">{date}</span>
+            </div>"""
+
+        glow_style = "animation: glowPulse 2s infinite;" if d["glow"] else ""
+        cards += f"""
+        <div class="animate-fade-{i+1}" style="border:2px solid {d['status_border']};
+             background:{d['status_bg']}; border-radius:20px; padding:28px; margin-bottom:22px; {glow_style}">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; flex-wrap:wrap; gap:12px;">
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <span style="font-size:2rem;">{d['icon']}</span>
+                    <div>
+                        <div style="font-weight:800; color:{d['status_color']}; font-size:1.05rem;">{d['company']}</div>
+                        <div style="color:#475569; font-size:0.88rem;">{d['title']}</div>
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:1.8rem; font-weight:800; color:{d['status_color']};">{d['amount']}</div>
+                    <span style="background:white; color:{d['status_color']}; border:1.5px solid {d['status_border']};
+                                 font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:15px;">
+                        {d['status']}
+                    </span>
+                </div>
+            </div>
+            <div style="background:white; border-radius:12px; padding:16px;">
+                <div style="font-size:0.75rem; font-weight:700; color:#94a3b8; text-transform:uppercase;
+                            letter-spacing:0.08em; margin-bottom:8px;">Historique</div>
+                {steps_html}
+            </div>
+        </div>"""
+
+    return DEMO_STYLE + f"""
+    <style>
+    @keyframes glowPulse {{
+        0%, 100% {{ box-shadow: 0 0 0 0 rgba(16,185,129,0.1); }}
+        50% {{ box-shadow: 0 0 30px 8px rgba(16,185,129,0.25); }}
+    }}
+    </style>
+    {demo_nav("suivi")}
+    <div class="card">
+        <div style="text-align:center; margin-bottom:30px;">
+            <h2 style="font-size:1.6rem; font-weight:800; color:#0f172a; margin-bottom:8px;">
+                📊 Tableau de suivi des dossiers
+            </h2>
+            <p style="color:#64748b;">Justicio gère tout automatiquement — aucune action requise de votre part</p>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:15px; margin-bottom:30px;">
+            <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7); border-radius:14px; padding:20px; text-align:center;
+                        border:1.5px solid #bbf7d0; animation:glowPulse 2s infinite;">
+                <div style="font-size:0.78rem; font-weight:700; color:#16a34a; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px;">Remboursé</div>
+                <div style="font-size:2rem; font-weight:800; color:#166534;">{total_rembourse}</div>
+            </div>
+            <div style="background:linear-gradient(135deg,#fef3c7,#fde68a); border-radius:14px; padding:20px; text-align:center;
+                        border:1.5px solid #fbbf24;">
+                <div style="font-size:0.78rem; font-weight:700; color:#d97706; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px;">En cours</div>
+                <div style="font-size:2rem; font-weight:800; color:#92400e;">{total_en_cours}</div>
+            </div>
+            <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe); border-radius:14px; padding:20px; text-align:center;
+                        border:1.5px solid #bfdbfe;">
+                <div style="font-size:0.78rem; font-weight:700; color:#3b82f6; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px;">Dossiers ouverts</div>
+                <div style="font-size:2rem; font-weight:800; color:#1e40af;">3</div>
+            </div>
+        </div>
+
+        {cards}
+
+        <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7); border-radius:16px; padding:28px; text-align:center; margin-top:10px; border:1.5px solid #bbf7d0;">
+            <div style="font-size:2.5rem; margin-bottom:12px;">🎉</div>
+            <h3 style="font-size:1.3rem; font-weight:800; color:#166534; margin-bottom:8px;">
+                47,50€ récupérés en 6 jours
+            </h3>
+            <p style="color:#16a34a; font-size:0.95rem; margin-bottom:20px;">
+                Sans aucune action de votre part — Justicio a tout géré automatiquement
+            </p>
+            <a href="/login" class="btn-success">🚀 Récupérer mon argent maintenant</a>
+        </div>
+    </div>
+    {DEMO_FOOTER}
+    """
+
+
 if __name__ == '__main__':
     app.run(debug=False)
