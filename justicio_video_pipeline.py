@@ -125,7 +125,7 @@ async def _record_playwright(video_dir: str) -> str:
     except ImportError:
         raise RuntimeError("Playwright manquant. Lance : pip install playwright && playwright install chromium")
 
-    print("  🌐 Lancement du navigateur Playwright...")
+    print("  Lancement du navigateur Playwright...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -136,7 +136,7 @@ async def _record_playwright(video_dir: str) -> str:
         page = await context.new_page()
 
         for url, wait_ms in DEMO_PAGES:
-            print(f"    → {url}")
+            print(f"    -> {url}")
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=15_000)
             except Exception:
@@ -161,14 +161,15 @@ async def _record_playwright(video_dir: str) -> str:
 
 def generate_tts_audio(text: str, output_path: str, speed: float = 1.15) -> str:
     """Génère l'audio voix-off via OpenAI TTS-1 (voix nova, ~25s)."""
-    print("  🎙️ Génération voix TTS (OpenAI nova)...")
+    print("  Generation voix TTS (OpenAI nova)...")
     response = client.audio.speech.create(
         model="tts-1-hd",
         voice="nova",
         input=text,
         speed=speed,
     )
-    response.stream_to_file(output_path)
+    with open(output_path, "wb") as f:
+        f.write(response.content)
     return output_path
 
 
@@ -260,10 +261,12 @@ def process_screen_video(
     3. Incruste les sous-titres ASS
     4. Tronque à max_duration secondes
     """
-    tmp_sped = str(Path(output_path).parent / "_sped.mp4")
-    tmp_with_subs = str(Path(output_path).parent / "_subs.mp4")
+    work = Path(subs_path).parent
+    tmp_sped   = str(work / "_sped.mp4")
+    tmp_nosubs = str(work / "_nosubs.mp4")
+    tmp_subs   = str(work / "_withsubs.mp4")
 
-    print("  ⚡ Accélération ×2...")
+    print("  Acceleration x2...")
     subprocess.run([
         "ffmpeg", "-y", "-i", raw_video,
         "-vf", "setpts=0.5*PTS",
@@ -272,34 +275,29 @@ def process_screen_video(
         tmp_sped,
     ], check=True, capture_output=True)
 
-    print("  📝 Incrustation sous-titres...")
-    escaped = _escape_ass_path(subs_path)
-    subprocess.run([
-        "ffmpeg", "-y", "-i", tmp_sped,
-        "-vf", f"ass={escaped}",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-        tmp_with_subs,
-    ], check=True, capture_output=True)
-
-    print("  🎵 Mixage audio + vidéo...")
+    print("  Mixage audio (avant sous-titres)...")
     subprocess.run([
         "ffmpeg", "-y",
-        "-i", tmp_with_subs,
+        "-i", tmp_sped,
         "-i", audio_path,
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "128k",
         "-shortest",
         "-t", str(max_duration),
-        output_path,
+        tmp_nosubs,
     ], check=True, capture_output=True)
 
-    # Nettoyage fichiers intermédiaires
-    for f in (tmp_sped, tmp_with_subs):
-        try:
-            os.remove(f)
-        except OSError:
-            pass
+    print("  Incrustation sous-titres...")
+    # Sur Windows, ffmpeg ass= requiert que le chemin soit relatif ou dans le cwd
+    subprocess.run([
+        "ffmpeg", "-y", "-i", tmp_nosubs,
+        "-vf", "ass=subs.ass",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:a", "copy",
+        tmp_subs,
+    ], check=True, capture_output=True, cwd=str(work))
 
+    shutil.copy2(tmp_subs, output_path)
     return output_path
 
 
@@ -322,29 +320,29 @@ def run_screen_anime(output_path: str = None) -> str:
     os.makedirs(work_dir, exist_ok=True)
 
     try:
-        print("\n🎬 [1/4] Enregistrement navigation Playwright (~50s)...")
+        print("\n[1/4] Enregistrement navigation Playwright (~50s)...")
         raw_video = asyncio.run(_record_playwright(work_dir))
-        print(f"  ✓ Vidéo brute : {raw_video}")
+        print(f"  OK Vidéo brute : {raw_video}")
 
-        print("\n🎙️ [2/4] Génération voiceover TTS...")
+        print("\n[2/4] Génération voiceover TTS...")
         audio_path = os.path.join(work_dir, "narration.mp3")
         generate_tts_audio(SCREEN_NARRATION, audio_path, speed=1.15)
         audio_dur = get_audio_duration(audio_path)
-        print(f"  ✓ Audio : {audio_dur:.1f}s")
+        print(f"  OK Audio : {audio_dur:.1f}s")
 
-        print("\n📝 [3/4] Sous-titres TikTok mot par mot...")
+        print("\n[3/4] Sous-titres TikTok mot par mot...")
         subs_path = os.path.join(work_dir, "subs.ass")
         generate_ass_subtitles(SCREEN_NARRATION, min(audio_dur, 25.0), subs_path)
-        print(f"  ✓ Sous-titres générés ({len(SCREEN_NARRATION.split())} mots)")
+        print(f"  OK Sous-titres generes ({len(SCREEN_NARRATION.split())} mots)")
 
-        print("\n⚙️  [4/4] Post-production ffmpeg (×2, sous-titres, mix audio)...")
+        print("\n[4/4] Post-production ffmpeg (x2, sous-titres, mix audio)...")
         process_screen_video(raw_video, audio_path, subs_path, output_path)
 
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
     size_mb = os.path.getsize(output_path) / 1024 / 1024
-    print(f"\n✅ Vidéo finale : {output_path}  ({size_mb:.1f} MB)")
+    print(f"\nDONE Video finale : {output_path}  ({size_mb:.1f} MB)")
     return output_path
 
 
