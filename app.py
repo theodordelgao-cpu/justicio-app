@@ -4811,7 +4811,9 @@ def index():
     # ════════════════════════════════════════════════════════════════
     
     if "credentials" not in session:
-        return STYLE + """
+        places_restantes = 73
+        pourcentage = 100 - places_restantes
+        return STYLE + f"""
         <div style='max-width:1000px; margin:0 auto;'>
             
             <!-- HERO SECTION -->
@@ -4982,9 +4984,23 @@ def index():
                 </div>
             </div>
             
+            <!-- COMPTEUR 100 PLACES BETA -->
+            <div style='max-width:480px; margin:0px auto; padding:15px 20px;
+                        background:#f8fafc; border-radius:12px;'>
+                <p style='margin:0 0 8px 0; color:#64748b; font-size:0.9em;'>
+                    🎁 <b>Avantage beta :</b> 1ère Lettre Recommandée à 3€
+                    (au lieu de 9,90€) — <b style='color:#ef4444;'>{places_restantes} places restantes</b>
+                </p>
+                <div style='background:#e2e8f0; border-radius:20px; height:8px;
+                            overflow:hidden;'>
+                    <div style='background:linear-gradient(90deg, #10b981, #4f46e5);
+                               height:100%; width:{pourcentage}%;'></div>
+                </div>
+            </div>
+
             <!-- CTA FINAL -->
             <div style='text-align:center; padding:40px 20px 60px;'>
-                <a href='/login' style='display:inline-block; padding:22px 60px; 
+                <a href='/login' style='display:inline-block; padding:22px 60px;
                                         background:linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
                                         color:white; text-decoration:none; border-radius:50px;
                                         font-size:1.4rem; font-weight:700;
@@ -4992,6 +5008,12 @@ def index():
                                         transition:all 0.3s;'>
                     🔍 Scanner mes emails gratuitement
                 </a>
+                <p style='color:rgba(255,255,255,0.4); font-size:0.85rem; margin-top:15px;'>
+                    <a href='/pourquoi-cet-ecran' style='color:rgba(255,255,255,0.4);
+                       text-decoration:underline;'>
+                        Pourquoi Google me demande l'accès à Gmail ?
+                    </a>
+                </p>
             </div>
             
         </div>
@@ -12476,6 +12498,97 @@ def signaler_remboursement(litigation_id):
         envoi.refunded_at = datetime.utcnow()
     db.session.commit()
     return redirect('/')
+
+
+@app.route("/pourquoi-cet-ecran")
+def pourquoi_cet_ecran():
+    return STYLE + """
+    <div style='max-width:700px; margin:60px auto; padding:0 20px;'>
+        <div style='background:rgba(255,255,255,0.05); backdrop-filter:blur(10px);
+                    border:1px solid rgba(255,255,255,0.1); border-radius:24px; padding:50px 40px;'>
+
+            <div style='text-align:center; margin-bottom:40px;'>
+                <div style='font-size:4rem; margin-bottom:15px;'>🔒</div>
+                <h1 style='color:white; font-size:2rem; font-weight:800; margin:0 0 10px 0;'>
+                    Pourquoi Google demande l'accès à Gmail ?
+                </h1>
+                <p style='color:rgba(255,255,255,0.6); font-size:1.05rem; margin:0;'>
+                    Transparence totale sur les autorisations demandées
+                </p>
+            </div>
+
+            <div style='display:flex; flex-direction:column; gap:20px; margin-bottom:40px;'>
+
+                <div style='background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.25);
+                            border-radius:16px; padding:25px;'>
+                    <h3 style='color:#10b981; margin:0 0 8px 0; font-size:1.1rem;'>
+                        ✅ Accès en lecture seule
+                    </h3>
+                    <p style='color:rgba(255,255,255,0.7); margin:0; line-height:1.7;'>
+                        Justicio ne peut que <b style='color:white;'>lire</b> vos emails.
+                        Nous ne pouvons pas envoyer, supprimer ou modifier quoi que ce soit
+                        dans votre boîte mail.
+                    </p>
+                </div>
+
+                <div style='background:rgba(79,70,229,0.1); border:1px solid rgba(79,70,229,0.25);
+                            border-radius:16px; padding:25px;'>
+                    <h3 style='color:#a5b4fc; margin:0 0 8px 0; font-size:1.1rem;'>
+                        🎯 Pourquoi on en a besoin ?
+                    </h3>
+                    <p style='color:rgba(255,255,255,0.7); margin:0; line-height:1.7;'>
+                        Notre IA analyse vos emails pour détecter automatiquement vos litiges :
+                        colis non livrés, vols annulés, retards de train, produits défectueux.
+                        Sans cet accès, nous ne pouvons pas trouver vos dossiers.
+                    </p>
+                </div>
+
+                <div style='background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.25);
+                            border-radius:16px; padding:25px;'>
+                    <h3 style='color:#fbbf24; margin:0 0 8px 0; font-size:1.1rem;'>
+                        🛡️ Vos données restent privées
+                    </h3>
+                    <p style='color:rgba(255,255,255,0.7); margin:0; line-height:1.7;'>
+                        Nous ne lisons que les emails liés à des achats et voyages.
+                        Vos emails personnels ne sont jamais consultés ni stockés.
+                        Vous pouvez révoquer l'accès à tout moment depuis
+                        <a href='https://myaccount.google.com/permissions'
+                           style='color:#fbbf24;' target='_blank'>votre compte Google</a>.
+                    </p>
+                </div>
+
+                <div style='background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
+                            border-radius:16px; padding:25px;'>
+                    <h3 style='color:white; margin:0 0 8px 0; font-size:1.1rem;'>
+                        🏛️ Conformité RGPD
+                    </h3>
+                    <p style='color:rgba(255,255,255,0.7); margin:0; line-height:1.7;'>
+                        Justicio est conforme au RGPD. Vous pouvez demander la suppression
+                        de toutes vos données à tout moment via votre compte ou en nous
+                        contactant.
+                    </p>
+                </div>
+
+            </div>
+
+            <div style='text-align:center;'>
+                <a href='/login' style='display:inline-block; padding:18px 50px;
+                                        background:linear-gradient(135deg, #10b981 0%, #059669 100%);
+                                        color:white; text-decoration:none; border-radius:50px;
+                                        font-size:1.1rem; font-weight:700;
+                                        box-shadow:0 10px 30px rgba(16,185,129,0.35);'>
+                    ✅ Je comprends — Continuer
+                </a>
+                <br>
+                <a href='/' style='color:rgba(255,255,255,0.4); font-size:0.9rem;
+                                   text-decoration:none; margin-top:15px; display:inline-block;'>
+                    ← Retour à l'accueil
+                </a>
+            </div>
+
+        </div>
+    </div>
+    """ + FOOTER
 
 
 if __name__ == '__main__':
