@@ -19,6 +19,16 @@ from email.mime.multipart import MIMEMultipart
 from sqlalchemy.exc import IntegrityError
 from bs4 import BeautifulSoup
 
+"""
+═══════════════════════════════════════════════════════════════
+📜 JUSTICIO - Architecture Mandataire v2.0
+═══════════════════════════════════════════════════════════════
+CHANGEMENTS MAJEURS :
+✅ Scope Gmail : gmail.modify → gmail.readonly (préparation CASA Tier 1)
+✅ Envoi centralisé : send_mise_en_demeure_gmail() → send_mise_en_demeure_smtp()
+═══════════════════════════════════════════════════════════════
+"""
+
 # ════════════════════════════════════════════════════════════════════════════════
 # 🛡️ HELPER SÉCURISÉ - Parsing JSON infaillible (V2 - BRACE BALANCED)
 # ════════════════════════════════════════════════════════════════════════════════
@@ -153,9 +163,7 @@ if STRIPE_SK:
 # IMPORTANT: Ces scopes doivent être autorisés dans Google Cloud Console
 # Si vous passez de readonly à send, les utilisateurs devront se reconnecter
 GMAIL_SCOPES = [
-    'https://www.googleapis.com/auth/gmail.readonly',  # Lecture des emails
-    'https://www.googleapis.com/auth/gmail.send',      # Envoi d'emails
-    'https://www.googleapis.com/auth/gmail.modify',    # Modification (labels)
+    'https://www.googleapis.com/auth/gmail.readonly',  # Lecture des emails (CASA Tier 1)
 ]
 
 # Email support Justicio
@@ -373,209 +381,108 @@ Justicio.fr - Protection des droits des consommateurs
 # 📬 AGENT FACTEUR - Envoi RÉEL des emails via Gmail API
 # ════════════════════════════════════════════════════════════════════════════════
 
-def send_mise_en_demeure_gmail(user, target_email, subject, html_body, text_body=None, litigation_id=None):
+def send_mise_en_demeure_gmail(*args, **kwargs):
+    """DEPRECATED : utiliser send_mise_en_demeure_smtp à la place."""
+    DEBUG_LOGS.append("⚠️ send_mise_en_demeure_gmail DEPRECATED - redirection vers SMTP")
+    return send_mise_en_demeure_smtp(*args, **kwargs)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📬 ENVOI SMTP VIA BREVO - Mandataire (Article 1984 Code civil)
+# ════════════════════════════════════════════════════════════════════════════════
+
+def send_mise_en_demeure_smtp(user, target_email, subject, html_body, text_body=None,
+                               litigation_id=None, company=None):
     """
-    📬 AGENT FACTEUR - Envoie la mise en demeure via Gmail API
-    
-    GARANTIES :
-    - Envoi RÉEL via service.users().messages().send()
-    - BCC à l'utilisateur pour preuve
-    - Headers professionnels (anti-spam)
-    - Gestion robuste des erreurs
-    - Logging détaillé pour admin
-    
-    Args:
-        user: Instance User avec refresh_token
-        target_email: Email du destinataire (entreprise)
-        subject: Sujet de l'email
-        html_body: Corps HTML de la mise en demeure
-        text_body: Corps texte (fallback)
-        litigation_id: ID du litige pour tracking
-    
-    Returns:
-        dict: {"success": bool, "message_id": str, "error": str, "error_type": str}
+    📬 Envoi via SMTP Brevo depuis Justicio en qualité de mandataire.
+    Article 1984 du Code civil français.
     """
-    
-    DEBUG_LOGS.append(f"📬 Agent Facteur: Préparation envoi vers {target_email}")
-    
-    # ═══════════════════════════════════════════════════════════════
-    # VÉRIFICATIONS PRÉALABLES
-    # ═══════════════════════════════════════════════════════════════
-    
-    if not user or not user.refresh_token:
-        DEBUG_LOGS.append("📬 ❌ Erreur: Utilisateur non authentifié ou pas de refresh_token")
-        return {
-            "success": False,
-            "message_id": None,
-            "error": "Utilisateur non authentifié. Veuillez vous reconnecter.",
-            "error_type": "AUTH_ERROR"
-        }
-    
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart as _MIMEMultipart
+
+    BREVO_SMTP_HOST = "smtp-relay.brevo.com"
+    BREVO_SMTP_PORT = 587
+    BREVO_LOGIN = os.environ.get("BREVO_SMTP_LOGIN", "support@justicio.fr")
+    BREVO_KEY = os.environ.get("BREVO_SMTP_KEY")
+
+    if not BREVO_KEY:
+        DEBUG_LOGS.append("📬 SMTP ❌ BREVO_SMTP_KEY manquant")
+        return {"success": False, "message_id": None,
+                "error": "BREVO_SMTP_KEY non configuré", "error_type": "CONFIG_ERROR"}
+
     if not target_email or '@' not in target_email:
-        DEBUG_LOGS.append(f"📬 ❌ Erreur: Email destinataire invalide: {target_email}")
-        return {
-            "success": False,
-            "message_id": None,
-            "error": f"Email destinataire invalide: {target_email}",
-            "error_type": "INVALID_EMAIL"
-        }
-    
-    # Nettoyer l'email destinataire
-    if '<' in target_email and '>' in target_email:
-        import re
-        match = re.search(r'<([^>]+)>', target_email)
-        if match:
-            target_email = match.group(1)
-    target_email = target_email.strip().lower()
-    
-    # ═══════════════════════════════════════════════════════════════
-    # OBTENIR LES CREDENTIALS GMAIL
-    # ═══════════════════════════════════════════════════════════════
-    
+        return {"success": False, "message_id": None,
+                "error": f"Email destinataire invalide: {target_email}", "error_type": "INVALID_EMAIL"}
+
+    date_mandat = (user.created_at.strftime('%d/%m/%Y')
+                   if hasattr(user, 'created_at') and user.created_at else 'inscription Justicio')
+
+    mandataire_footer = f"""
+    <div style='margin-top:30px; padding:15px; background:#f8fafc;
+                border-left:4px solid #4f46e5; border-radius:6px; font-size:0.85rem; color:#64748b;'>
+        <b>Envoyé par Justicio en qualité de mandataire</b><br>
+        Mandant : {getattr(user, 'name', '') or user.email} ({user.email})<br>
+        Mandat établi le : {date_mandat}<br>
+        Conformément à l'article 1984 du Code civil français.<br>
+        <em>Cet email est envoyé au nom et pour le compte de l'utilisateur Justicio.</em>
+    </div>
+    """
+    full_html = html_body + mandataire_footer
+
     try:
-        creds = get_refreshed_credentials(user.refresh_token)
-        if not creds:
-            raise Exception("Impossible de rafraîchir les credentials")
-    except Exception as e:
-        error_msg = str(e)
-        DEBUG_LOGS.append(f"📬 ❌ Erreur credentials: {error_msg}")
-        
-        # Détecter le type d'erreur
-        if "token" in error_msg.lower() or "expired" in error_msg.lower():
-            return {
-                "success": False,
-                "message_id": None,
-                "error": "Session expirée. Veuillez vous reconnecter.",
-                "error_type": "TOKEN_EXPIRED"
-            }
-        return {
-            "success": False,
-            "message_id": None,
-            "error": f"Erreur d'authentification: {error_msg[:50]}",
-            "error_type": "AUTH_ERROR"
-        }
-    
-    # ═══════════════════════════════════════════════════════════════
-    # CONSTRUIRE LE MESSAGE MIME
-    # ═══════════════════════════════════════════════════════════════
-    
-    try:
-        # Message multipart pour HTML + texte
-        message = MIMEMultipart('alternative')
-        
-        # Headers obligatoires
-        message['To'] = target_email
-        message['Subject'] = subject
-        
-        # BCC : Copie cachée à l'utilisateur (PREUVE)
-        message['Bcc'] = user.email
-        
-        # From : Format professionnel pour éviter le spam
-        user_name = user.name or user.email.split('@')[0].title()
-        message['From'] = f'"{user_name} via Justicio" <{user.email}>'
-        
-        # Headers anti-spam et tracking
-        message['X-Priority'] = '1'
-        message['Importance'] = 'high'
-        message['X-Justicio-Service'] = 'legal-notice'
+        msg = _MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = f'"Justicio (mandataire)" <support@justicio.fr>'
+        msg['To'] = target_email
+        msg['Reply-To'] = user.email
+        msg['X-Justicio-Mandant'] = user.email
         if litigation_id:
-            message['X-Justicio-Case-ID'] = str(litigation_id)
-        message['X-Mailer'] = 'Justicio Legal Services'
-        
-        # Ajouter le corps texte (fallback)
+            msg['X-Justicio-Case-ID'] = str(litigation_id)
+
         if text_body:
-            part_text = MIMEText(text_body, 'plain', 'utf-8')
-            message.attach(part_text)
-        
-        # Ajouter le corps HTML (prioritaire)
-        if html_body:
-            part_html = MIMEText(html_body, 'html', 'utf-8')
-            message.attach(part_html)
-        
-        # Encoder en base64 URL-safe
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
-        
+            msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+        msg.attach(MIMEText(full_html, 'html', 'utf-8'))
+
+        with smtplib.SMTP(BREVO_SMTP_HOST, BREVO_SMTP_PORT) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(BREVO_LOGIN, BREVO_KEY)
+            smtp.sendmail("support@justicio.fr", [target_email, user.email], msg.as_bytes())
+
+        message_id = f"brevo-{litigation_id or 'x'}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        DEBUG_LOGS.append(f"📬 SMTP ✅ Envoyé → {target_email} (BCC: {user.email})")
+        return {"success": True, "message_id": message_id, "error": None, "error_type": None}
+
+    except smtplib.SMTPAuthenticationError:
+        DEBUG_LOGS.append("📬 SMTP ❌ Authentification Brevo échouée")
+        return {"success": False, "message_id": None,
+                "error": "Authentification SMTP Brevo échouée", "error_type": "SMTP_AUTH_ERROR"}
     except Exception as e:
-        DEBUG_LOGS.append(f"📬 ❌ Erreur construction MIME: {str(e)}")
+        DEBUG_LOGS.append(f"📬 SMTP ❌ {str(e)[:100]}")
+        return {"success": False, "message_id": None,
+                "error": f"Erreur SMTP: {str(e)[:80]}", "error_type": "SMTP_ERROR"}
+
+
+def send_mise_en_demeure_ar24(user, target_email, target_address, subject, html_body,
+                               litigation_id=None, company=None):
+    """
+    📬 PLACEHOLDER - À activer après obtention du SIRET et inscription AR24.
+    Pour l'instant, retourne une erreur explicite.
+    """
+    if not os.environ.get('AR24_API_KEY') or not os.environ.get('AR24_USER_ID'):
         return {
-            "success": False,
-            "message_id": None,
-            "error": f"Erreur construction email: {str(e)[:50]}",
-            "error_type": "MIME_ERROR"
+            'success': False,
+            'error': "AR24 non configuré. En attente du SIRET et de l'inscription AR24.",
+            'error_type': 'AR24_NOT_CONFIGURED'
         }
-    
-    # ═══════════════════════════════════════════════════════════════
-    # ENVOI RÉEL VIA GMAIL API
-    # ═══════════════════════════════════════════════════════════════
-    
-    try:
-        service = build('gmail', 'v1', credentials=creds)
-        
-        DEBUG_LOGS.append(f"📬 Envoi en cours: {target_email} (BCC: {user.email})")
-        
-        # ENVOI RÉEL !!!
-        result = service.users().messages().send(
-            userId='me',
-            body={'raw': raw_message}
-        ).execute()
-        
-        message_id = result.get('id')
-        
-        if message_id:
-            DEBUG_LOGS.append(f"📬 ✅ EMAIL ENVOYÉ ! Message ID: {message_id}")
-            DEBUG_LOGS.append(f"📬 ✅ Destinataire: {target_email}")
-            DEBUG_LOGS.append(f"📬 ✅ BCC (preuve): {user.email}")
-            
-            return {
-                "success": True,
-                "message_id": message_id,
-                "error": None,
-                "error_type": None
-            }
-        else:
-            DEBUG_LOGS.append("📬 ❌ Envoi échoué - Pas de message_id retourné")
-            return {
-                "success": False,
-                "message_id": None,
-                "error": "L'API Gmail n'a pas confirmé l'envoi",
-                "error_type": "NO_CONFIRMATION"
-            }
-            
-    except Exception as e:
-        error_msg = str(e)
-        DEBUG_LOGS.append(f"📬 ❌ Erreur Gmail API: {error_msg[:150]}")
-        
-        # Analyser le type d'erreur
-        error_lower = error_msg.lower()
-        
-        if "insufficient" in error_lower or "scope" in error_lower or "permission" in error_lower:
-            return {
-                "success": False,
-                "message_id": None,
-                "error": "Permissions insuffisantes. Reconnectez-vous pour autoriser l'envoi d'emails.",
-                "error_type": "INSUFFICIENT_PERMISSIONS"
-            }
-        elif "quota" in error_lower or "rate" in error_lower:
-            return {
-                "success": False,
-                "message_id": None,
-                "error": "Limite d'envoi atteinte. Réessayez dans quelques minutes.",
-                "error_type": "QUOTA_EXCEEDED"
-            }
-        elif "invalid" in error_lower and "recipient" in error_lower:
-            return {
-                "success": False,
-                "message_id": None,
-                "error": f"Adresse email invalide: {target_email}",
-                "error_type": "INVALID_RECIPIENT"
-            }
-        else:
-            return {
-                "success": False,
-                "message_id": None,
-                "error": f"Erreur Gmail: {error_msg[:80]}",
-                "error_type": "GMAIL_API_ERROR"
-            }
+    # TODO : implémenter l'appel API AR24 après inscription
+    # Documentation : https://www.ar24.fr/documentation-api/
+    return {
+        'success': False,
+        'error': 'Intégration AR24 à finaliser',
+        'error_type': 'AR24_NOT_IMPLEMENTED'
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -949,7 +856,7 @@ def process_pending_litigations(user, litigations_data):
         # ÉTAPE 4 : Envoyer l'email (Agent Facteur)
         # ═══════════════════════════════════════════════════════════════
         
-        send_result = send_mise_en_demeure_gmail(
+        send_result = send_mise_en_demeure_smtp(
             user=user,
             target_email=target_email,
             subject=letter_result["subject"],
@@ -1233,6 +1140,10 @@ class User(db.Model):
     refresh_token = db.Column(db.String(500))
     name = db.Column(db.String(100))
     stripe_customer_id = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    first_dossier_lre_used = db.Column(db.Boolean, default=False)
+    scan_enabled = db.Column(db.Boolean, default=True)
+    account_deleted_at = db.Column(db.DateTime, nullable=True)
 
 class Litigation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -1269,6 +1180,25 @@ class Litigation(db.Model):
     legal_notice_sent = db.Column(db.Boolean, default=False)  # Mise en demeure envoyée
     legal_notice_date = db.Column(db.DateTime)  # Date d'envoi
     legal_notice_message_id = db.Column(db.String(100))  # ID Gmail du message envoyé
+
+
+class MiseEnDemeure(db.Model):
+    __tablename__ = 'mise_en_demeure'
+    id = db.Column(db.Integer, primary_key=True)
+    user_email = db.Column(db.String(120), nullable=False)
+    litigation_id = db.Column(db.Integer, db.ForeignKey('litigation.id'), nullable=True)
+    target_email = db.Column(db.String(200), nullable=False)
+    target_company = db.Column(db.String(200))
+    send_type = db.Column(db.String(20), default='email')  # 'email' ou 'lre'
+    subject = db.Column(db.String(300))
+    html_body = db.Column(db.Text)
+    status = db.Column(db.String(50), default='sent')  # sent, refunded, failed
+    sent_at = db.Column(db.DateTime, default=datetime.utcnow)
+    refunded_at = db.Column(db.DateTime, nullable=True)
+    cost_cents = db.Column(db.Integer, default=0)
+    stripe_payment_intent_id = db.Column(db.String(255), nullable=True)
+    message_id = db.Column(db.String(200), nullable=True)
+
 
 with app.app_context():
     db.create_all()
@@ -1349,8 +1279,27 @@ with app.app_context():
                     conn.commit()
                 print(f"✅ Colonne {col_name} ajoutée")
         
+        # ════════════════════════════════════════════════════════════════
+        # MIGRATIONS V5 - Mandataire (User + MiseEnDemeure)
+        # ════════════════════════════════════════════════════════════════
+
+        user_columns = [col['name'] for col in inspector.get_columns('user')]
+        new_user_columns_v5 = {
+            'created_at': 'TIMESTAMP DEFAULT NOW()',
+            'first_dossier_lre_used': 'BOOLEAN DEFAULT FALSE',
+            'scan_enabled': 'BOOLEAN DEFAULT TRUE',
+            'account_deleted_at': 'TIMESTAMP',
+        }
+        for col_name, col_type in new_user_columns_v5.items():
+            if col_name not in user_columns:
+                print(f"🔄 Migration V5 User : Ajout de {col_name}...")
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE "user" ADD COLUMN {col_name} {col_type}'))
+                    conn.commit()
+                print(f"✅ Colonne user.{col_name} ajoutée")
+
         db.create_all()
-        print("✅ Base de données synchronisée (V4 - Envoi Mise en Demeure).")
+        print("✅ Base de données synchronisée (V5 - Mandataire).")
     except Exception as e:
         print(f"❌ Erreur DB : {e}")
 
@@ -5133,7 +5082,9 @@ def index():
         {"<div style='background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:12px; padding:15px 25px; display:inline-block; margin-bottom:30px;'><span style='color:#10b981; font-weight:600;'>💰 " + f"{total_potential:.0f}€" + " en litiges détectés</span></div>" if total_potential > 0 else ""}
         
         <!-- FOOTER LINKS -->
-        <div style='margin-top:20px;'>
+        <div style='margin-top:20px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;'>
+            <a href='/mon-compte' class='btn-logout'>👤 Mon compte</a>
+            <a href='/mes-envois' class='btn-logout'>📊 Mes envois</a>
             <a href='/logout' class='btn-logout'>Se déconnecter</a>
         </div>
         
@@ -7204,7 +7155,7 @@ def login():
         scopes=[
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.readonly",
             "openid"
         ],
         redirect_uri=url_for('callback', _external=True).replace("http://", "https://")
@@ -7218,6 +7169,36 @@ def login():
 @app.route("/callback")
 def callback():
     """Callback OAuth Google"""
+    error = request.args.get('error')
+    if error:
+        error_description = request.args.get('error_description', '')
+        return STYLE + f"""
+        <div style='max-width:600px; margin:80px auto; padding:40px;
+                    background:white; border-radius:24px;
+                    box-shadow:0 25px 50px -12px rgba(0,0,0,0.15); text-align:center;'>
+            <div style='font-size:3rem; margin-bottom:20px;'>🔒</div>
+            <h2 style='color:#1e293b; margin-bottom:15px;'>Accès refusé</h2>
+            <p style='color:#64748b; margin-bottom:10px;'>
+                Vous avez refusé l'autorisation d'accès ou une erreur s'est produite.
+            </p>
+            {"<p style='color:#94a3b8; font-size:0.85rem; margin-bottom:20px;'>Détail : " + error_description + "</p>" if error_description else ""}
+            <p style='color:#64748b; margin-bottom:30px;'>
+                Justicio a besoin d'accéder à votre Gmail en lecture seule pour détecter
+                vos litiges. Aucune modification ne sera effectuée sur votre boîte mail.
+            </p>
+            <div style='display:flex; gap:15px; justify-content:center;'>
+                <a href='/login' style='background:#4f46e5; color:white; padding:12px 30px;
+                    border-radius:10px; text-decoration:none; font-weight:600;'>
+                    Réessayer
+                </a>
+                <a href='/' style='background:#f1f5f9; color:#475569; padding:12px 30px;
+                    border-radius:10px; text-decoration:none; font-weight:600;'>
+                    Retour à l'accueil
+                </a>
+            </div>
+        </div>
+        """ + FOOTER
+
     flow = Flow.from_client_config(
         {
             "web": {
@@ -7230,7 +7211,7 @@ def callback():
         scopes=[
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.readonly",
             "openid"
         ],
         redirect_uri=url_for('callback', _external=True).replace("http://", "https://")
@@ -8044,9 +8025,14 @@ def check_refunds():
         Litigation.status.in_(STATUTS_ACTIFS)
     ).all()
     
-    # Grouper par utilisateur
+    # Filtrer les users avec scan_enabled = True
+    users_with_scan = {u.email for u in User.query.filter_by(scan_enabled=True).all()}
+
+    # Grouper par utilisateur (scan_enabled uniquement)
     users_cases = {}
     for case in active_cases:
+        if case.user_email not in users_with_scan:
+            continue
         if case.user_email not in users_cases:
             users_cases[case.user_email] = []
         users_cases[case.user_email].append(case)
@@ -8298,6 +8284,13 @@ def check_refunds():
                         matched_case.status = "Remboursé"
                         matched_case.updated_at = datetime.utcnow()
                         processed_case_ids_this_run.add(dossier_id)
+
+                        # Mettre à jour les MiseEnDemeure liées
+                        envois_lies = MiseEnDemeure.query.filter_by(litigation_id=dossier_id).all()
+                        for envoi in envois_lies:
+                            envoi.status = 'refunded'
+                            envoi.refunded_at = datetime.utcnow()
+
                         db.session.commit()
                         
                         # ════════════════════════════════════════════════════════════════
@@ -9064,18 +9057,20 @@ def mentions_legales():
                 
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>1. Éditeur du Site</h2>
                 <div style='background:#f8fafc; padding:25px; border-radius:12px; margin:20px 0;'>
-                    <p style='margin:5px 0;'><b>Raison sociale :</b> Justicio SAS (en cours d'immatriculation)</p>
-                    <p style='margin:5px 0;'><b>Forme juridique :</b> Société par Actions Simplifiée</p>
-                    <p style='margin:5px 0;'><b>Capital social :</b> En cours de constitution</p>
+                    <p style='margin:5px 0;'><b>Raison sociale :</b> Justicio</p>
+                    <p style='margin:5px 0;'><b>Forme juridique :</b> Entreprise Individuelle (Auto-Entrepreneur)</p>
+                    <!-- TODO: Remplacer par le vrai SIREN après immatriculation URSSAF -->
+                    <p style='margin:5px 0;'><b>SIREN :</b> XXX XXX XXX (auto-entrepreneur, en cours d'immatriculation)</p>
+                    <p style='margin:5px 0;'><b>N° TVA :</b> Non applicable (franchise en base de TVA)</p>
                     <p style='margin:5px 0;'><b>Siège social :</b> France</p>
-                    <p style='margin:5px 0;'><b>RCS :</b> En cours d'immatriculation</p>
-                    <p style='margin:5px 0;'><b>N° TVA :</b> En cours d'attribution</p>
+                    <p style='margin:5px 0;'><b>Activité :</b> Édition et exploitation de plateforme web de recouvrement amiable automatisé</p>
+                    <p style='margin:5px 0;'><b>Code APE :</b> 62.02A</p>
                 </div>
-                
+
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>2. Directeur de la Publication</h2>
                 <div style='background:#f8fafc; padding:25px; border-radius:12px; margin:20px 0;'>
-                    <p style='margin:5px 0;'><b>Nom :</b> Theodor Delgado</p>
-                    <p style='margin:5px 0;'><b>Qualité :</b> Président</p>
+                    <p style='margin:5px 0;'><b>Nom :</b> Théodore Delgado</p>
+                    <p style='margin:5px 0;'><b>Qualité :</b> Éditeur individuel</p>
                     <p style='margin:5px 0;'><b>Email :</b> <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
                 </div>
                 
@@ -11857,6 +11852,630 @@ def demo_comment_ca_marche():
     </div>
     {DEMO_FOOTER}
     """
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📬 ROUTE /envoyer-mise-en-demeure - Choix du mode d'envoi
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/envoyer-mise-en-demeure/<int:litigation_id>", methods=['GET'])
+def envoyer_mise_en_demeure(litigation_id):
+    if "email" not in session:
+        return redirect(url_for('login'))
+
+    litigation = Litigation.query.get_or_404(litigation_id)
+    if litigation.user_email != session["email"]:
+        return STYLE + "<p style='color:red;'>Accès refusé.</p>" + FOOTER
+
+    return STYLE + f"""
+    <div style='max-width:1000px; margin:40px auto; padding:20px;'>
+        <h1 style='color:#1e293b; margin-bottom:8px;'>📬 Envoyer une mise en demeure</h1>
+        <p style='color:#64748b; margin-bottom:30px;'>
+            Dossier #{litigation.id} — <b>{litigation.company}</b> — {litigation.amount}
+        </p>
+
+        <div style='display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:1000px;'>
+
+            <!-- OPTION 1 : Email gratuit -->
+            <div style='background:white; border-radius:20px; padding:35px;
+                        box-shadow:0 4px 20px rgba(79,70,229,0.12);
+                        border:2px solid #4f46e5;'>
+                <div style='font-size:2.5rem; margin-bottom:15px;'>📧</div>
+                <h2 style='color:#1e293b; margin-bottom:10px;'>Email certifié</h2>
+                <p style='color:#64748b; margin-bottom:8px; font-size:0.95rem;'>
+                    Envoyé depuis <b>support@justicio.fr</b> en votre nom (mandataire légal).
+                </p>
+                <ul style='color:#64748b; font-size:0.9rem; margin-bottom:25px; padding-left:20px;'>
+                    <li>Copie BCC à votre adresse</li>
+                    <li>En-tête mandataire légal (Art. 1984 Code civil)</li>
+                    <li>Gratuit</li>
+                </ul>
+                <form method='POST' action='/confirmer-envoi'>
+                    <input type='hidden' name='litigation_id' value='{litigation.id}'>
+                    <input type='hidden' name='send_type' value='email'>
+                    <button type='submit'
+                        style='width:100%; background:#4f46e5; color:white; padding:14px;
+                               border:none; border-radius:12px; font-size:1rem;
+                               font-weight:600; cursor:pointer;'>
+                        ✉️ Envoyer par email
+                    </button>
+                </form>
+            </div>
+
+            <!-- OPTION 2 : LRE (désactivée) -->
+            <div style='background:#f8fafc; border-radius:20px; padding:35px;
+                        border:2px solid #e2e8f0; opacity:0.7;'>
+                <div style='font-size:2.5rem; margin-bottom:15px;'>📮</div>
+                <h2 style='color:#94a3b8; margin-bottom:10px;'>Lettre Recommandée Électronique</h2>
+                <p style='color:#94a3b8; margin-bottom:8px; font-size:0.95rem;'>
+                    Envoi via AR24, valeur juridique équivalente au recommandé papier.
+                </p>
+                <ul style='color:#94a3b8; font-size:0.9rem; margin-bottom:25px; padding-left:20px;'>
+                    <li>Accusé de réception légal</li>
+                    <li>Preuve opposable en justice</li>
+                    <li>~3,50€ par envoi</li>
+                </ul>
+                <div style='width:100%; background:#e2e8f0; color:#94a3b8; padding:14px;
+                            border-radius:12px; font-size:1rem; font-weight:600; text-align:center;'>
+                    🔜 Bientôt disponible
+                </div>
+                <p style='color:#94a3b8; font-size:0.8rem; margin-top:10px; text-align:center;'>
+                    En attente d'immatriculation SIRET
+                </p>
+            </div>
+        </div>
+
+        <div style='margin-top:20px;'>
+            <a href='/' style='color:#64748b; text-decoration:none;'>← Retour au tableau de bord</a>
+        </div>
+    </div>
+    """ + FOOTER
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📬 ROUTE /confirmer-envoi - Traitement de l'envoi
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/confirmer-envoi", methods=['POST'])
+def confirmer_envoi():
+    if "email" not in session:
+        return redirect(url_for('login'))
+
+    litigation_id = request.form.get('litigation_id', type=int)
+    send_type = request.form.get('send_type', 'email')
+
+    if not litigation_id:
+        return STYLE + "<p style='color:red;'>Paramètre manquant.</p>" + FOOTER
+
+    litigation = Litigation.query.get_or_404(litigation_id)
+    if litigation.user_email != session["email"]:
+        return STYLE + "<p style='color:red;'>Accès refusé.</p>" + FOOTER
+
+    user = User.query.filter_by(email=session["email"]).first()
+    if not user:
+        return redirect(url_for('login'))
+
+    if send_type == 'lre':
+        return STYLE + """
+        <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                    border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
+            <div style='font-size:3rem; margin-bottom:20px;'>🔜</div>
+            <h2 style='color:#1e293b;'>Bientôt disponible</h2>
+            <p style='color:#64748b;'>La LRE sera disponible après immatriculation SIRET.</p>
+            <a href='/' style='display:inline-block; margin-top:20px; background:#4f46e5; color:white;
+                padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
+                Retour au tableau de bord
+            </a>
+        </div>
+        """ + FOOTER
+
+    # Génération de la lettre via GPT
+    company = litigation.company or "Entreprise"
+    amount = litigation.amount or "montant inconnu"
+    motif = litigation.description or litigation.problem_type or "litige commercial"
+    law = litigation.law or "Code de la consommation"
+    client_name = user.name or user.email.split('@')[0].title()
+    client_email = user.email
+    order_ref = litigation.order_id
+
+    letter_result = generate_legal_letter_gpt(
+        company=company, amount=amount, motif=motif, law=law,
+        client_name=client_name, client_email=client_email, order_ref=order_ref
+    )
+
+    if not letter_result.get("success"):
+        return STYLE + f"""
+        <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                    border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
+            <div style='font-size:3rem; margin-bottom:20px;'>❌</div>
+            <h2 style='color:#dc2626;'>Erreur de génération</h2>
+            <p style='color:#64748b;'>{letter_result.get('error', 'Erreur inconnue')}</p>
+            <a href='/envoyer-mise-en-demeure/{litigation.id}'
+               style='display:inline-block; margin-top:20px; background:#4f46e5; color:white;
+                      padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
+                Réessayer
+            </a>
+        </div>
+        """ + FOOTER
+
+    target_email = (litigation.merchant_email or
+                    COMPANY_EMAIL_OVERRIDE.get(company.lower().strip()))
+    if not target_email:
+        return STYLE + f"""
+        <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                    border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
+            <div style='font-size:3rem; margin-bottom:20px;'>⚠️</div>
+            <h2 style='color:#f59e0b;'>Email introuvable</h2>
+            <p style='color:#64748b;'>Aucun email trouvé pour {company}. Veuillez l'ajouter manuellement.</p>
+            <a href='/' style='display:inline-block; margin-top:20px; background:#4f46e5; color:white;
+                padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
+                Retour
+            </a>
+        </div>
+        """ + FOOTER
+
+    send_result = send_mise_en_demeure_smtp(
+        user=user,
+        target_email=target_email,
+        subject=letter_result["subject"],
+        html_body=letter_result["html_body"],
+        text_body=letter_result.get("text_body"),
+        litigation_id=litigation.id,
+        company=company
+    )
+
+    if send_result["success"]:
+        # Enregistrer en base
+        envoi = MiseEnDemeure(
+            user_email=user.email,
+            litigation_id=litigation.id,
+            target_email=target_email,
+            target_company=company,
+            send_type=send_type,
+            subject=letter_result["subject"],
+            html_body=letter_result["html_body"],
+            status='sent',
+            message_id=send_result.get("message_id")
+        )
+        db.session.add(envoi)
+        litigation.legal_notice_sent = True
+        litigation.legal_notice_date = datetime.utcnow()
+        litigation.legal_notice_message_id = send_result.get("message_id")
+        if litigation.status in ("Détecté", "detected"):
+            litigation.status = "En attente de remboursement"
+        db.session.commit()
+
+        return STYLE + f"""
+        <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                    border-radius:20px; box-shadow:0 4px 20px rgba(79,70,229,0.12); text-align:center;'>
+            <div style='font-size:3rem; margin-bottom:20px;'>✅</div>
+            <h2 style='color:#10b981;'>Mise en demeure envoyée !</h2>
+            <p style='color:#64748b; margin-bottom:5px;'>Destinataire : <b>{target_email}</b></p>
+            <p style='color:#64748b; margin-bottom:20px;'>Une copie a été envoyée à <b>{user.email}</b></p>
+            <div style='display:flex; gap:10px; justify-content:center;'>
+                <a href='/mes-envois' style='background:#4f46e5; color:white; padding:12px 25px;
+                    border-radius:10px; text-decoration:none; font-weight:600;'>
+                    Voir mes envois
+                </a>
+                <a href='/' style='background:#f1f5f9; color:#475569; padding:12px 25px;
+                    border-radius:10px; text-decoration:none; font-weight:600;'>
+                    Tableau de bord
+                </a>
+            </div>
+        </div>
+        """ + FOOTER
+    else:
+        return STYLE + f"""
+        <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                    border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
+            <div style='font-size:3rem; margin-bottom:20px;'>❌</div>
+            <h2 style='color:#dc2626;'>Échec de l'envoi</h2>
+            <p style='color:#64748b;'>{send_result.get('error', 'Erreur inconnue')}</p>
+            <a href='/envoyer-mise-en-demeure/{litigation.id}'
+               style='display:inline-block; margin-top:20px; background:#4f46e5; color:white;
+                      padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
+                Réessayer
+            </a>
+        </div>
+        """ + FOOTER
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 📊 ROUTE /mes-envois - Historique des mises en demeure
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/mes-envois")
+def mes_envois():
+    if "email" not in session:
+        return redirect(url_for('login'))
+
+    envois = MiseEnDemeure.query.filter_by(
+        user_email=session["email"]
+    ).order_by(MiseEnDemeure.sent_at.desc()).all()
+
+    total = len(envois)
+    repondus = sum(1 for e in envois if e.status in ('replied', 'refunded'))
+    rembourses = sum(1 for e in envois if e.status == 'refunded')
+
+    STATUS_BADGES = {
+        'sent':     ("<span style='background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:20px; font-size:0.8rem;'>📤 Envoyé</span>"),
+        'refunded': ("<span style='background:#dcfce7; color:#166534; padding:3px 10px; border-radius:20px; font-size:0.8rem;'>✅ Remboursé</span>"),
+        'failed':   ("<span style='background:#fee2e2; color:#991b1b; padding:3px 10px; border-radius:20px; font-size:0.8rem;'>❌ Échoué</span>"),
+        'replied':  ("<span style='background:#fef9c3; color:#92400e; padding:3px 10px; border-radius:20px; font-size:0.8rem;'>💬 Répondu</span>"),
+    }
+
+    rows = ""
+    for e in envois:
+        badge = STATUS_BADGES.get(e.status, f"<span style='background:#f1f5f9; color:#475569; padding:3px 10px; border-radius:20px; font-size:0.8rem;'>{e.status}</span>")
+        type_icon = "📧" if e.send_type == 'email' else "📮"
+        date_str = e.sent_at.strftime('%d/%m/%Y %H:%M') if e.sent_at else "-"
+        subject_trunc = (e.subject or "")[:60] + ("…" if len(e.subject or "") > 60 else "")
+        cout = f"{e.cost_cents / 100:.2f}€" if e.cost_cents else "Gratuit"
+        html_escaped = (e.html_body or "").replace("`", "\\`").replace("</script>", "<\\/script>")
+        rows += f"""
+        <tr style='border-bottom:1px solid #f1f5f9;'>
+            <td style='padding:12px 8px; color:#64748b; font-size:0.9rem;'>{date_str}</td>
+            <td style='padding:12px 8px; font-weight:600; color:#1e293b;'>{e.target_company or e.target_email}</td>
+            <td style='padding:12px 8px; text-align:center;'>{type_icon}</td>
+            <td style='padding:12px 8px; color:#475569; font-size:0.9rem;'>{subject_trunc}</td>
+            <td style='padding:12px 8px;'>{badge}</td>
+            <td style='padding:12px 8px; color:#64748b; font-size:0.9rem;'>{cout}</td>
+            <td style='padding:12px 8px;'>
+                <button onclick="document.getElementById('modal-{e.id}').style.display='flex'"
+                    style='background:#f1f5f9; border:none; padding:6px 14px; border-radius:8px;
+                           cursor:pointer; font-size:0.85rem; color:#475569;'>
+                    Voir détail
+                </button>
+                <div id='modal-{e.id}' style='display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5);
+                    z-index:9999; align-items:center; justify-content:center;'
+                    onclick="if(event.target===this)this.style.display='none'">
+                    <div style='background:white; border-radius:16px; padding:30px; max-width:800px; width:90%;
+                        max-height:80vh; overflow-y:auto;'>
+                        <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;'>
+                            <h3 style='margin:0; color:#1e293b;'>Détail — {e.target_company or e.target_email}</h3>
+                            <button onclick="document.getElementById('modal-{e.id}').style.display='none'"
+                                style='background:none; border:none; font-size:1.5rem; cursor:pointer; color:#94a3b8;'>✕</button>
+                        </div>
+                        <div style='border:1px solid #e2e8f0; border-radius:8px; padding:20px;'>
+                            {e.html_body or "<p style='color:#94a3b8;'>Contenu non disponible</p>"}
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>"""
+
+    if not envois:
+        table_html = "<div style='background:white; border-radius:16px; padding:40px; text-align:center; color:#94a3b8;'><p style='font-size:1.1rem;'>Aucun envoi pour l'instant.</p><a href='/' style='color:#4f46e5; text-decoration:none; font-weight:600;'>Voir mes litiges</a></div>"
+    else:
+        table_html = (
+            "<div style='background:white; border-radius:16px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.06);'>"
+            "<table style='width:100%; border-collapse:collapse;'>"
+            "<thead><tr style='background:#f8fafc;'>"
+            "<th style='padding:12px 8px; text-align:left; color:#64748b; font-size:0.85rem;'>Date</th>"
+            "<th style='padding:12px 8px; text-align:left; color:#64748b; font-size:0.85rem;'>Entreprise</th>"
+            "<th style='padding:12px 8px; text-align:center; color:#64748b; font-size:0.85rem;'>Type</th>"
+            "<th style='padding:12px 8px; text-align:left; color:#64748b; font-size:0.85rem;'>Sujet</th>"
+            "<th style='padding:12px 8px; text-align:left; color:#64748b; font-size:0.85rem;'>Statut</th>"
+            "<th style='padding:12px 8px; text-align:left; color:#64748b; font-size:0.85rem;'>Cout</th>"
+            "<th style='padding:12px 8px; color:#64748b; font-size:0.85rem;'>Action</th>"
+            "</tr></thead>"
+            f"<tbody>{rows}</tbody>"
+            "</table></div>"
+        )
+
+    return STYLE + f"""
+    <div style='max-width:1200px; margin:40px auto; padding:20px;'>
+        <h1 style='color:#1e293b; margin-bottom:8px;'>📊 Mes envois</h1>
+
+        <div style='background:white; border-radius:16px; padding:20px 30px; margin-bottom:25px;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.06); display:flex; gap:40px;'>
+            <div style='text-align:center;'>
+                <div style='font-size:2rem; font-weight:700; color:#4f46e5;'>{total}</div>
+                <div style='color:#64748b; font-size:0.85rem;'>envois</div>
+            </div>
+            <div style='text-align:center;'>
+                <div style='font-size:2rem; font-weight:700; color:#f59e0b;'>{repondus}</div>
+                <div style='color:#64748b; font-size:0.85rem;'>répondus</div>
+            </div>
+            <div style='text-align:center;'>
+                <div style='font-size:2rem; font-weight:700; color:#10b981;'>{rembourses}</div>
+                <div style='color:#64748b; font-size:0.85rem;'>remboursés</div>
+            </div>
+        </div>
+
+        {table_html}
+
+        <div style='margin-top:20px;'>
+            <a href='/' style='color:#64748b; text-decoration:none;'>← Tableau de bord</a>
+        </div>
+    </div>
+    """ + FOOTER
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 👤 ROUTE /mon-compte - Tableau de bord utilisateur + RGPD
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/mon-compte")
+def mon_compte():
+    if "credentials" not in session:
+        return redirect(url_for('login'))
+
+    user = User.query.filter_by(email=session["email"]).first()
+    if not user:
+        return redirect(url_for('login'))
+
+    litiges_count = Litigation.query.filter_by(user_email=user.email).count()
+    envois_count = MiseEnDemeure.query.filter_by(user_email=user.email).count()
+    rembourses_count = Litigation.query.filter_by(
+        user_email=user.email, status="Remboursé"
+    ).count()
+
+    scan_status = "Activé" if user.scan_enabled else "Désactivé"
+    scan_color = "#10b981" if user.scan_enabled else "#dc2626"
+    scan_btn_label = "Désactiver le scan" if user.scan_enabled else "Activer le scan"
+    scan_btn_color = "#f59e0b" if user.scan_enabled else "#10b981"
+
+    membre_depuis = user.created_at.strftime('%d/%m/%Y') if user.created_at else "Inconnu"
+
+    return STYLE + f"""
+    <div style='max-width:900px; margin:40px auto; padding:20px;'>
+        <h1 style='color:#1e293b; margin-bottom:5px;'>👤 Mon compte</h1>
+        <p style='color:#64748b; margin-bottom:30px;'>Gérez vos préférences et données personnelles</p>
+
+        <!-- PROFIL -->
+        <div style='background:white; border-radius:16px; padding:30px; margin-bottom:20px;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.06);'>
+            <h2 style='color:#1e293b; margin-bottom:20px; font-size:1.1rem;'>📋 Informations</h2>
+            <div style='display:grid; grid-template-columns:1fr 1fr; gap:15px;'>
+                <div><span style='color:#94a3b8; font-size:0.85rem;'>Nom</span>
+                    <p style='margin:3px 0; font-weight:600; color:#1e293b;'>{user.name or "Non renseigné"}</p></div>
+                <div><span style='color:#94a3b8; font-size:0.85rem;'>Email</span>
+                    <p style='margin:3px 0; font-weight:600; color:#1e293b;'>{user.email}</p></div>
+                <div><span style='color:#94a3b8; font-size:0.85rem;'>Membre depuis</span>
+                    <p style='margin:3px 0; font-weight:600; color:#1e293b;'>{membre_depuis}</p></div>
+                <div><span style='color:#94a3b8; font-size:0.85rem;'>Scan automatique</span>
+                    <p style='margin:3px 0; font-weight:600; color:{scan_color};'>{scan_status}</p></div>
+            </div>
+        </div>
+
+        <!-- STATS -->
+        <div style='background:white; border-radius:16px; padding:30px; margin-bottom:20px;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.06);'>
+            <h2 style='color:#1e293b; margin-bottom:20px; font-size:1.1rem;'>📊 Statistiques</h2>
+            <div style='display:flex; gap:30px;'>
+                <div style='text-align:center;'>
+                    <div style='font-size:2rem; font-weight:700; color:#4f46e5;'>{litiges_count}</div>
+                    <div style='color:#64748b; font-size:0.85rem;'>litiges détectés</div>
+                </div>
+                <div style='text-align:center;'>
+                    <div style='font-size:2rem; font-weight:700; color:#f59e0b;'>{envois_count}</div>
+                    <div style='color:#64748b; font-size:0.85rem;'>mises en demeure</div>
+                </div>
+                <div style='text-align:center;'>
+                    <div style='font-size:2rem; font-weight:700; color:#10b981;'>{rembourses_count}</div>
+                    <div style='color:#64748b; font-size:0.85rem;'>remboursements</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RGPD -->
+        <div style='background:white; border-radius:16px; padding:30px; margin-bottom:20px;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.06);'>
+            <h2 style='color:#1e293b; margin-bottom:20px; font-size:1.1rem;'>🔐 Contrôle de vos données (RGPD)</h2>
+
+            <div style='display:flex; flex-direction:column; gap:12px;'>
+                <!-- Toggle scan -->
+                <div style='display:flex; align-items:center; justify-content:space-between;
+                            padding:15px; background:#f8fafc; border-radius:10px;'>
+                    <div>
+                        <b style='color:#1e293b;'>Scan automatique Gmail</b>
+                        <p style='margin:3px 0 0; color:#64748b; font-size:0.85rem;'>
+                            Détection automatique des litiges dans votre boîte mail
+                        </p>
+                    </div>
+                    <form method='POST' action='/toggle-scan'>
+                        <button type='submit'
+                            style='background:{scan_btn_color}; color:white; border:none;
+                                   padding:8px 18px; border-radius:8px; cursor:pointer; font-weight:600;'>
+                            {scan_btn_label}
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Révoquer accès Gmail -->
+                <div style='display:flex; align-items:center; justify-content:space-between;
+                            padding:15px; background:#f8fafc; border-radius:10px;'>
+                    <div>
+                        <b style='color:#1e293b;'>Accès Gmail</b>
+                        <p style='margin:3px 0 0; color:#64748b; font-size:0.85rem;'>
+                            Révoquer l'autorisation d'accès à votre Gmail
+                        </p>
+                    </div>
+                    <form method='POST' action='/revoquer-acces'>
+                        <button type='submit'
+                            style='background:#f1f5f9; color:#dc2626; border:1px solid #fecaca;
+                                   padding:8px 18px; border-radius:8px; cursor:pointer; font-weight:600;'>
+                            Révoquer
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Export données -->
+                <div style='display:flex; align-items:center; justify-content:space-between;
+                            padding:15px; background:#f8fafc; border-radius:10px;'>
+                    <div>
+                        <b style='color:#1e293b;'>Exporter mes données</b>
+                        <p style='margin:3px 0 0; color:#64748b; font-size:0.85rem;'>
+                            Télécharger toutes vos données (JSON)
+                        </p>
+                    </div>
+                    <a href='/export-donnees'
+                       style='background:#f1f5f9; color:#4f46e5; border:1px solid #c7d2fe;
+                              padding:8px 18px; border-radius:8px; text-decoration:none; font-weight:600;'>
+                        Exporter
+                    </a>
+                </div>
+
+                <!-- Supprimer compte -->
+                <div style='display:flex; align-items:center; justify-content:space-between;
+                            padding:15px; background:#fff5f5; border-radius:10px; border:1px solid #fecaca;'>
+                    <div>
+                        <b style='color:#dc2626;'>Supprimer mon compte</b>
+                        <p style='margin:3px 0 0; color:#94a3b8; font-size:0.85rem;'>
+                            Supprime toutes vos données de façon irréversible
+                        </p>
+                    </div>
+                    <form method='POST' action='/supprimer-compte'
+                          onsubmit="return confirm('⚠️ Cette action est IRRÉVERSIBLE. Supprimer votre compte et toutes vos données ?')">
+                        <button type='submit'
+                            style='background:#dc2626; color:white; border:none;
+                                   padding:8px 18px; border-radius:8px; cursor:pointer; font-weight:600;'>
+                            Supprimer
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div style='margin-top:20px; display:flex; gap:15px;'>
+            <a href='/' style='color:#64748b; text-decoration:none;'>← Tableau de bord</a>
+            <a href='/mes-envois' style='color:#4f46e5; text-decoration:none;'>📊 Mes envois</a>
+            <a href='/logout' style='color:#dc2626; text-decoration:none;'>Se déconnecter</a>
+        </div>
+    </div>
+    """ + FOOTER
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# 🔐 ROUTES RGPD
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/toggle-scan", methods=['POST'])
+def toggle_scan():
+    if "email" not in session:
+        return redirect(url_for('login'))
+    user = User.query.filter_by(email=session["email"]).first()
+    if not user:
+        return redirect(url_for('login'))
+    user.scan_enabled = not user.scan_enabled
+    db.session.commit()
+    status = "activé" if user.scan_enabled else "désactivé"
+    return redirect('/mon-compte')
+
+
+@app.route("/revoquer-acces", methods=['POST'])
+def revoquer_acces():
+    if "email" not in session:
+        return redirect(url_for('login'))
+    user = User.query.filter_by(email=session["email"]).first()
+    if user:
+        user.refresh_token = None
+        db.session.commit()
+    session.pop("credentials", None)
+    return STYLE + """
+    <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
+        <div style='font-size:3rem; margin-bottom:20px;'>✅</div>
+        <h2 style='color:#1e293b;'>Accès Gmail révoqué</h2>
+        <p style='color:#64748b; margin-bottom:20px;'>
+            Votre token d'accès a été supprimé. Justicio ne peut plus accéder à votre Gmail.<br>
+            Vous pouvez également révoquer manuellement depuis
+            <a href='https://myaccount.google.com/permissions' target='_blank' style='color:#4f46e5;'>
+                les paramètres Google
+            </a>.
+        </p>
+        <a href='/mon-compte' style='display:inline-block; background:#4f46e5; color:white;
+            padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
+            Retour à mon compte
+        </a>
+    </div>
+    """ + FOOTER
+
+
+@app.route("/export-donnees")
+def export_donnees():
+    if "email" not in session:
+        return redirect(url_for('login'))
+    user = User.query.filter_by(email=session["email"]).first()
+    if not user:
+        return redirect(url_for('login'))
+
+    litiges = Litigation.query.filter_by(user_email=user.email).all()
+    envois = MiseEnDemeure.query.filter_by(user_email=user.email).all()
+
+    data = {
+        "user": {
+            "email": user.email,
+            "name": user.name,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "scan_enabled": user.scan_enabled,
+        },
+        "litiges": [
+            {
+                "id": l.id, "company": l.company, "amount": l.amount,
+                "status": l.status, "created_at": l.created_at.isoformat() if l.created_at else None
+            } for l in litiges
+        ],
+        "envois": [
+            {
+                "id": e.id, "target_company": e.target_company,
+                "send_type": e.send_type, "subject": e.subject,
+                "status": e.status, "sent_at": e.sent_at.isoformat() if e.sent_at else None
+            } for e in envois
+        ]
+    }
+
+    from flask import Response
+    return Response(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        mimetype='application/json',
+        headers={"Content-Disposition": f"attachment; filename=justicio-export-{user.email}.json"}
+    )
+
+
+@app.route("/supprimer-compte", methods=['POST'])
+def supprimer_compte():
+    if "email" not in session:
+        return redirect(url_for('login'))
+    user = User.query.filter_by(email=session["email"]).first()
+    if user:
+        Litigation.query.filter_by(user_email=user.email).delete()
+        MiseEnDemeure.query.filter_by(user_email=user.email).delete()
+        db.session.delete(user)
+        db.session.commit()
+    session.clear()
+    return STYLE + """
+    <div style='max-width:600px; margin:80px auto; padding:40px; background:white;
+                border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
+        <div style='font-size:3rem; margin-bottom:20px;'>👋</div>
+        <h2 style='color:#1e293b;'>Compte supprimé</h2>
+        <p style='color:#64748b; margin-bottom:20px;'>
+            Toutes vos données ont été effacées définitivement.
+        </p>
+        <a href='/' style='display:inline-block; background:#4f46e5; color:white;
+            padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
+            Retour à l'accueil
+        </a>
+    </div>
+    """ + FOOTER
+
+
+@app.route("/signaler-remboursement/<int:litigation_id>", methods=['POST'])
+def signaler_remboursement(litigation_id):
+    if "email" not in session:
+        return redirect(url_for('login'))
+    litigation = Litigation.query.get_or_404(litigation_id)
+    if litigation.user_email != session["email"]:
+        return STYLE + "<p style='color:red;'>Accès refusé.</p>" + FOOTER
+    litigation.status = "Remboursé"
+    litigation.updated_at = datetime.utcnow()
+    envois_lies = MiseEnDemeure.query.filter_by(litigation_id=litigation_id).all()
+    for envoi in envois_lies:
+        envoi.status = 'refunded'
+        envoi.refunded_at = datetime.utcnow()
+    db.session.commit()
+    return redirect('/')
 
 
 if __name__ == '__main__':
