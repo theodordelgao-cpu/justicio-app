@@ -4629,10 +4629,15 @@ document.addEventListener('DOMContentLoaded', function() {
 SUPPORT_EMAIL = "support@justicio.fr"
 
 FOOTER = """<footer>
-    <a href='/cgu'>CGU</a> | 
-    <a href='/confidentialite'>Confidentialité</a> | 
+    <a href='/cgu'>CGU</a> |
+    <a href='/confidentialite'>Confidentialité</a> |
     <a href='/mentions-legales'>Mentions Légales</a>
     <p>© 2026 Justicio.fr - Tous droits réservés</p>
+    <p style='margin:8px 0 0 0;'>
+        <a href='/pourquoi-cet-ecran' style='color:#64748b; font-size:0.9em;'>
+            🔐 Pourquoi Google affiche un écran rouge ?
+        </a>
+    </p>
 </footer>
 <!-- BOUTON SUPPORT FLOTTANT -->
 <a href='mailto:""" + SUPPORT_EMAIL + """?subject=Demande%20d%27aide%20Justicio' class='support-float'>
@@ -4996,6 +5001,10 @@ def index():
                     <div style='background:linear-gradient(90deg, #10b981, #4f46e5);
                                height:100%; width:{pourcentage}%;'></div>
                 </div>
+                <p style='margin:8px 0 0 0; color:#94a3b8; font-size:0.8em;
+                          text-align:right;'>
+                    {User.query.count()}/100 beta-testeurs
+                </p>
             </div>
 
             <!-- CTA FINAL -->
