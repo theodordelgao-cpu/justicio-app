@@ -4816,8 +4816,8 @@ def index():
     # ════════════════════════════════════════════════════════════════
     
     if "credentials" not in session:
-        places_restantes = 73
-        pourcentage = 100 - places_restantes
+        places_restantes = 100 - User.query.count()
+        pourcentage = (User.query.count() / 100) * 100
         return STYLE + f"""
         <div style='max-width:1000px; margin:0 auto;'>
             
