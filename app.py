@@ -467,16 +467,16 @@ def send_mise_en_demeure_smtp(user, target_email, subject, html_body, text_body=
 def send_mise_en_demeure_ar24(user, target_email, target_address, subject, html_body,
                                litigation_id=None, company=None):
     """
-    📬 PLACEHOLDER - À activer après obtention du SIRET et inscription AR24.
-    Pour l'instant, retourne une erreur explicite.
+    📬 PLACEHOLDER — À activer en Phase 2 quand volume suffisant.
+    L'accès API AR24 nécessite une inscription dédiée (hors scope lancement).
     """
     if not os.environ.get('AR24_API_KEY') or not os.environ.get('AR24_USER_ID'):
         return {
             'success': False,
-            'error': "AR24 non configuré. En attente du SIRET et de l'inscription AR24.",
+            'error': "AR24 non activé — disponible en Phase 2.",
             'error_type': 'AR24_NOT_CONFIGURED'
         }
-    # TODO : implémenter l'appel API AR24 après inscription
+    # Phase 2 : implémenter l'appel API AR24 après inscription
     # Documentation : https://www.ar24.fr/documentation-api/
     return {
         'success': False,
@@ -5801,7 +5801,7 @@ def scan_all():
                 🚀 RÉCUPÉRER MES {total_gain:.0f}€
             </a>
             <p style='color:rgba(255,255,255,0.5); margin-top:15px; font-size:0.9rem;'>
-                Commission 25% uniquement en cas de succès
+                Commission 30% uniquement en cas de succès
             </p>
         </div>
         
@@ -7249,7 +7249,8 @@ def callback():
     )
 
     if 'code_verifier' in session: flow.code_verifier = session['code_verifier']
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    if os.environ.get('FLASK_ENV') == 'development':
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     flow.fetch_token(authorization_response=request.url.replace("http://", "https://"))
     creds = flow.credentials
     
@@ -7397,7 +7398,7 @@ def setup_payment():
                 <div style='background:#fef3c7; padding:15px; border-radius:10px; margin-bottom:25px;
                             border-left:4px solid #f59e0b;'>
                     <p style='margin:0; color:#92400e; font-size:0.9rem;'>
-                        <b>💳 Commission :</b> 25% uniquement en cas de remboursement obtenu.<br>
+                        <b>💳 Commission :</b> 30% uniquement en cas de remboursement obtenu.<br>
                         <span style='font-size:0.85rem;'>Aucun frais si nous n'obtenons pas satisfaction.</span>
                     </p>
                 </div>
@@ -8974,7 +8975,7 @@ def confidentialite():
                 </div>
                 
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>1. Responsable du Traitement</h2>
-                <p><b>Justicio SAS</b> (en cours d'immatriculation)<br>
+                <p><b>Theodor Delgado / Justicio</b> (Entrepreneur Individuel — SIRET 10427375000018)<br>
                 Directeur de la publication : Theodor Delgado<br>
                 Délégué à la Protection des Données (DPO) : <a href='mailto:support@justicio.fr' style='color:#4f46e5;'>support@justicio.fr</a></p>
                 
@@ -9088,14 +9089,14 @@ def mentions_legales():
                 
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>1. Éditeur du Site</h2>
                 <div style='background:#f8fafc; padding:25px; border-radius:12px; margin:20px 0;'>
-                    <p style='margin:5px 0;'><b>Raison sociale :</b> Justicio</p>
-                    <p style='margin:5px 0;'><b>Forme juridique :</b> Entreprise Individuelle (Auto-Entrepreneur)</p>
-                    <!-- TODO: Remplacer par le vrai SIREN après immatriculation URSSAF -->
-                    <p style='margin:5px 0;'><b>SIREN :</b> XXX XXX XXX (auto-entrepreneur, en cours d'immatriculation)</p>
+                    <p style='margin:5px 0;'><b>Raison sociale :</b> Theodor Delgado / Justicio</p>
+                    <p style='margin:5px 0;'><b>Forme juridique :</b> Entrepreneur Individuel (micro-entreprise)</p>
+                    <p style='margin:5px 0;'><b>SIRET :</b> 10427375000018</p>
+                    <p style='margin:5px 0;'><b>Immatriculé depuis :</b> 24/04/2025</p>
                     <p style='margin:5px 0;'><b>N° TVA :</b> Non applicable (franchise en base de TVA)</p>
-                    <p style='margin:5px 0;'><b>Siège social :</b> France</p>
+                    <p style='margin:5px 0;'><b>Siège social :</b> 2 rue Santiago du Chili, 31400 Toulouse</p>
                     <p style='margin:5px 0;'><b>Activité :</b> Édition et exploitation de plateforme web de recouvrement amiable automatisé</p>
-                    <p style='margin:5px 0;'><b>Code APE :</b> 62.02A</p>
+                    <p style='margin:5px 0;'><b>Code APE :</b> 58.29C</p>
                 </div>
 
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>2. Directeur de la Publication</h2>
@@ -9114,7 +9115,7 @@ def mentions_legales():
                 </div>
                 
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>4. Propriété Intellectuelle</h2>
-                <p>L'ensemble des contenus présents sur le site Justicio (textes, images, logos, code source) sont protégés par le droit d'auteur et sont la propriété exclusive de Justicio SAS, sauf mention contraire.</p>
+                <p>L'ensemble des contenus présents sur le site Justicio (textes, images, logos, code source) sont protégés par le droit d'auteur et sont la propriété exclusive de Theodor Delgado / Justicio (EI), sauf mention contraire.</p>
                 <p>Toute reproduction, représentation, modification ou exploitation non autorisée est interdite et constitue une contrefaçon sanctionnée par le Code de la propriété intellectuelle.</p>
                 
                 <h2 style='color:#4f46e5; margin-top:30px; font-size:1.3rem;'>5. Services Tiers Utilisés</h2>
@@ -9272,14 +9273,14 @@ def admin_panel():
         Litigation.status.in_(["Remboursé", "Remboursé (Partiel)"])
     ).all()
     
-    # Calcul des commissions (25% du montant)
+    # Calcul des commissions (30% du montant)
     total_refunded = 0
     total_commission = 0
     for case in refunded_cases:
         try:
             amount = extract_numeric_amount(case.amount)
             total_refunded += amount
-            total_commission += amount * 0.25
+            total_commission += amount * 0.30
         except:
             pass
     
@@ -9364,7 +9365,7 @@ def admin_panel():
             <div style='background:linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%); padding:20px; border-radius:15px; text-align:center;'>
                 <div style='font-size:2rem; font-weight:bold; color:#9d174d;'>{total_commission:.0f}€</div>
                 <div style='color:#be185d; font-size:0.9rem;'>💎 Commissions</div>
-                <div style='color:#ec4899; font-size:0.75rem;'>25% encaissé</div>
+                <div style='color:#ec4899; font-size:0.75rem;'>30% encaissé</div>
             </div>
         </div>
         
@@ -11951,7 +11952,7 @@ def envoyer_mise_en_demeure(litigation_id):
                     🔜 Bientôt disponible
                 </div>
                 <p style='color:#94a3b8; font-size:0.8rem; margin-top:10px; text-align:center;'>
-                    En attente d'immatriculation SIRET
+                    Bientôt disponible — Phase 2
                 </p>
             </div>
         </div>
@@ -11992,7 +11993,7 @@ def confirmer_envoi():
                     border-radius:20px; box-shadow:0 4px 20px rgba(0,0,0,0.1); text-align:center;'>
             <div style='font-size:3rem; margin-bottom:20px;'>🔜</div>
             <h2 style='color:#1e293b;'>Bientôt disponible</h2>
-            <p style='color:#64748b;'>La LRE sera disponible après immatriculation SIRET.</p>
+            <p style='color:#64748b;'>La LRE sera disponible en Phase 2.</p>
             <a href='/' style='display:inline-block; margin-top:20px; background:#4f46e5; color:white;
                 padding:12px 30px; border-radius:10px; text-decoration:none; font-weight:600;'>
                 Retour au tableau de bord
