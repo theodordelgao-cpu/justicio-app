@@ -6,7 +6,7 @@ import json
 import re
 import traceback
 from urllib.parse import urljoin, urlparse
-from flask import Flask, session, redirect, request, url_for, jsonify
+from flask import Flask, session, redirect, request, url_for, jsonify, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -9083,55 +9083,23 @@ def confidentialite():
 # Delgado, EI) mais application Google Cloud distincte de Justicio.
 # ---------------------------------------------------------------------------
 
+STANDIA_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "standia_static")
+
+
 @app.route("/standia")
+@app.route("/standia/")
 def standia_home():
-    return """<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Standia - Assistant téléphonique IA pour artisans, et outil interne de prospection commerciale.">
-    <title>Standia</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
-    <style>
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
-            min-height: 100vh; margin: 0; padding: 40px 20px;
-            display: flex; flex-direction: column; align-items: center; color: #1e293b;
-        }
-        .card {
-            max-width: 640px; width: 100%; background: rgba(255,255,255,0.97);
-            border-radius: 24px; padding: 48px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
-            text-align: center;
-        }
-        h1 { color: #1e293b; margin-bottom: 10px; font-size: 2rem; }
-        p { color: #475569; line-height: 1.7; }
-        a { color: #4f46e5; }
-        footer { color: rgba(255,255,255,0.6); margin-top: 30px; font-size: 0.9em; text-align: center; }
-        footer a { color: rgba(255,255,255,0.85); }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>📞 Standia</h1>
-        <p>Standia développe un assistant téléphonique basé sur l'IA pour les artisans
-        (garages, plombiers, électriciens, serruriers, chauffagistes...), afin de ne
-        plus jamais manquer un appel client.</p>
-        <p>Cette page sert également de point de référence pour un outil interne
-        (bot de prospection commerciale) utilisé par l'équipe Standia.</p>
-        <p>Contact : <a href="mailto:support@justicio.fr">support@justicio.fr</a></p>
-        <p>
-            <a href="/standia/confidentialite">Politique de confidentialité</a>
-            &nbsp;|&nbsp;
-            <a href="/standia/conditions">Conditions d'utilisation</a>
-        </p>
-    </div>
-    <footer>© 2026 Standia — Theodor Delgado (EI)</footer>
-</body>
-</html>
-"""
+    return send_from_directory(STANDIA_STATIC_DIR, "index.html")
+
+
+@app.route("/standia/_next/<path:filename>")
+def standia_next_assets(filename):
+    # Fichiers générés par Next.js (JS/CSS/fonts) — noms de fichiers hashés,
+    # donc cache long sans risque de contenu périmé après un redéploiement.
+    response = send_from_directory(os.path.join(STANDIA_STATIC_DIR, "_next"), filename)
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
 
 @app.route("/standia/confidentialite")
 def standia_confidentialite():
