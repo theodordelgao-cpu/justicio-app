@@ -9074,6 +9074,236 @@ def confidentialite():
     </div>
     """ + FOOTER
 
+# ---------------------------------------------------------------------------
+# Pages Standia (bot interne de prospection) : homepage + politique de
+# confidentialité dédiées, requises par Google pour publier l'écran de
+# consentement OAuth du projet "standia" en production. Hébergées ici sur
+# justicio.fr car le domaine est déjà vérifié dans Google Search Console
+# (cf. balise google-site-verification dans STYLE), même entité (Theodor
+# Delgado, EI) mais application Google Cloud distincte de Justicio.
+# ---------------------------------------------------------------------------
+
+@app.route("/standia")
+def standia_home():
+    return """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Standia - Assistant téléphonique IA pour artisans, et outil interne de prospection commerciale.">
+    <title>Standia</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+            min-height: 100vh; margin: 0; padding: 40px 20px;
+            display: flex; flex-direction: column; align-items: center; color: #1e293b;
+        }
+        .card {
+            max-width: 640px; width: 100%; background: rgba(255,255,255,0.97);
+            border-radius: 24px; padding: 48px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
+            text-align: center;
+        }
+        h1 { color: #1e293b; margin-bottom: 10px; font-size: 2rem; }
+        p { color: #475569; line-height: 1.7; }
+        a { color: #4f46e5; }
+        footer { color: rgba(255,255,255,0.6); margin-top: 30px; font-size: 0.9em; text-align: center; }
+        footer a { color: rgba(255,255,255,0.85); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>📞 Standia</h1>
+        <p>Standia développe un assistant téléphonique basé sur l'IA pour les artisans
+        (garages, plombiers, électriciens, serruriers, chauffagistes...), afin de ne
+        plus jamais manquer un appel client.</p>
+        <p>Cette page sert également de point de référence pour un outil interne
+        (bot de prospection commerciale) utilisé par l'équipe Standia.</p>
+        <p>Contact : <a href="mailto:support@justicio.fr">support@justicio.fr</a></p>
+        <p>
+            <a href="/standia/confidentialite">Politique de confidentialité</a>
+            &nbsp;|&nbsp;
+            <a href="/standia/conditions">Conditions d'utilisation</a>
+        </p>
+    </div>
+    <footer>© 2026 Standia — Theodor Delgado (EI)</footer>
+</body>
+</html>
+"""
+
+@app.route("/standia/confidentialite")
+def standia_confidentialite():
+    return """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Politique de confidentialité de l'outil interne de prospection Standia.">
+    <title>Standia - Politique de Confidentialité</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+            min-height: 100vh; margin: 0; padding: 40px 20px;
+            display: flex; flex-direction: column; align-items: center; color: #1e293b;
+        }
+        .card {
+            max-width: 900px; width: 100%; background: rgba(255,255,255,0.97);
+            border-radius: 24px; padding: 48px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
+            line-height: 1.8;
+        }
+        h1 { color: #1e293b; font-size: 1.8rem; }
+        h2 { color: #4f46e5; font-size: 1.2rem; margin-top: 28px; }
+        a { color: #4f46e5; }
+        .back { display: block; text-align: center; margin-top: 30px; }
+        footer { color: rgba(255,255,255,0.6); margin-top: 30px; font-size: 0.9em; text-align: center; }
+        footer a { color: rgba(255,255,255,0.85); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🔒 Politique de Confidentialité — Outil de prospection Standia</h1>
+        <p style="color:#64748b;">Dernière mise à jour : Septembre 2026</p>
+
+        <h2>1. Responsable du traitement</h2>
+        <p><b>Theodor Delgado / Standia</b> (Entrepreneur Individuel).<br>
+        Contact : <a href="mailto:support@justicio.fr">support@justicio.fr</a></p>
+
+        <h2>2. Nature de l'outil</h2>
+        <p>Il s'agit d'un outil <b>interne</b>, réservé à l'équipe commerciale Standia,
+        sous forme de bot Telegram. Il ne collecte aucune donnée auprès du grand public
+        et n'est pas un service destiné aux clients finaux.</p>
+
+        <h2>3. Données traitées</h2>
+        <ul>
+            <li><b>Données professionnelles publiques d'entreprises</b> (nom, adresse,
+            téléphone, note et nombre d'avis), obtenues via l'API Google Places, dans
+            le cadre d'une prospection commerciale B2B (démarchage d'artisans).</li>
+            <li><b>Identifiant Telegram</b> (nom d'utilisateur ou ID) du membre de
+            l'équipe Standia qui utilise le bot, pour suivre l'attribution des
+            prospects et éviter les doublons entre commerciaux.</li>
+        </ul>
+        <p>Aucune donnée à caractère personnel d'un particulier n'est collectée :
+        seules des coordonnées professionnelles d'établissements sont traitées.</p>
+
+        <h2>4. Utilisation de Google Sheets / Google Drive</h2>
+        <p>Les listes de prospects sont exportées dans des feuilles Google Sheets,
+        créées et stockées sur le compte Google interne de Standia via l'API Google
+        Sheets/Drive, dans le seul but de partager ces listes avec l'équipe
+        commerciale. L'utilisation des données reçues des API Google respecte les
+        <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>,
+        y compris les exigences d'utilisation limitée.</p>
+
+        <h2>5. Durée de conservation</h2>
+        <p>Une base interne (anti-doublon) conserve les établissements déjà
+        attribués à un commercial, le temps nécessaire à l'activité commerciale de
+        Standia. Ces données ne sont ni publiées, ni cédées à des tiers.</p>
+
+        <h2>6. Partage des données</h2>
+        <p>Les données ne sont partagées avec aucun tiers, à l'exception des
+        sous-traitants techniques nécessaires au fonctionnement de l'outil
+        (Google : Sheets/Drive ; Telegram : messagerie de l'interface).</p>
+
+        <h2>7. Vos droits</h2>
+        <p>Une entreprise figurant dans une liste de prospection peut demander la
+        suppression de ses coordonnées en écrivant à
+        <a href="mailto:support@justicio.fr">support@justicio.fr</a>.</p>
+
+        <h2>8. Sécurité</h2>
+        <p>Accès à l'outil restreint à l'équipe Standia (authentification Telegram),
+        authentification Google via OAuth 2.0 (aucun mot de passe stocké), hébergement
+        sécurisé.</p>
+
+        <p><a href="/standia/conditions">Conditions d'utilisation</a></p>
+
+        <a class="back" href="/standia">← Retour à l'accueil Standia</a>
+    </div>
+    <footer>© 2026 Standia — Theodor Delgado (EI)</footer>
+</body>
+</html>
+"""
+
+@app.route("/standia/conditions")
+def standia_conditions():
+    return """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Conditions d'utilisation de l'outil interne de prospection Standia.">
+    <title>Standia - Conditions d'Utilisation</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📜</text></svg>">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+            min-height: 100vh; margin: 0; padding: 40px 20px;
+            display: flex; flex-direction: column; align-items: center; color: #1e293b;
+        }
+        .card {
+            max-width: 900px; width: 100%; background: rgba(255,255,255,0.97);
+            border-radius: 24px; padding: 48px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.4);
+            line-height: 1.8;
+        }
+        h1 { color: #1e293b; font-size: 1.8rem; }
+        h2 { color: #4f46e5; font-size: 1.2rem; margin-top: 28px; }
+        a { color: #4f46e5; }
+        .back { display: block; text-align: center; margin-top: 30px; }
+        footer { color: rgba(255,255,255,0.6); margin-top: 30px; font-size: 0.9em; text-align: center; }
+        footer a { color: rgba(255,255,255,0.85); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>📜 Conditions d'Utilisation — Outil de prospection Standia</h1>
+        <p style="color:#64748b;">Dernière mise à jour : Septembre 2026</p>
+
+        <h2>Article 1 - Objet</h2>
+        <p>Cet outil est un bot Telegram <b>interne</b> à l'entreprise Standia,
+        réservé à son équipe commerciale. Il ne s'agit pas d'un service public :
+        aucune inscription ouverte n'est proposée.</p>
+
+        <h2>Article 2 - Accès</h2>
+        <p>L'accès est accordé individuellement par l'administrateur Standia à
+        chaque commercial. Il peut être révoqué à tout moment, sans préavis.</p>
+
+        <h2>Article 3 - Fonctionnement</h2>
+        <p>Sur commande d'un commercial, l'outil recherche des établissements
+        (via l'API Google Places) correspondant à un métier et une ville donnés,
+        puis exporte les résultats dans un Google Sheet dédié, en évitant les
+        doublons déjà attribués à un autre commercial.</p>
+
+        <h2>Article 4 - Usage des données obtenues</h2>
+        <p>Les listes de prospects générées sont réservées à un usage commercial
+        <b>interne</b> à Standia (démarchage téléphonique B2B). Elles ne doivent
+        pas être revendues, publiées ou transmises à des tiers en dehors de
+        l'équipe Standia.</p>
+
+        <h2>Article 5 - Responsabilité</h2>
+        <p>Les données affichées (coordonnées, notes, avis) proviennent de l'API
+        Google Places et sont fournies "en l'état" : Standia ne garantit pas leur
+        exhaustivité ni leur exactitude, et ne peut être tenu responsable des
+        erreurs ou indisponibilités de ces données tierces.</p>
+
+        <h2>Article 6 - Droit applicable</h2>
+        <p>Les présentes conditions sont régies par le droit français. En cas de
+        litige, les tribunaux compétents seront ceux du ressort de l'exploitant.</p>
+
+        <h2>Article 7 - Contact</h2>
+        <p>📧 Email : <a href="mailto:support@justicio.fr">support@justicio.fr</a></p>
+
+        <a class="back" href="/standia">← Retour à l'accueil Standia</a>
+    </div>
+    <footer>© 2026 Standia — Theodor Delgado (EI)</footer>
+</body>
+</html>
+"""
+
 @app.route("/mentions-legales")
 def mentions_legales():
     return STYLE + """
