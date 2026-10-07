@@ -9,3 +9,8 @@ stripe
 requests
 beautifulsoup4
 gunicorn
+pypdf
+pypdfium2
+reportlab
+Pillow
+pytesseract

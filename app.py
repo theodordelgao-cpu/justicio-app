@@ -9086,6 +9086,12 @@ def confidentialite():
 STANDIA_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "standia_static")
 
 
+# Iris : agent IA de montage de DOE (Standia), servi sur /standia/AgentIA_DEO
+# Module autonome dans iris_doe/ (voir iris_doe/README.md).
+from iris_doe import bp as iris_bp
+app.register_blueprint(iris_bp)
+
+
 @app.route("/standia")
 @app.route("/standia/")
 def standia_home():

@@ -1,0 +1,24 @@
+{% extends "iris/base.html" %}
+{% block content %}
+<h1>Votre DOE monté en quelques minutes</h1>
+<p class="sub">Déposez vos plans, fiches techniques, notices, PV et photos. Iris les lit, les classe, vous dit ce qui manque et assemble un dossier propre, paginé, prêt à remettre.</p>
+
+<form class="card" method="post" action="{{ url_for('.creer_chantier') }}">
+  <h2>Nouveau chantier</h2>
+  <div class="grid">
+    <div><label for="nom">Nom du chantier *</label><input type="text" id="nom" name="nom" required placeholder="Rénovation école Jean Jaurès"></div>
+    <div><label for="maitre_ouvrage">Maître d'ouvrage</label><input type="text" id="maitre_ouvrage" name="maitre_ouvrage" placeholder="Mairie de …"></div>
+    <div><label for="entreprise">Entreprise</label><input type="text" id="entreprise" name="entreprise" placeholder="Votre entreprise"></div>
+    <div><label for="adresse">Adresse du chantier</label><input type="text" id="adresse" name="adresse"></div>
+  </div>
+  <div style="margin-top:16px">
+    <label>Lots réalisés <span class="muted">(Iris vérifie les pièces obligatoires de chaque lot)</span></label>
+    <div class="chips">
+      {% for key, lot in lots.items() %}
+      <label><input type="checkbox" name="lots" value="{{ key }}"> {{ lot.label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div style="margin-top:20px"><button class="btn" type="submit">Créer le chantier</button></div>
+</form>
+{% endblock %}
