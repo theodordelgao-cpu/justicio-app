@@ -168,6 +168,15 @@ main{position:relative; z-index:5}
 .number{display:grid; gap:12px; justify-items:start}
 .number .big{font-family:var(--f-display); font-style:italic; font-weight:900; font-stretch:112%; font-size:clamp(32px,4.6vw,50px); color:var(--leo); user-select:all; font-variant-numeric:tabular-nums; line-height:1}
 footer.plain{padding-block:36px 44px}
+.hugo{display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:clamp(24px,4vw,56px); align-items:center; padding:clamp(22px,4vw,44px); border-radius:24px; border:1px solid rgba(255,201,77,.28);
+  background:radial-gradient(70% 120% at 100% 0%, rgba(255,201,77,.16), transparent 60%), var(--night-2)}
+@media (max-width:900px){.hugo{grid-template-columns:1fr}}
+.btn-hugo{background:#ffc94d; color:#1d1400}
+.flow{list-style:none; margin:0; padding:0; display:grid; gap:0; position:relative}
+.flow li{display:grid; grid-template-columns:70px minmax(0,1fr); gap:2px 14px; padding:14px 0; border-top:1px solid var(--line)}
+.flow li:first-child{border-top:0}
+.flow .mono{grid-row:span 2; color:#ffc94d; padding-top:3px}
+.flow p{color:var(--muted); font-size:14.5px}
 footer .wrap{display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px 28px; align-items:center}
 footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
 
@@ -212,7 +221,7 @@ footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
 <main>
   <section class="scene hero" id="accueil" data-k="0" aria-labelledby="h-hero">
     <div class="copy">
-      <p class="mono">Léo · Iris · agents sur mesure</p>
+      <p class="mono">Léo · Iris · Hugo · agents sur mesure</p>
       <h1 id="h-hero">Des agents IA qui <span class="l">décrochent</span>, <span class="i">classent</span> et travaillent pour vous.</h1>
       <p class="lede">Standia conçoit des agents IA pour les artisans, les PME et les collectivités.</p>
       <div class="scroll-hint"><span class="mono">Scrollez pour découvrir</span><i aria-hidden="true"></i></div>
@@ -249,7 +258,7 @@ footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
       <div class="row">
         <span class="price">149 €<small>/ mois, sans engagement</small></span>
       </div>
-      <div class="row"><a class="btn btn-leo" href="#contact">Appeler Léo pour l'essayer</a></div>
+      <div class="row"><a class="btn btn-leo" href="#contact">Appeler Léo pour l'essayer</a><a class="btn btn-line" href="/standia/AgentIA_Devis/demo-leo">▶ Démo : l'appel devient un devis</a></div>
     </div>
   </section>
 
@@ -306,6 +315,28 @@ footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
     </div>
   </section>
 
+  <section class="plain" id="hugo" aria-labelledby="h-hugo">
+    <div class="wrap">
+      <div class="hugo">
+        <div class="sec-head" style="margin-bottom:0">
+          <p class="mono" style="color:#ffc94d">Nouveau · Hugo, l'agent devis</p>
+          <h2 id="h-hugo">Vos devis faits en 2 minutes. Vous gardez vos samedis.</h2>
+          <p>Le client explique son besoin au téléphone à Léo, ou vous collez sa demande. Hugo choisit les lignes dans <b style="color:var(--fg)">votre grille de prix</b>, calcule quantités et TVA, et prépare un devis PDF aux mentions légales. Vous validez d'un clic, le client l'accepte en ligne.</p>
+          <div class="row" style="margin-top:18px">
+            <a class="btn btn-hugo" href="/standia/AgentIA_Devis/">Essayer Hugo</a>
+            <a class="btn btn-line" href="/standia/AgentIA_Devis/demo-leo">▶ Voir la démo Léo → devis</a>
+          </div>
+        </div>
+        <ol class="flow">
+          <li><span class="mono">19 h 42</span><b>Léo décroche</b><p>Il note le besoin, l'adresse, l'urgence.</p></li>
+          <li><span class="mono">19 h 44</span><b>Hugo chiffre</b><p>Avec vos tarifs, TVA à 10 % ou 5,5 % si besoin.</p></li>
+          <li><span class="mono">19 h 50</span><b>Vous validez</b><p>Un clic depuis le téléphone, le client reçoit le devis par SMS.</p></li>
+          <li><span class="mono">20 h 05</span><b>Le client signe</b><p>Accord en ligne, vous êtes prévenu.</p></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
   <section class="plain" id="sur-mesure" aria-labelledby="h-custom">
     <div class="wrap">
       <div class="sec-head">
@@ -321,7 +352,7 @@ footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
         </ol>
         <div class="ideas">
           <div class="idea"><span class="mono">Voix</span><b>Prise de rendez-vous</b><p>Remplit votre agenda et confirme par SMS.</p></div>
-          <div class="idea"><span class="mono">SMS · email</span><b>Relance des devis</b><p>Relance les clients qui n'ont pas encore signé.</p></div>
+          <div class="idea"><span class="mono">SMS · email</span><b>Relance des devis</b><p>Relance les clients qui n'ont pas encore signé un devis d'Hugo.</p></div>
           <div class="idea"><span class="mono">SMS</span><b>Avis Google</b><p>Demande un avis au client après le chantier.</p></div>
           <div class="idea"><span class="mono">Email</span><b>Factures impayées</b><p>Suit les échéances et relance avec le bon ton.</p></div>
           <div class="idea"><span class="mono">Voix</span><b>Accueil des mairies</b><p>Oriente vers l'état civil, l'urbanisme ou les services techniques.</p></div>
@@ -388,7 +419,7 @@ footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
     {name:"PRISE DE RDV", desc:"Agent sur mesure : prend vos rendez-vous par téléphone et confirme par SMS. On le construit pour vous.", color:"#ffc94d", shape:"knot", custom:true},
     {name:"LÉO", desc:"Accueil téléphonique IA, 24 h/24. 149 € par mois, sans engagement.", color:"#ff6a3d", shape:"leo"},
     {name:"IRIS", desc:"Monte vos Dossiers des Ouvrages Exécutés à partir de vos documents en vrac.", color:"#5cc8ff", shape:"iris"},
-    {name:"RELANCE DEVIS", desc:"Agent sur mesure : relance les devis non signés par SMS ou email. On le construit pour vous.", color:"#ff7ad9", shape:"octa"},
+    {name:"HUGO", desc:"Agent devis : prépare vos devis avec vos tarifs, le client les accepte en ligne.", color:"#ffc94d", shape:"octa"},
     {name:"AVIS GOOGLE", desc:"Agent sur mesure : demande un avis à vos clients après le chantier. On le construit pour vous.", color:"#6ef2b0", shape:"dodeca"}
   ];
   var LEO = 1, IRIS = 2, sel = LEO;
@@ -416,7 +447,7 @@ footer .legal{font-size:12.5px; color:var(--muted); max-width:60ch}
   var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
   var dots = Array.prototype.slice.call(document.querySelectorAll('[data-dot]'));
   var progress = document.getElementById('progress'), backword = document.getElementById('backword'), bg = document.getElementById('bg'), gl = document.getElementById('gl');
-  var plainStart = document.getElementById('sur-mesure');
+  var plainStart = document.getElementById('hugo');
   function scrollState(){
     var y = window.scrollY, s = 0;
     for (var i = 0; i < scenes.length; i++){

@@ -1,0 +1,132 @@
+{% extends "hugo/base.html" %}
+{% block title %}Démo : de l'appel au devis · Standia{% endblock %}
+{% block head %}
+<style>
+  .col{max-width:680px}
+  h1{font-style:italic; font-weight:900; font-stretch:120%; font-size:clamp(34px,5vw,60px); margin:12px 0 12px}
+  h1 em{font-style:inherit; color:var(--safety)} h1 i{font-style:inherit; color:var(--gold)}
+  .lede{color:var(--muted); font-size:17px; margin-bottom:18px}
+  .tl{position:relative; display:grid; gap:16px; padding-left:34px}
+  .tl::before{content:""; position:absolute; left:12px; top:8px; bottom:8px; width:2px; background:linear-gradient(var(--safety),var(--gold),var(--ok))}
+  .st{position:relative; transition:opacity .5s, transform .5s}
+  .st::before{content:attr(data-n); position:absolute; left:-34px; top:18px; width:26px; height:26px; border-radius:50%; display:grid; place-items:center; font:800 12px var(--f-mono); color:#1a0b00; background:var(--c, var(--safety))}
+  .js .st.wait{opacity:.15; transform:translateY(8px)}
+  .st h2{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .who{font:500 10.5px var(--f-mono); letter-spacing:.12em; text-transform:uppercase; padding:3px 8px; border-radius:999px; border:1px solid var(--line-2); color:var(--muted)}
+  .msgs{display:grid; gap:8px}
+  .msg{max-width:88%; padding:9px 13px; border-radius:12px; font-size:14.5px; transition:opacity .35s}
+  .msg small{display:block; font:500 10px var(--f-mono); letter-spacing:.1em; text-transform:uppercase; opacity:.8; margin-bottom:2px}
+  .msg.leo{background:rgba(255,106,61,.12); border:1px solid rgba(255,106,61,.35)} .msg.leo small{color:var(--safety)}
+  .msg.cli{justify-self:end; background:rgba(255,255,255,.05); border:1px solid var(--line-2)}
+  .js .msg.wait{opacity:0}
+  dl.fiche{display:grid; grid-template-columns:130px 1fr; gap:6px 14px; margin:0; font-size:14.5px}
+  dl.fiche dt{font:500 10.5px var(--f-mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); padding-top:3px}
+  dl.fiche dd{margin:0}
+  @media (max-width:520px){dl.fiche{grid-template-columns:1fr}}
+  table.l{width:100%; border-collapse:collapse; font-size:14px}
+  table.l td{padding:8px 4px; border-top:1px solid var(--line)}
+  table.l td.n{text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums}
+  .big{font-family:var(--f-display); font-style:italic; font-weight:900; font-size:32px; color:var(--gold)}
+  .phone{max-width:320px; border:1px solid var(--line-2); border-radius:22px; padding:14px; background:rgba(3,8,16,.7)}
+  .bubble{background:#1f3b2c; border-radius:14px 14px 14px 4px; padding:10px 12px; font-size:14px}
+  .bubble a{color:#8ef0c0}
+  .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+  .gain{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:6px}
+  .gain div{padding:14px; border-radius:12px; background:rgba(255,201,77,.07); border:1px solid rgba(255,201,77,.22)}
+  .gain b{display:block; font-family:var(--f-display); font-style:italic; font-weight:900; font-size:26px; color:var(--gold)}
+  .gain span{font-size:13px; color:var(--muted)}
+  @media (max-width:560px){.gain{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="col">
+  <p class="mono">Démonstration · Léo + Hugo</p>
+  <h1>Un client appelle à 19 h 42. <em>Léo décroche.</em> <i>Le devis est prêt avant 20 h.</i></h1>
+  <p class="lede">Vous êtes sur un chantier ou en famille. Voici ce qui se passe pendant ce temps, étape par étape.</p>
+  <div class="row" style="margin-bottom:22px"><button class="btn btn-line small" type="button" id="replay">↻ Rejouer la démo</button><span class="mono">Exemple fictif</span></div>
+
+  <div class="tl" id="tl">
+    <section class="panel st" data-n="1" style="--c:var(--safety)">
+      <h2>Léo répond à l'appel <span class="who">Agent vocal</span></h2>
+      <div class="msgs">
+        <div class="msg leo"><small>Léo</small>Bonjour, Plomberie Martin, je suis Léo, l'assistant IA de M. Martin. Il est en intervention : je prends votre demande.</div>
+        <div class="msg cli"><small>{{ ex.client }}</small>Bonjour, j'ai une fuite sous l'évier de la cuisine, ça coule en continu.</div>
+        <div class="msg leo"><small>Léo</small>D'accord. Avez-vous pu fermer l'arrivée d'eau ? Et à quelle adresse se trouve le logement ?</div>
+        <div class="msg cli"><small>{{ ex.client }}</small>Oui, c'est coupé. {{ ex.adresse }}, au 2e étage sans ascenseur.</div>
+        <div class="msg leo"><small>Léo</small>Merci. Vous recevez un devis par SMS très rapidement, et M. Martin vous rappelle demain avant 9 h.</div>
+      </div>
+    </section>
+
+    <section class="panel st" data-n="2" style="--c:#ff9a4d">
+      <h2>Léo remplit la fiche <span class="who">Automatique</span></h2>
+      <dl class="fiche">
+        <dt>Client</dt><dd>{{ ex.client }}</dd>
+        <dt>Chantier</dt><dd>{{ ex.adresse }} · 2e étage sans ascenseur</dd>
+        <dt>Besoin</dt><dd>Fuite sous évier, écoulement continu. Siphon et flexible probablement à changer.</dd>
+        <dt>Urgence</dt><dd>Arrivée d'eau coupée · rappel souhaité avant 9 h</dd>
+      </dl>
+    </section>
+
+    <section class="panel st" data-n="3" style="--c:var(--gold)">
+      <h2>Hugo prépare le devis <span class="who">Agent devis</span></h2>
+      <p class="muted" style="font-size:13.5px; margin-bottom:8px">Avec la grille de prix de l'artisan, TVA 10 % (rénovation d'un logement de plus de 2 ans).</p>
+      <table class="l">
+        {% for l in d.lignes %}<tr><td>{{ l.libelle }}</td><td class="n">{{ ('%g'|format(l.quantite)).replace('.', ',') }} × {{ euros(l.prix) }}</td><td class="n"><b>{{ euros(l.quantite * l.prix) }}</b></td></tr>{% endfor %}
+      </table>
+      <div class="row" style="justify-content:space-between; margin-top:12px">
+        <a class="btn btn-line small" href="{{ url_for('.demo_pdf') }}" target="_blank">Voir le devis PDF</a>
+        <div style="text-align:right"><span class="muted" style="font-size:13px">{{ euros(t.ht) }} HT + TVA 10 %</span><div class="big">{{ euros(t.ttc) }}</div></div>
+      </div>
+    </section>
+
+    <section class="panel st" data-n="4" style="--c:var(--ok)">
+      <h2>L'artisan valide, le client reçoit le devis <span class="who">1 clic</span></h2>
+      <p class="muted" style="font-size:14px; margin-bottom:12px">M. Martin reçoit une notification, relit et valide d'un clic depuis son téléphone. Le client reçoit aussitôt :</p>
+      <div class="phone">
+        <div class="mono" style="margin-bottom:8px">SMS · Plomberie Martin</div>
+        <div class="bubble">Bonjour {{ ex.client }}, voici votre devis D-DEMO-0001 de Plomberie Martin ({{ euros(t.ttc) }}) : <a href="{{ url_for('.demo_pdf') }}" target="_blank">voir et accepter</a></div>
+      </div>
+      <p style="margin-top:12px; font-size:14.5px">Le client accepte en ligne, l'artisan est prévenu : <b>le chantier est signé avant que le concurrent ait rappelé.</b></p>
+    </section>
+  </div>
+
+  <div class="panel" style="margin-top:22px">
+    <h2>Ce que ça change pour l'artisan</h2>
+    <div class="gain">
+      <div><b>0</b><span>appel manqué, même le soir et le week-end</span></div>
+      <div><b>2 min</b><span>pour valider un devis au lieu de le taper</span></div>
+      <div><b>Samedi</b><span>libéré : plus de devis en retard</span></div>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <a class="btn btn-gold" href="{{ url_for('.index') }}">Essayer Hugo avec mes tarifs</a>
+      <a class="btn btn-safety" href="tel:+33162290247">Appeler Léo : 01 62 29 02 47</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  document.documentElement.classList.add('js');
+  var steps = Array.prototype.slice.call(document.querySelectorAll('.st')), msgs = Array.prototype.slice.call(document.querySelectorAll('.msg'));
+  var timers = [];
+  function play() {
+    timers.forEach(clearTimeout); timers = [];
+    steps.forEach(function (s, i) { if (i) s.classList.add('wait'); });
+    msgs.forEach(function (m) { m.classList.add('wait'); });
+    var t = 300;
+    msgs.forEach(function (m) { timers.push(setTimeout(function () { m.classList.remove('wait'); }, t)); t += 1100; });
+    steps.slice(1).forEach(function (s, i) {
+      t += 900;
+      timers.push(setTimeout(function () { s.classList.remove('wait'); if (i === 1 && window.HugoScene) window.HugoScene.boost(); }, t));
+    });
+  }
+  document.getElementById('replay').addEventListener('click', play);
+  play();
+  if (window.HugoScene) window.HugoScene.update({entreprise: 'Plomberie Martin', client: {{ ex.client|tojson }}, numero: 'D-DEMO-0001',
+    lignes: {{ d.lignes|tojson }}.map(function (l) { return {libelle: l.libelle, detail: String(l.quantite).replace('.', ',') + ' ' + l.unite, total: (l.quantite * l.prix).toLocaleString('fr-FR', {minimumFractionDigits: 2}) + ' €'}; }),
+    ttc: {{ euros(t.ttc)|tojson }}, tva: 'TOTAL TTC'});
+})();
+</script>
+{% endblock %}

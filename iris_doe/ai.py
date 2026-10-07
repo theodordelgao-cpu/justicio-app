@@ -66,8 +66,8 @@ def diagnostic() -> dict:
         return {"cle": True, "exception": type(exc).__name__, "detail": str(exc)[:200]}
 
 
-def chat_json(prompt: str):
-    content = _post([{"role": "user", "content": prompt}], json_mode=True, max_tokens=200)
+def chat_json(prompt: str, max_tokens: int = 200):
+    content = _post([{"role": "user", "content": prompt}], json_mode=True, max_tokens=max_tokens)
     if not content:
         return None
     try:

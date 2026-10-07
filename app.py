@@ -9091,6 +9091,10 @@ STANDIA_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "s
 from iris_doe import bp as iris_bp
 app.register_blueprint(iris_bp)
 
+# Hugo : agent IA de devis (Standia), servi sur /standia/AgentIA_Devis
+from devis_agent import bp as hugo_bp
+app.register_blueprint(hugo_bp)
+
 
 @app.route("/standia")
 @app.route("/standia/")

@@ -1,0 +1,82 @@
+{% extends "hugo/base.html" %}
+{% block title %}Devis {{ d.numero }} · Hugo{% endblock %}
+{% block bodyclass %}scene-dim{% endblock %}
+{% block head %}
+<style>
+  .head{display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-end; gap:16px; margin:6px 0 20px}
+  .head h1{font-style:italic; font-weight:900; font-stretch:118%; font-size:clamp(28px,4vw,46px); margin-top:8px}
+  .pill{display:inline-flex; align-items:center; gap:8px; font:600 12px var(--f-mono); letter-spacing:.08em; text-transform:uppercase; padding:7px 12px; border-radius:999px; border:1px solid}
+  .pill.brouillon{color:var(--muted); border-color:var(--line-2)}
+  .pill.envoye{color:var(--iris); border-color:rgba(92,200,255,.5)}
+  .pill.accepte{color:var(--ok); border-color:rgba(110,242,176,.5); background:rgba(110,242,176,.08)}
+  .layout{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:16px; align-items:start}
+  @media (max-width:960px){.layout{grid-template-columns:1fr}}
+  .pdf{display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:10px; background:#fff}
+  .ttc{font-family:var(--f-display); font-style:italic; font-weight:900; font-size:40px; color:var(--gold); line-height:1}
+  .stack{display:grid; gap:10px}
+  .copy{display:flex; gap:8px}
+  .copy input{font-family:var(--f-mono); font-size:12px}
+  .ok-box{padding:12px 14px; border-radius:12px; background:rgba(110,242,176,.08); border:1px solid rgba(110,242,176,.3); color:var(--ok); font-size:14px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="head">
+  <div>
+    <p class="mono">Devis {{ d.numero }}{% if d.origine == 'leo' %} · demande reçue par Léo{% endif %}</p>
+    <h1>{{ d.client.nom or 'Client' }} · {{ euros(t.ttc) }}{% if d.tva %} TTC{% endif %}</h1>
+  </div>
+  <span class="pill {{ d.statut }}">{{ {'brouillon': 'Brouillon', 'envoye': 'Envoyé au client', 'accepte': '✓ Accepté'}[d.statut] }}</span>
+</div>
+
+<div class="layout">
+  <div class="panel" style="padding:10px">
+    <a href="{{ url_for('.devis_pdf', devis_id=d.id) }}" target="_blank" title="Ouvrir le PDF"><img class="pdf" src="{{ url_for('.devis_apercu', devis_id=d.id) }}" alt="Aperçu de la première page du devis {{ d.numero }}"></a>
+  </div>
+  <aside>
+    {% if d.acceptation %}
+      <div class="panel"><div class="ok-box">Accepté en ligne par <b>{{ d.acceptation.nom }}</b> le {{ d.acceptation.date }}.</div></div>
+    {% endif %}
+    <div class="panel">
+      <div class="hazard" aria-hidden="true" style="margin:-4px 0 14px; background:repeating-linear-gradient(-45deg,var(--gold) 0 10px,#0b1220 10px 20px)"></div>
+      <p class="mono">Montant</p>
+      <div class="ttc" style="margin:6px 0 4px">{{ euros(t.ttc) }}</div>
+      <p class="muted" style="font-size:13.5px">{{ euros(t.ht) }} HT{% if d.tva %} · TVA {{ ('%g'|format(d.tva)).replace('.', ',') }} %{% else %} · TVA non applicable{% endif %}</p>
+      <div class="stack" style="margin-top:14px">
+        <a class="btn btn-line full small" href="{{ url_for('.devis_pdf', devis_id=d.id, dl=1) }}">Télécharger le PDF</a>
+        <a class="btn btn-line full small" href="{{ url_for('.index', **{'from': d.id}) }}">Modifier (crée une nouvelle version)</a>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Envoyer au client</h2>
+      <p class="muted" style="font-size:13.5px; margin-bottom:12px">Relisez le devis avant de l'envoyer : c'est vous qui vous engagez. Le client pourra l'accepter en ligne en un clic.</p>
+      <div class="stack">
+        <a class="btn btn-wa full" href="{{ whatsapp_url }}" target="_blank" rel="noopener" data-sent>Envoyer par WhatsApp</a>
+        <a class="btn btn-line full" href="sms:{{ d.client.tel }}?&body={{ sms_body }}" data-sent>Envoyer par SMS</a>
+        <form class="stack" method="post" action="{{ url_for('.envoyer', devis_id=d.id) }}" style="margin-top:4px">
+          <div><label for="email">Par email</label><input type="email" id="email" name="email" value="{{ d.client.email }}" placeholder="client@email.fr" required></div>
+          <button class="btn btn-gold full" type="submit">Envoyer le devis par email</button>
+          {% if not mail_ok %}<p class="muted" style="font-size:12.5px">L'envoi d'email sera actif dès que le serveur aura sa clé Brevo.</p>{% endif %}
+        </form>
+        <div>
+          <label for="lien">Lien d'acceptation pour le client</label>
+          <div class="copy"><input type="text" id="lien" value="{{ lien }}" readonly><button class="btn btn-line small" type="button" id="copy">Copier</button></div>
+          <span class="mono" id="copy-status" aria-live="polite" style="display:block;margin-top:6px"></span>
+        </div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">Gardez le lien de cette page pour suivre ce devis.</p>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById('copy').addEventListener('click', function () {
+    var inp = document.getElementById('lien'), st = document.getElementById('copy-status');
+    var fb = function () { inp.select(); st.textContent = 'Lien sélectionné : copiez-le'; };
+    try { navigator.clipboard.writeText(inp.value).then(function () { st.textContent = 'Lien copié'; }, fb); } catch (e) { fb(); }
+  });
+  document.querySelectorAll('[data-sent]').forEach(function (a) {
+    a.addEventListener('click', function () { fetch('{{ url_for(".marquer_envoye", devis_id=d.id) }}', {method: 'POST'}); });
+  });
+</script>
+{% endblock %}

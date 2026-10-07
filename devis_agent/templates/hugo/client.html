@@ -1,0 +1,60 @@
+{% extends "hugo/base.html" %}
+{% block title %}Devis {{ d.numero }} · {{ d.entreprise.nom or 'Votre artisan' }}{% endblock %}
+{% block bodyclass %}scene-dim{% endblock %}
+{% block head %}
+<style>
+  .wrapc{max-width:720px; margin:0 auto}
+  h1{font-style:italic; font-weight:900; font-stretch:118%; font-size:clamp(28px,4.4vw,48px); margin:10px 0 8px}
+  .from{color:var(--muted); margin-bottom:18px}
+  .from b{color:var(--fg)}
+  table.l{width:100%; border-collapse:collapse; font-size:14.5px}
+  table.l th{text-align:left; font:500 10.5px var(--f-mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); padding:0 6px 8px}
+  table.l td{padding:10px 6px; border-top:1px solid var(--line); vertical-align:top}
+  table.l td.n{text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums}
+  .scroll{overflow-x:auto}
+  .tot{display:grid; justify-items:end; gap:4px; margin-top:14px; font-variant-numeric:tabular-nums}
+  .tot div{display:flex; gap:18px}
+  .tot div span:first-child{color:var(--muted)}
+  .big{font-family:var(--f-display); font-style:italic; font-weight:900; font-size:34px; color:var(--gold)}
+  .ok-box{padding:16px; border-radius:12px; background:rgba(110,242,176,.08); border:1px solid rgba(110,242,176,.35); color:var(--ok)}
+  .check{display:flex; gap:10px; align-items:flex-start; font-size:14.5px; margin:12px 0}
+  .check input{width:20px; height:20px; accent-color:var(--gold); margin-top:2px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrapc">
+  <p class="mono">Devis {{ d.numero }}</p>
+  <h1>{{ d.description[:90] if d.description else 'Votre devis' }}{% if d.description and d.description|length > 90 %}…{% endif %}</h1>
+  <p class="from">Proposé par <b>{{ d.entreprise.nom or 'votre artisan' }}</b>{% if d.entreprise.tel %} · {{ d.entreprise.tel }}{% endif %}{% if d.client.adresse %}<br>Chantier : {{ d.client.adresse }}{% endif %}</p>
+
+  <div class="panel">
+    <div class="scroll"><table class="l">
+      <thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th style="text-align:right">PU HT</th><th style="text-align:right">Total HT</th></tr></thead>
+      <tbody>{% for l in d.lignes %}<tr><td>{{ l.libelle }}</td><td class="n">{{ ('%g'|format(l.quantite)).replace('.', ',') }} {{ l.unite }}</td><td class="n">{{ euros(l.prix) }}</td><td class="n">{{ euros(l.quantite * l.prix) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="tot">
+      <div><span>Total HT</span><b>{{ euros(t.ht) }}</b></div>
+      {% if d.tva %}<div><span>TVA {{ ('%g'|format(d.tva)).replace('.', ',') }} %</span><b>{{ euros(t.tva) }}</b></div>{% else %}<div><span>TVA non applicable, art. 293 B du CGI</span><b></b></div>{% endif %}
+      <div><span>{{ 'Total TTC' if d.tva else 'Total' }}</span><b class="big">{{ euros(t.ttc) }}</b></div>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:16px">
+      <a class="btn btn-line small" href="{{ url_for('.client_pdf', token=d.token, dl=1) }}">Télécharger le PDF</a>
+      <a class="btn btn-line small" href="{{ url_for('.client_pdf', token=d.token) }}" target="_blank">Voir le devis complet</a>
+    </div>
+  </div>
+
+  <div class="panel" id="accepter">
+    {% if d.acceptation %}
+      <div class="ok-box"><b>Devis accepté</b> par {{ d.acceptation.nom }} le {{ d.acceptation.date }}. {{ d.entreprise.nom or "L'artisan" }} a été prévenu.</div>
+    {% else %}
+      <h2>Accepter ce devis</h2>
+      <form method="post" action="{{ url_for('.accepter', token=d.token) }}">
+        <label for="nom">Votre nom et prénom</label>
+        <input type="text" id="nom" name="nom" value="{{ d.client.nom }}" required autocomplete="name">
+        <label class="check"><input type="checkbox" name="accord" value="1" required> <span>Devis reçu avant l'exécution des travaux, <b>bon pour accord</b>. J'accepte le devis {{ d.numero }} d'un montant de {{ euros(t.ttc) }}.</span></label>
+        <button class="btn btn-gold" type="submit">J'accepte le devis</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,292 @@
+{% extends "hugo/base.html" %}
+{% block topright %}<span class="tag"><span class="dot{% if not ia %} off{% endif %}"></span>{{ 'IA active' if ia else 'Mode règles (sans IA)' }}</span>{% endblock %}
+{% block head %}
+<style>
+  .col{max-width:660px}
+  .hero h1{font-style:italic; font-weight:900; font-stretch:122%; font-size:clamp(36px,5.2vw,64px); letter-spacing:-.01em; margin:12px 0 14px}
+  .hero h1 em{font-style:inherit; color:var(--gold)}
+  .lede{color:var(--muted); font-size:17px; max-width:34em; margin-bottom:20px}
+  .lede b{color:var(--fg)}
+  .step{display:flex; align-items:center; gap:12px; margin-bottom:14px}
+  .step b.n{width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font:800 13px var(--f-mono); color:#1d1400; background:var(--gold); flex:none}
+  .step h2{margin:0}
+  .panel + .panel{margin-top:16px}
+  summary{cursor:pointer; list-style:none; display:flex; align-items:center; gap:10px; min-height:36px; font-weight:600}
+  summary::-webkit-details-marker{display:none}
+  summary .chev{margin-left:auto; font-family:var(--f-mono); color:var(--muted); font-size:12px}
+  .ent-sum{color:var(--muted); font-weight:400; font-size:13.5px}
+  table.edit{width:100%; border-collapse:collapse; font-size:14px}
+  table.edit th{text-align:left; font:500 10.5px var(--f-mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); padding:6px 6px 8px}
+  table.edit td{padding:4px 4px; border-top:1px solid var(--line); vertical-align:middle}
+  table.edit input{padding:8px 9px; font-size:14px; border-radius:8px}
+  table.edit td.num input{text-align:right; font-variant-numeric:tabular-nums}
+  table.edit td.tot{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; padding-right:6px; font-weight:600}
+  .scroll{overflow-x:auto; margin:0 -6px}
+  .x{background:none; border:0; color:var(--muted); width:34px; height:34px; border-radius:8px; cursor:pointer; font-size:18px}
+  .x:hover{background:rgba(255,255,255,.07); color:var(--fg)}
+  .examples{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px}
+  .chip{border:1px solid var(--line-2); background:rgba(3,8,16,.5); color:var(--fg); border-radius:999px; padding:8px 13px; font:500 13.5px var(--f-body); cursor:pointer; min-height:40px}
+  .chip:hover{border-color:var(--gold)}
+  .chip.leo{border-color:rgba(255,122,26,.6)}
+  .chip.leo b{color:var(--safety)}
+  .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+  .totals{display:grid; gap:4px; justify-items:end; margin-top:14px; font-variant-numeric:tabular-nums}
+  .totals div{display:flex; gap:18px; justify-content:flex-end; min-width:240px}
+  .totals div span:first-child{color:var(--muted)}
+  .totals .ttc{font-family:var(--f-display); font-style:italic; font-weight:900; font-size:30px; color:var(--gold)}
+  .qs{list-style:none; margin:12px 0 0; padding:12px 14px; border-radius:12px; background:rgba(255,201,77,.07); border:1px solid rgba(255,201,77,.25); font-size:14px}
+  .qs li{display:flex; gap:8px; padding:3px 0}
+  .qs li::before{content:"?"; font:700 11px var(--f-mono); color:#1d1400; background:var(--gold); width:18px; height:18px; border-radius:50%; display:grid; place-items:center; flex:none; margin-top:2px}
+  .grid3{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px}
+  @media (max-width:640px){.grid3{grid-template-columns:1fr}}
+  .src{font-family:var(--f-mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding:3px 7px; border-radius:4px; border:1px solid var(--line-2); color:var(--muted)}
+  .hint{font-size:12.5px; color:var(--muted)}
+  tr.hors td:first-child input{border-color:rgba(255,176,32,.6)}
+  .err{color:#ffb37a; font-size:13.5px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="col hero">
+  <p class="mono">Agent devis · Standia</p>
+  <h1>Vos devis faits en 2 minutes, <em>pas le samedi.</em></h1>
+  <p class="lede">Collez la demande du client ou reprenez un appel de Léo. <b>Hugo choisit les lignes dans votre propre grille de prix</b>, calcule les quantités et la TVA, et sort un devis PDF que le client accepte en ligne.</p>
+  <p style="margin:-6px 0 22px"><a class="btn btn-line small" href="{{ url_for('.demo_leo') }}">▶ Voir la démo : un appel à Léo devient un devis</a></p>
+</div>
+
+<form class="col" id="f" method="post" action="{{ url_for('.creer') }}">
+  <input type="hidden" name="lignes_json" id="lignes_json">
+  <input type="hidden" name="origine" id="origine" value="hugo">
+
+  <!-- 1. entreprise + grille -->
+  <div class="panel">
+    <div class="step"><b class="n">1</b><h2>Votre entreprise et vos tarifs</h2></div>
+    <div class="grid2" style="margin-bottom:12px">
+      <div><label for="metier">Métier</label>
+        <select id="metier" name="metier">{% for k, m in metiers.items() %}<option value="{{ k }}">{{ m.label }}</option>{% endfor %}</select></div>
+      <div><label for="e_nom">Nom de l'entreprise</label><input type="text" id="e_nom" name="e_nom" placeholder="Plomberie Martin"></div>
+    </div>
+    <details id="ent">
+      <summary>Coordonnées et mentions légales <span class="ent-sum" id="ent-sum"></span><span class="chev">modifier</span></summary>
+      <div class="grid2" style="margin-top:12px">
+        <div><label for="e_siret">SIRET</label><input type="text" id="e_siret" name="e_siret" inputmode="numeric"></div>
+        <div><label for="e_tel">Téléphone</label><input type="text" id="e_tel" name="e_tel" inputmode="tel"></div>
+        <div><label for="e_email">Email</label><input type="email" id="e_email" name="e_email"></div>
+        <div><label for="e_tva_intra">N° TVA intracom. <span class="muted">(si assujetti)</span></label><input type="text" id="e_tva_intra" name="e_tva_intra"></div>
+        <div style="grid-column:1/-1"><label for="e_adresse">Adresse</label><input type="text" id="e_adresse" name="e_adresse"></div>
+        <div style="grid-column:1/-1"><label for="e_assurance">Assurance décennale <span class="muted">(assureur, n° de contrat, zone)</span></label><input type="text" id="e_assurance" name="e_assurance" placeholder="MAAF Pro, contrat n° …, France métropolitaine"></div>
+      </div>
+      <p class="hint" style="margin-top:8px">Gardé dans ce navigateur pour vos prochains devis.</p>
+    </details>
+    <details id="grille-box" style="border-top:1px solid var(--line); margin-top:12px; padding-top:10px">
+      <summary>Votre grille de prix <span class="ent-sum" id="grille-sum"></span><span class="chev">modifier</span></summary>
+      <p class="hint" style="margin:8px 0 10px">Prix d'exemple pré-remplis : remplacez-les par vos vrais tarifs HT. Hugo ne chiffre qu'avec cette grille.</p>
+      <div class="scroll"><table class="edit" id="grille"><thead><tr><th style="width:58%">Prestation</th><th>Unité</th><th>Prix HT</th><th></th></tr></thead><tbody></tbody></table></div>
+      <div class="row" style="margin-top:10px"><button class="btn btn-line small" type="button" id="g-add">+ Ajouter une prestation</button><button class="btn btn-line small" type="button" id="g-reset">Revenir aux prix d'exemple</button></div>
+    </details>
+  </div>
+
+  <!-- 2. demande -->
+  <div class="panel">
+    <div class="step"><b class="n">2</b><h2>La demande du client</h2></div>
+    <div class="examples">
+      <button class="chip leo" type="button" data-ex="0"><b>☎ Appel reçu par Léo</b> · fuite sous évier</button>
+      <button class="chip" type="button" data-ex="1">Panne électrique + prises</button>
+      <button class="chip" type="button" data-ex="2">Peinture d'un T2</button>
+    </div>
+    <div class="grid2">
+      <div><label for="c_nom">Client</label><input type="text" id="c_nom" name="c_nom" placeholder="Mme Laurent"></div>
+      <div><label for="c_adresse">Adresse du chantier</label><input type="text" id="c_adresse" name="c_adresse"></div>
+      <div><label for="c_email">Email du client</label><input type="email" id="c_email" name="c_email"></div>
+      <div><label for="c_tel">Téléphone du client</label><input type="text" id="c_tel" name="c_tel" inputmode="tel"></div>
+    </div>
+    <div style="margin-top:12px"><label for="demande">Ce que veut le client</label>
+      <textarea id="demande" rows="4" placeholder="Ex. : fuite sous l'évier de la cuisine, ça coule en continu, 2e étage sans ascenseur…"></textarea></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn btn-gold" type="button" id="go">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+        Hugo, prépare le devis
+      </button>
+      <span class="err" id="go-err" role="alert"></span>
+    </div>
+  </div>
+
+  <!-- 3. devis -->
+  <div class="panel" id="devis-panel">
+    <div class="step"><b class="n">3</b><h2>Le devis</h2><span class="src" id="src" hidden></span></div>
+    <div><label for="description">Objet des travaux</label><textarea id="description" name="description" rows="2"></textarea></div>
+    <div class="scroll" style="margin-top:12px"><table class="edit" id="lignes"><thead><tr><th style="width:44%">Désignation</th><th>Qté</th><th>Unité</th><th>PU HT</th><th style="text-align:right">Total HT</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class="row" style="margin-top:10px"><button class="btn btn-line small" type="button" id="l-add">+ Ajouter une ligne</button><span class="hint" id="l-hint"></span></div>
+    <ul class="qs" id="qs" hidden></ul>
+    <div class="grid3" style="margin-top:16px">
+      <div><label for="tva">TVA</label><select id="tva" name="tva">{% for v, l in tva_options %}<option value="{{ v }}" {{ 'selected' if v == '10' }}>{{ l }}</option>{% endfor %}</select></div>
+      <div><label for="acompte">Acompte à la signature</label><select id="acompte" name="acompte"><option value="0">Aucun</option><option value="30" selected>30 %</option><option value="40">40 %</option><option value="50">50 %</option></select></div>
+      <div><label for="validite">Validité</label><select id="validite" name="validite"><option value="15">15 jours</option><option value="30" selected>30 jours</option><option value="60">60 jours</option><option value="90">90 jours</option></select></div>
+    </div>
+    <div style="margin-top:12px"><label for="delai">Délai d'intervention <span class="muted">(facultatif)</span></label><input type="text" id="delai" name="delai" placeholder="sous 48 h, semaine 43…"></div>
+    <div class="totals" aria-live="polite">
+      <div><span>Total HT</span><b id="t-ht">0,00 €</b></div>
+      <div><span id="t-tva-l">TVA</span><b id="t-tva">0,00 €</b></div>
+      <div><span id="t-ttc-l">Total TTC</span><b class="ttc" id="t-ttc">0,00 €</b></div>
+    </div>
+    <div class="row" style="margin-top:18px; justify-content:flex-end">
+      <button class="btn btn-gold" type="submit">Créer le devis PDF</button>
+    </div>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var METIERS = {{ metiers|tojson }}, EXEMPLES = {{ exemples|tojson }}, SOURCE = {{ (source or None)|tojson }};
+  var $ = function (id) { return document.getElementById(id); };
+  var fmt = function (v) { return (Math.round(v * 100) / 100).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €'; };
+  var num = function (s) { var v = parseFloat(String(s).replace(/\s/g, '').replace(',', '.')); return isNaN(v) ? 0 : v; };
+  var store = {
+    get: function (k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+
+  /* ---- entreprise (mémorisée) ---- */
+  var EF = ['e_nom', 'e_siret', 'e_tel', 'e_email', 'e_tva_intra', 'e_adresse', 'e_assurance'];
+  var ent = (SOURCE && SOURCE.entreprise) ? Object.fromEntries(EF.map(function (k) { return [k, SOURCE.entreprise[k.slice(2)] || '']; })) : (store.get('hugo_entreprise') || {});
+  EF.forEach(function (k) { if (ent[k]) $(k).value = ent[k]; $(k).addEventListener('input', saveEnt); });
+  function saveEnt() { var o = {}; EF.forEach(function (k) { o[k] = $(k).value; }); store.set('hugo_entreprise', o); entSum(); refresh3d(); }
+  function entSum() { var miss = []; if (!$('e_siret').value) miss.push('SIRET'); if (!$('e_assurance').value) miss.push('assurance'); $('ent-sum').textContent = miss.length ? '· à compléter : ' + miss.join(', ') : '· complètes'; }
+  entSum();
+
+  /* ---- grille de prix (par métier, mémorisée) ---- */
+  var metierSel = $('metier'), gbody = document.querySelector('#grille tbody');
+  var lastMetier = store.get('hugo_metier');
+  if (SOURCE && SOURCE.metier) metierSel.value = SOURCE.metier; else if (lastMetier && METIERS[lastMetier]) metierSel.value = lastMetier;
+  function grilleDefaut() { return METIERS[metierSel.value].grille.map(function (g) { return {libelle: g.libelle, unite: g.unite, prix: g.prix, mots: g.mots}; }); }
+  function grille() { return store.get('hugo_grille_' + metierSel.value) || grilleDefaut(); }
+  function renderGrille() {
+    var g = grille(); gbody.innerHTML = '';
+    g.forEach(function (it, i) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td><input type="text" aria-label="Prestation" value="' + esc(it.libelle) + '"></td><td><input type="text" aria-label="Unité" value="' + esc(it.unite) + '" style="width:84px"></td>' +
+        '<td class="num"><input type="text" inputmode="decimal" aria-label="Prix HT" value="' + String(it.prix).replace('.', ',') + '" style="width:96px"></td><td><button class="x" type="button" aria-label="Supprimer la prestation">×</button></td>';
+      tr.dataset.i = i; gbody.appendChild(tr);
+    });
+    $('grille-sum').textContent = '· ' + g.length + ' prestations';
+  }
+  function saveGrille() {
+    var old = grille(), g = [];
+    gbody.querySelectorAll('tr').forEach(function (tr) {
+      var ins = tr.querySelectorAll('input'), prev = old[+tr.dataset.i] || {};
+      if (ins[0].value.trim()) g.push({libelle: ins[0].value.trim(), unite: ins[1].value.trim() || 'unité', prix: num(ins[2].value), mots: prev.mots || [ins[0].value.trim().split(' ')[0]]});
+    });
+    store.set('hugo_grille_' + metierSel.value, g); $('grille-sum').textContent = '· ' + g.length + ' prestations';
+  }
+  gbody.addEventListener('input', saveGrille);
+  gbody.addEventListener('click', function (e) { if (e.target.classList.contains('x')) { e.target.closest('tr').remove(); saveGrille(); renderGrille(); } });
+  $('g-add').addEventListener('click', function () { var g = grille(); g.push({libelle: '', unite: 'unité', prix: 0, mots: []}); store.set('hugo_grille_' + metierSel.value, g); renderGrille(); gbody.lastChild.querySelector('input').focus(); });
+  $('g-reset').addEventListener('click', function () { try { localStorage.removeItem('hugo_grille_' + metierSel.value); } catch (e) {} renderGrille(); });
+  metierSel.addEventListener('change', function () { store.set('hugo_metier', metierSel.value); renderGrille(); });
+  renderGrille();
+
+  /* ---- lignes du devis ---- */
+  var lbody = document.querySelector('#lignes tbody');
+  function addLigne(l) {
+    var tr = document.createElement('tr'); if (l.prix == null) tr.className = 'hors';
+    tr.innerHTML = '<td><input type="text" aria-label="Désignation" value="' + esc(l.libelle) + '"></td>' +
+      '<td class="num"><input type="text" inputmode="decimal" aria-label="Quantité" value="' + String(l.quantite == null ? 1 : l.quantite).replace('.', ',') + '" style="width:64px"></td>' +
+      '<td><input type="text" aria-label="Unité" value="' + esc(l.unite || 'unité') + '" style="width:78px"></td>' +
+      '<td class="num"><input type="text" inputmode="decimal" aria-label="Prix unitaire HT" value="' + (l.prix == null ? '' : String(l.prix).replace('.', ',')) + '" placeholder="à chiffrer" style="width:92px"></td>' +
+      '<td class="tot">0,00 €</td><td><button class="x" type="button" aria-label="Supprimer la ligne">×</button></td>';
+    lbody.appendChild(tr);
+  }
+  function lignes() {
+    var out = [];
+    lbody.querySelectorAll('tr').forEach(function (tr) {
+      var ins = tr.querySelectorAll('input');
+      if (ins[0].value.trim()) out.push({libelle: ins[0].value.trim(), quantite: num(ins[1].value), unite: ins[2].value.trim() || 'unité', prix: num(ins[3].value), vide: ins[3].value.trim() === ''});
+    });
+    return out;
+  }
+  function recalc() {
+    var ht = 0;
+    lbody.querySelectorAll('tr').forEach(function (tr) {
+      var ins = tr.querySelectorAll('input'), tot = num(ins[1].value) * num(ins[3].value); ht += tot;
+      tr.querySelector('.tot').textContent = fmt(tot);
+      tr.classList.toggle('hors', ins[3].value.trim() === '');
+    });
+    var rate = num($('tva').value), tva = ht * rate / 100;
+    $('t-ht').textContent = fmt(ht); $('t-tva').textContent = fmt(tva); $('t-ttc').textContent = fmt(ht + tva);
+    $('t-tva-l').textContent = rate ? 'TVA ' + String(rate).replace('.', ',') + ' %' : 'TVA non applicable';
+    $('t-ttc-l').textContent = rate ? 'Total TTC' : 'Total à payer';
+    var vides = lignes().filter(function (l) { return l.vide; }).length;
+    $('l-hint').textContent = vides ? vides + ' ligne' + (vides > 1 ? 's' : '') + ' hors grille à chiffrer (en orange)' : '';
+    refresh3d(ht + tva, rate);
+  }
+  function refresh3d(ttc, rate) {
+    if (!window.HugoScene) return;
+    if (ttc == null) { recalc(); return; }
+    window.HugoScene.update({
+      entreprise: $('e_nom').value || 'Votre entreprise', client: $('c_nom').value || 'Client',
+      numero: 'Devis · ' + (METIERS[metierSel.value] || {}).label,
+      lignes: lignes().map(function (l) { return {libelle: l.libelle, detail: String(l.quantite).replace('.', ',') + ' ' + l.unite + ' × ' + fmt(l.prix), total: fmt(l.quantite * l.prix)}; }),
+      ttc: fmt(ttc), tva: rate ? 'TOTAL TTC' : 'TOTAL'
+    });
+  }
+  lbody.addEventListener('input', recalc);
+  lbody.addEventListener('click', function (e) { if (e.target.classList.contains('x')) { e.target.closest('tr').remove(); recalc(); } });
+  $('l-add').addEventListener('click', function () { addLigne({libelle: '', quantite: 1, unite: 'unité', prix: null}); recalc(); lbody.lastChild.querySelector('input').focus(); });
+  $('tva').addEventListener('change', recalc);
+  ['c_nom', 'e_nom'].forEach(function (k) { $(k).addEventListener('input', function () { refresh3d(); }); });
+
+  /* ---- exemples ---- */
+  document.querySelectorAll('[data-ex]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var ex = EXEMPLES[+b.dataset.ex];
+      metierSel.value = ex.metier; store.set('hugo_metier', ex.metier); renderGrille();
+      $('c_nom').value = ex.client; $('c_adresse').value = ex.adresse; $('demande').value = ex.demande;
+      $('origine').value = b.classList.contains('leo') ? 'leo' : 'hugo';
+      if (!$('e_nom').value) $('e_nom').value = ex.metier === 'plomberie' ? 'Plomberie Martin' : ex.metier === 'electricite' ? 'Elec Pro 31' : 'Déco Garonne';
+      prepare();
+    });
+  });
+
+  /* ---- Hugo prépare ---- */
+  function prepare() {
+    var demande = $('demande').value.trim(); $('go-err').textContent = '';
+    if (demande.length < 8) { $('go-err').textContent = 'Décrivez la demande du client en une phrase au moins.'; $('demande').focus(); return; }
+    var btn = $('go'); btn.disabled = true; btn.style.opacity = .7;
+    if (window.HugoScene) window.HugoScene.boost();
+    fetch('{{ url_for(".api_preparer") }}', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({metier: metierSel.value, demande: demande, grille: grille()})})
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.erreur || 'Erreur'); return j; }); })
+      .then(function (res) {
+        lbody.innerHTML = ''; res.lignes.forEach(addLigne);
+        $('description').value = res.description || demande;
+        var src = $('src'); src.hidden = false; src.textContent = res.source === 'ia' ? 'préparé par l\'IA' : 'préparé avec votre grille';
+        var qs = $('qs'); qs.innerHTML = ''; (res.questions || []).forEach(function (q) { var li = document.createElement('li'); li.textContent = q; qs.appendChild(li); });
+        qs.hidden = !(res.questions || []).length;
+        recalc();
+        $('devis-panel').scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'});
+      })
+      .catch(function (e) { $('go-err').textContent = e.message || 'Hugo n\'a pas pu préparer le devis. Réessayez.'; })
+      .finally(function () { btn.disabled = false; btn.style.opacity = 1; });
+  }
+  $('go').addEventListener('click', prepare);
+
+  /* ---- envoi ---- */
+  $('f').addEventListener('submit', function (e) {
+    var ls = lignes();
+    if (!ls.length) { e.preventDefault(); $('go-err').textContent = 'Préparez ou ajoutez au moins une ligne.'; return; }
+    if (ls.some(function (l) { return l.vide; })) { e.preventDefault(); $('l-hint').textContent = 'Chiffrez les lignes en orange avant de créer le devis.'; return; }
+    $('lignes_json').value = JSON.stringify(ls.map(function (l) { return {libelle: l.libelle, quantite: l.quantite, unite: l.unite, prix: l.prix}; }));
+  });
+
+  /* ---- reprise d'un devis existant ---- */
+  if (SOURCE) {
+    $('c_nom').value = SOURCE.client.nom || ''; $('c_adresse').value = SOURCE.client.adresse || ''; $('c_email').value = SOURCE.client.email || ''; $('c_tel').value = SOURCE.client.tel || '';
+    $('description').value = SOURCE.description || ''; $('tva').value = String(SOURCE.tva).replace(/\.0$/, '');
+    $('acompte').value = String(SOURCE.acompte); $('validite').value = String(SOURCE.validite_jours); $('delai').value = SOURCE.delai || '';
+    SOURCE.lignes.forEach(addLigne);
+  }
+  recalc();
+})();
+</script>
+{% endblock %}
