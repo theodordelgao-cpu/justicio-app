@@ -48,6 +48,24 @@ def _post(messages, json_mode=False, max_tokens=1200):
         return None
 
 
+def diagnostic() -> dict:
+    """Petit appel de test, sans exposer la clé : statut HTTP et type d'erreur éventuel."""
+    import re as _re
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return {"cle": False}
+    try:
+        r = requests.post(API_URL, headers={"Authorization": f"Bearer {key}"}, timeout=TIMEOUT,
+                          json={"model": _model(), "messages": [{"role": "user", "content": "Réponds OK"}], "max_tokens": 5})
+        out = {"cle": True, "modele": _model(), "http": r.status_code}
+        if r.status_code != 200:
+            err = (r.json().get("error") or {}) if r.headers.get("content-type", "").startswith("application/json") else {}
+            out["erreur"] = {k: _re.sub(r"sk-[A-Za-z0-9_*-]+", "sk-***", str(err.get(k, ""))) for k in ("type", "code", "message")}
+        return out
+    except Exception as exc:
+        return {"cle": True, "exception": type(exc).__name__, "detail": str(exc)[:200]}
+
+
 def chat_json(prompt: str):
     content = _post([{"role": "user", "content": prompt}], json_mode=True, max_tokens=200)
     if not content:

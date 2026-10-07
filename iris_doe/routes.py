@@ -79,6 +79,13 @@ def _ajouter_fichiers(meta, fichiers):
         flash(f"Non ajouté : {r}", "erreur")
 
 
+# ---------------------------------------------------------------- diagnostic
+
+@bp.get("/diag-ia")
+def diag_ia():
+    return ai.diagnostic()
+
+
 # ---------------------------------------------------------------- accueil
 
 @bp.get("/")
