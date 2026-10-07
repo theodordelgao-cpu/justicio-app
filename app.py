@@ -9096,6 +9096,33 @@ from devis_agent import bp as hugo_bp
 app.register_blueprint(hugo_bp)
 
 
+# ---------------------------------------------------------------------------
+# Studio9 : maquette 3D de la page d'accueil de l'école de danse Studio9,
+# servie sur /Studio9 (fichiers statiques dans studio9_static/).
+# ---------------------------------------------------------------------------
+STUDIO9_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio9_static")
+
+
+@app.route("/Studio9")
+@app.route("/Studio9/")
+def studio9_home():
+    return send_from_directory(STUDIO9_STATIC_DIR, "index.html")
+
+
+@app.route("/studio9")
+@app.route("/studio9/")
+def studio9_lowercase():
+    return redirect("/Studio9", code=301)
+
+
+@app.route("/Studio9/dancer.json")
+def studio9_dancer():
+    # Modèle 3D animé de la danseuse (glTF avec buffers intégrés, ~4 Mo)
+    response = send_from_directory(STUDIO9_STATIC_DIR, "dancer.json")
+    response.headers["Cache-Control"] = "public, max-age=604800"
+    return response
+
+
 @app.route("/standia")
 @app.route("/standia/")
 def standia_home():

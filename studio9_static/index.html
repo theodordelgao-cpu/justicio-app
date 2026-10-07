@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Studio9, école de danse à Toulouse, Cugnaux et Aucamville : plus de 30 cours de danse pour enfants, ados et adultes.">
+<title>Studio9 en 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800;900&family=Manrope:wght@400;500;700&display=swap">
+<style>
+/* Layout: une scène de spectacle plein écran en 3D (rubans de soie WebGL) derrière tout le site ; le contenu flotte en panneaux de verre par-dessus. */
+:root{
+  --stage:#0d0a14;        /* noir de scène, légèrement violet */
+  --stage-2:#17121f;
+  --rose:#f2b8c6;         /* rose Studio9 */
+  --rose-hot:#ff5c8a;
+  --teal:#2ec4b6;         /* turquoise du menu actuel */
+  --ink:#f7eef2;
+  --muted:#b9a9b4;
+  --glass:rgba(23,18,31,.62);
+  --line:rgba(242,184,198,.18);
+  --f-display:"Unbounded","Arial Black",system-ui,sans-serif;
+  --f-body:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--stage);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6;overflow-x:hidden}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:6px}
+#stage{position:fixed;inset:0;width:100%;height:100%;z-index:0;display:block;background:radial-gradient(ellipse at 50% 70%,#2a1630 0%,var(--stage) 65%)}
+.wrap{position:relative;z-index:1;padding-inline:max(16px,4vw)}
+.inner{max-width:1180px;margin-inline:auto}
+
+/* ---------- NAV ---------- */
+header.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:50;margin-inline:calc(-1 * max(16px,4vw));padding:10px max(16px,4vw);background:rgba(13,10,20,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.nav .inner{display:flex;align-items:center;gap:20px}
+.logo{font-family:var(--f-display);font-weight:900;font-size:22px;text-decoration:none;letter-spacing:-.02em;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.logo b{display:inline-grid;place-items:center;width:38px;height:38px;border-radius:50%;background:var(--rose);color:var(--stage);font-size:20px;transform:perspective(200px) rotateY(-18deg);box-shadow:4px 4px 0 var(--teal)}
+.menu{display:flex;gap:4px;margin-left:auto;list-style:none;padding:0;margin-block:0;flex-wrap:wrap}
+.menu>li{position:relative}
+.menu>li>a,.menu>li>button{display:block;padding:8px 12px;border-radius:999px;text-decoration:none;font:600 13px/1 var(--f-body);letter-spacing:.04em;text-transform:uppercase;color:var(--ink);background:none;border:0;cursor:pointer}
+.menu>li>a:hover,.menu>li>button:hover,.menu>li:focus-within>button{background:rgba(242,184,198,.12);color:var(--rose)}
+.menu>li>a.current{color:var(--teal)}
+.sub{position:absolute;top:100%;left:0;min-width:230px;max-height:70vh;overflow:auto;list-style:none;margin:6px 0 0;padding:8px;background:var(--stage-2);border:1px solid var(--line);border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.5);opacity:0;visibility:hidden;transform:perspective(600px) rotateX(-14deg) translateY(-6px);transform-origin:top;transition:.25s}
+.menu>li:hover .sub,.menu>li:focus-within .sub{opacity:1;visibility:visible;transform:none}
+.sub a{display:block;padding:7px 10px;border-radius:8px;text-decoration:none;font-size:14px}
+.sub a:hover{background:rgba(46,196,182,.14);color:var(--teal)}
+.sub.cols{columns:2;min-width:380px}
+.burger{display:none;margin-left:auto;background:none;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 12px;font:600 13px var(--f-body);cursor:pointer}
+@media (max-width:1200px){
+  .burger{display:block}
+  .menu{display:none;position:absolute;left:0;right:0;top:100%;flex-direction:column;background:var(--stage-2);padding:12px max(16px,4vw) 20px;border-bottom:1px solid var(--line);max-height:80vh;overflow:auto}
+  .menu.open{display:flex}
+  .sub{position:static;opacity:1;visibility:visible;transform:none;box-shadow:none;border:0;background:none;padding:0 0 0 14px;margin:0;max-height:none;display:none}
+  .sub.cols{columns:2;min-width:0}
+  .menu>li.show .sub{display:block}
+}
+
+/* ---------- HERO ---------- */
+.hero{position:relative;min-height:min(92vh,860px);display:grid;align-content:center;padding-block:80px 60px}
+.hero::before{content:"";position:absolute;inset:10% -10% 10% -40%;background:radial-gradient(ellipse at 30% 50%,rgba(13,10,20,.78),rgba(13,10,20,0) 65%);z-index:-1;pointer-events:none}
+.hero h1 .sub-h,.hero p.lead{text-shadow:0 2px 14px rgba(13,10,20,.95)}
+section.block .intro,.why p{text-shadow:0 1px 10px rgba(13,10,20,.9)}
+.eyebrow{font:700 12px/1 var(--f-body);letter-spacing:.22em;text-transform:uppercase;color:var(--teal)}
+h1{font-family:var(--f-display);font-weight:900;font-size:clamp(40px,8.4vw,118px);line-height:.92;letter-spacing:-.04em;margin:18px 0 22px;text-wrap:balance}
+h1 .l3d{display:inline-block;color:var(--ink);text-shadow:1px 1px 0 #e9a2b4,2px 2px 0 #e08ea4,3px 3px 0 #d47a93,4px 4px 0 #c56682,5px 5px 0 #b25472,6px 6px 0 #9b4462,8px 10px 24px rgba(0,0,0,.6);transition:transform .2s}
+h1 .sub-h{display:block;font-size:.36em;font-weight:600;letter-spacing:-.01em;line-height:1.15;margin-top:.35em;color:var(--rose);text-shadow:none}
+.hero p.lead{max-width:56ch;font-size:clamp(16px,1.6vw,19px);color:var(--muted);margin:0 0 28px}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:14px 22px;border-radius:999px;text-decoration:none;font:700 14px/1 var(--f-body);letter-spacing:.03em;transition:transform .2s,box-shadow .2s,background .2s}
+.btn.primary{background:var(--rose);color:var(--stage);box-shadow:0 6px 0 #b25472,0 14px 30px rgba(255,92,138,.3)}
+.btn.primary:hover{transform:translateY(-3px);box-shadow:0 9px 0 #b25472,0 20px 40px rgba(255,92,138,.4)}
+.btn.primary:active{transform:translateY(4px);box-shadow:0 2px 0 #b25472}
+.btn.ghost{border:1.5px solid var(--line);color:var(--ink);background:rgba(13,10,20,.4)}
+.btn.ghost:hover{border-color:var(--teal);color:var(--teal)}
+.scroll-cue{margin-top:46px;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:10px}
+.scroll-cue i{width:1px;height:38px;background:linear-gradient(var(--rose),transparent);display:block;animation:cue 1.8s infinite}
+@keyframes cue{0%{transform:scaleY(0);transform-origin:top}50%{transform:scaleY(1);transform-origin:top}51%{transform-origin:bottom}100%{transform:scaleY(0);transform-origin:bottom}}
+
+/* ---------- SECTIONS ---------- */
+section.block{padding-block:clamp(60px,9vw,120px)}
+h2{font-family:var(--f-display);font-weight:800;font-size:clamp(30px,4.6vw,58px);line-height:1;letter-spacing:-.03em;margin:12px 0 18px;text-wrap:balance}
+h3{font-family:var(--f-display);font-weight:600;font-size:clamp(19px,1.8vw,23px);line-height:1.15;margin:0 0 10px;letter-spacing:-.01em}
+.intro{max-width:62ch;color:var(--muted);margin:0 0 36px}
+.tilt{transform-style:preserve-3d;transition:transform .15s ease-out}
+.persp{perspective:1100px}
+
+/* Écoles */
+.schools{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:22px}
+.school{position:relative;padding:28px 26px 26px;border-radius:24px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;flex-direction:column;min-width:0}
+.school .num{position:absolute;right:18px;top:6px;font:900 110px/1 var(--f-display);color:transparent;-webkit-text-stroke:1.5px rgba(242,184,198,.25);transform:translateZ(30px);pointer-events:none}
+.school .addr{font-size:13px;color:var(--teal);font-weight:700;letter-spacing:.02em;margin-bottom:12px;transform:translateZ(25px)}
+.school h3{transform:translateZ(50px);font-size:clamp(22px,2.2vw,28px)}
+.school p{color:var(--muted);font-size:15px;margin:0 0 22px;transform:translateZ(20px);flex:1}
+.school .acts{display:flex;flex-wrap:wrap;gap:8px;transform:translateZ(40px)}
+.school .acts a{padding:9px 14px;border-radius:999px;font:700 13px/1 var(--f-body);text-decoration:none;border:1px solid var(--line)}
+.school .acts a:first-child{background:var(--ink);color:var(--stage);border-color:var(--ink)}
+.school .acts a:hover{border-color:var(--teal);color:var(--teal)}
+.school .acts a:first-child:hover{background:var(--teal);color:var(--stage)}
+
+/* Chiffres */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:18px}
+.stat{padding:26px 22px;border-top:2px solid var(--rose);background:linear-gradient(180deg,rgba(242,184,198,.08),transparent)}
+.stat .big{font:900 clamp(54px,6vw,84px)/1 var(--f-display);letter-spacing:-.04em;color:var(--ink);text-shadow:1px 1px 0 var(--teal),2px 2px 0 var(--teal),3px 3px 0 #1f9c90,4px 4px 0 #1a857a,6px 8px 18px rgba(0,0,0,.5);font-variant-numeric:tabular-nums}
+.stat .big.word{font-size:clamp(30px,3vw,40px);line-height:1.1;padding-block:14px 8px}
+.stat h3{margin-top:14px}
+.stat p{margin:0;color:var(--muted);font-size:15px}
+
+/* Cours : carrousel 3D */
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.chip{padding:9px 16px;border-radius:999px;border:1px solid var(--line);background:rgba(13,10,20,.5);color:var(--ink);font:600 13px/1 var(--f-body);cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--rose);color:var(--stage);border-color:var(--rose)}
+.chip .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.ring-zone{position:relative;height:520px;overflow:hidden;margin-inline:calc(-1 * max(16px,4vw));cursor:grab;touch-action:pan-y;user-select:none;-webkit-user-select:none}
+.ring-zone:active{cursor:grabbing}
+.ring-scale{position:absolute;left:50%;top:50%;width:0;height:0;perspective:1500px}
+.ring{position:absolute;transform-style:preserve-3d}
+.card{position:absolute;left:-80px;top:-115px;width:160px;height:230px;border-radius:18px;text-decoration:none;display:flex;flex-direction:column;justify-content:flex-end;padding:16px;overflow:hidden;border:1px solid rgba(255,255,255,.14);backface-visibility:hidden;-webkit-backface-visibility:hidden;transition:opacity .35s,filter .35s,box-shadow .3s;box-shadow:0 20px 40px rgba(0,0,0,.45)}
+.card::before{content:"";position:absolute;inset:0;background:var(--g);z-index:-2}
+.card::after{content:attr(data-letter);position:absolute;top:-14px;right:-6px;font:900 120px/1 var(--f-display);color:rgba(255,255,255,.14);z-index:-1;letter-spacing:-.06em}
+.card .fam{font:700 10px/1 var(--f-body);letter-spacing:.18em;text-transform:uppercase;opacity:.85;margin-bottom:8px}
+.card .nm{font:800 17px/1.1 var(--f-display);letter-spacing:-.01em;text-wrap:balance}
+.card .go{margin-top:10px;font-size:12px;font-weight:700;opacity:.8}
+.card.dim{opacity:.12;filter:grayscale(1)}
+.card:hover,.card:focus-visible{box-shadow:0 0 0 2px var(--ink),0 0 40px rgba(242,184,198,.6)}
+.ring-help{text-align:center;color:var(--muted);font-size:13px;margin-top:4px}
+.ring-ctrl{display:flex;justify-content:center;gap:10px;margin-top:10px}
+.ring-ctrl button{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:rgba(13,10,20,.6);color:var(--ink);font-size:18px;cursor:pointer}
+.ring-ctrl button:hover{border-color:var(--teal);color:var(--teal)}
+.extra-courses{margin-top:22px;color:var(--muted);font-size:14px;text-align:center}
+.extra-courses a{color:var(--rose);font-weight:700}
+
+/* Pourquoi */
+.why{display:grid;grid-template-columns:1.1fr 1fr;gap:clamp(24px,5vw,70px);align-items:center}
+.why .txt{min-width:0}
+.why p{color:var(--muted);font-size:17px;max-width:60ch}
+.cube-zone{height:320px;display:grid;place-items:center;perspective:900px}
+.cube{width:170px;height:170px;position:relative;transform-style:preserve-3d;animation:spin 16s linear infinite}
+.cube div{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:12px;font:800 15px/1.15 var(--f-display);border:1px solid rgba(255,255,255,.25);border-radius:14px;background:rgba(23,18,31,.55)}
+.cube div:nth-child(1){transform:translateZ(85px);color:var(--rose)}
+.cube div:nth-child(2){transform:rotateY(90deg) translateZ(85px);color:var(--teal)}
+.cube div:nth-child(3){transform:rotateY(180deg) translateZ(85px);color:var(--ink)}
+.cube div:nth-child(4){transform:rotateY(-90deg) translateZ(85px);color:var(--rose)}
+.cube div:nth-child(5){transform:rotateX(90deg) translateZ(85px);color:var(--teal)}
+.cube div:nth-child(6){transform:rotateX(-90deg) translateZ(85px);color:var(--ink)}
+@keyframes spin{from{transform:rotateX(-18deg) rotateY(0)}to{transform:rotateX(-18deg) rotateY(360deg)}}
+@media (max-width:760px){.why{grid-template-columns:1fr}.cube-zone{height:260px}}
+
+/* Évènements */
+.events-head{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;justify-content:space-between;margin-bottom:30px}
+.events-head .intro{margin:0}
+.events{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:22px}
+.event{position:relative;padding:28px;border-radius:24px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);min-width:0;text-decoration:none;display:block}
+.event .tag{display:inline-block;padding:6px 10px;border-radius:8px;font:700 11px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;background:var(--teal);color:var(--stage);margin-bottom:14px;transform:translateZ(30px)}
+.event h3{transform:translateZ(45px)}
+.event p{margin:0 0 10px;color:var(--muted);font-size:15px;transform:translateZ(15px)}
+.event ul{margin:6px 0 14px;padding-left:0;list-style:none;display:grid;gap:6px;transform:translateZ(20px)}
+.event li{font-size:15px;padding-left:66px;position:relative}
+.event li b{position:absolute;left:0;color:var(--rose);font-variant-numeric:tabular-nums}
+.event .more{font-weight:700;color:var(--rose);font-size:14px}
+
+/* Location */
+.rent{position:relative;border-radius:30px;padding:clamp(28px,5vw,60px);background:linear-gradient(120deg,rgba(242,184,198,.18),rgba(46,196,182,.12));border:1px solid var(--line);overflow:hidden}
+.rent::after{content:"";position:absolute;right:-80px;bottom:-120px;width:340px;height:340px;border-radius:50%;background:radial-gradient(circle,rgba(255,92,138,.35),transparent 70%);pointer-events:none}
+.rent p{max-width:64ch;color:var(--ink);opacity:.85}
+.rent .cta-row{margin-top:22px;position:relative;z-index:1}
+
+/* Footer */
+footer{position:relative;z-index:1;background:rgba(8,6,12,.92);border-top:1px solid var(--line);padding-block:60px 30px;padding-inline:max(16px,4vw)}
+.fgrid{display:grid;grid-template-columns:1.3fr repeat(3,1fr);gap:34px}
+@media (max-width:900px){.fgrid{grid-template-columns:1fr 1fr}}
+@media (max-width:520px){.fgrid{grid-template-columns:1fr}}
+footer h4{font:800 14px/1 var(--f-display);letter-spacing:.06em;margin:0 0 10px;color:var(--rose)}
+footer p,footer address{font-style:normal;font-size:14px;color:var(--muted);margin:0 0 16px}
+footer a{color:var(--ink)}
+footer a:hover{color:var(--teal)}
+.big-logo{font:900 44px/1 var(--f-display);letter-spacing:-.04em;margin-bottom:14px;text-shadow:1px 1px 0 #e08ea4,2px 2px 0 #c56682,3px 3px 0 #9b4462}
+.socials{display:flex;gap:10px;margin-top:8px}
+.socials a{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%}
+.socials svg{width:18px;height:18px;fill:currentColor}
+.copy{margin-top:40px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+
+
+/* ---------- VOYAGE EN PROFONDEUR ---------- */
+.scene{min-height:105vh;display:flex;align-items:center;padding-block:clamp(70px,10vw,130px);perspective:1200px;max-width:1280px;margin-inline:auto}
+.scene.hero{min-height:100vh;padding-block:40px}
+.panel{position:relative;max-width:560px;padding:clamp(22px,3vw,38px);border-radius:28px;background:rgba(13,10,20,.58);border:1px solid var(--line);backdrop-filter:blur(12px) saturate(1.3);-webkit-backdrop-filter:blur(12px) saturate(1.3);box-shadow:0 30px 80px rgba(0,0,0,.45);transform-origin:50% 50%;will-change:transform;min-width:0}
+.panel.left{margin-right:auto}
+.panel.right{margin-left:auto}
+.panel.wide{max-width:none;width:100%}
+.panel.bare{background:none;border:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;padding-inline:0;max-width:640px}
+.panel.clear{background:linear-gradient(180deg,rgba(13,10,20,.55),rgba(13,10,20,.15) 45%,rgba(13,10,20,0));border-color:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;padding-inline:0}
+.panel.rent{background:linear-gradient(120deg,rgba(60,20,45,.72),rgba(10,40,45,.6))}
+.panel p{color:var(--muted)}
+.values{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.values span{padding:8px 14px;border-radius:999px;border:1px solid var(--line);font:700 12px/1 var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--rose);background:rgba(242,184,198,.06)}
+.fly-out{height:40vh}
+.hud{position:fixed;right:max(16px,2vw);bottom:max(16px,2vw);z-index:40;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none}
+.loader{padding:10px 14px;border-radius:999px;background:rgba(13,10,20,.8);border:1px solid var(--line);font:700 12px/1 var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--rose);display:flex;align-items:center;gap:10px}
+.loader i{display:block;width:90px;height:4px;border-radius:4px;background:rgba(242,184,198,.15);overflow:hidden}
+.loader i b{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--rose-hot),var(--teal));transition:width .2s}
+.depth{display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+.depth a{display:flex;align-items:center;justify-content:flex-end;gap:8px;text-decoration:none;font:700 10px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;color:transparent;transition:color .2s}
+.depth a::after{content:"";width:8px;height:8px;border-radius:50%;border:1.5px solid var(--rose);transition:.25s}
+.depth a:hover,.depth a.on{color:var(--rose)}
+.depth a.on::after{background:var(--rose);box-shadow:0 0 12px var(--rose-hot);transform:scale(1.3)}
+.depth-meter{font:800 11px/1 var(--f-display);color:var(--teal);letter-spacing:.06em;font-variant-numeric:tabular-nums}
+@media (max-width:700px){.depth{display:none}.scene{min-height:110vh}.panel{background:rgba(13,10,20,.7)}}
+.ring-zone{margin-inline:0}
+main{overflow-x:clip}
+html{overflow-x:hidden}
+.panel.wide{background:none;border:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;padding-inline:0}
+.panel.wide h2,.panel.wide .eyebrow{text-shadow:0 2px 16px rgba(13,10,20,.95)}
+.depth-meter{background:rgba(13,10,20,.7);padding:6px 10px;border-radius:999px}
+@media (max-width:700px){.school,.event{background:rgba(23,18,31,.55)}.depth-meter{font-size:9px}}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+
+<canvas id="stage" aria-hidden="true"></canvas>
+
+<div class="wrap">
+  <header class="nav">
+    <div class="inner">
+      <a class="logo" href="#top" aria-label="Studio9, accueil"><b>9</b>Studio9</a>
+      <button class="burger" id="burger" aria-expanded="false" aria-controls="menu">Menu</button>
+      <ul class="menu" id="menu">
+        <li><a class="current" href="https://www.studio-9.fr/">Accueil</a></li>
+        <li><button>Toulouse</button>
+          <ul class="sub">
+            <li><a href="https://www.studio-9.fr/ecole-de-danse-toulouse">Présentation</a></li>
+            <li><a href="https://www.studio-9.fr/planning-studio9-toulouse">Planning des cours</a></li>
+            <li><a href="https://www.studio-9.fr/tarifs-studio9-toulouse">Grille des tarifs</a></li>
+          </ul></li>
+        <li><button>Cugnaux</button>
+          <ul class="sub">
+            <li><a href="https://www.studio-9.fr/ecole-de-danse-cugnaux">Présentation</a></li>
+            <li><a href="https://www.studio-9.fr/planning-studio9-cugnaux">Planning des cours</a></li>
+            <li><a href="https://www.studio-9.fr/tarifs-studio9-cugnaux">Grille des tarifs</a></li>
+          </ul></li>
+        <li><button>Aucamville</button>
+          <ul class="sub">
+            <li><a href="https://www.studio-9.fr/ecole-de-danse-aucamville">Présentation</a></li>
+            <li><a href="https://www.studio-9.fr/planning-studio9-aucamville">Planning des cours</a></li>
+            <li><a href="https://www.studio-9.fr/tarifs-studio9-aucamville">Grille des tarifs</a></li>
+          </ul></li>
+        <li><button>Nos Cours</button>
+          <ul class="sub cols" id="menuCourses"></ul></li>
+        <li><a href="https://www.studio-9.fr/stages-soirees-dansantes-toulouse">Stages &amp; Soirées</a></li>
+        <li><a href="https://linktr.ee/studio9_officiel">Billetterie</a></li>
+        <li><button>Location de salles</button>
+          <ul class="sub">
+            <li><a href="https://www.studio-9.fr/location-de-salles-toulouse">Location de salles</a></li>
+            <li><a href="https://www.studio-9.fr/location-salle-anniversaire-toulouse">Location de salle d'anniversaire</a></li>
+            <li><a href="https://www.studio-9.fr/location-salle-mariage-toulouse">Location de salle de mariage</a></li>
+            <li><a href="https://www.studio-9.fr/location-salle-de-reception-toulouse">Location de salle de réception</a></li>
+          </ul></li>
+        <li><a href="https://www.studio-9.fr/contact">Contact</a></li>
+      </ul>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- HERO : station 0 -->
+    <section class="scene hero" data-station="0">
+      <div class="panel left bare">
+        <div class="eyebrow">École de danse · Toulouse · Cugnaux · Aucamville</div>
+        <h1><span class="l3d" id="h1main">Studio9</span><span class="sub-h">École de danse à Toulouse, Cugnaux et Aucamville</span></h1>
+        <p class="lead">3 écoles, 7 salles et plus de 30 disciplines : de l'éveil à la pole dance, de la bachata au heels. Enfants, ados et adultes, du débutant au confirmé.</p>
+        <div class="cta-row">
+          <a class="btn primary" href="#ecoles">Trouver mon école</a>
+          <a class="btn ghost" href="#cours">Voir les 30 cours</a>
+          <a class="btn ghost" href="https://linktr.ee/studio9_officiel">Billetterie</a>
+        </div>
+        <div class="scroll-cue"><i></i>Descends : la caméra plonge dans le studio</div>
+      </div>
+    </section>
+
+    <!-- ÉCOLES : station 1 -->
+    <section class="scene" id="ecoles" data-station="1">
+      <div class="panel wide">
+        <div class="eyebrow">Nos 3 écoles</div>
+        <h2>Choisis ta scène</h2>
+        <div class="schools">
+          <article class="persp"><div class="school tilt">
+            <span class="num">T</span>
+            <div class="addr">5 place Roger Arnaud, 31400 Toulouse</div>
+            <h3>Studio 9 Toulouse</h3>
+            <p>Rejoignez nos cours de danse à Toulouse dans des studios accessibles et adaptés à tous les niveaux. Découvrez les disciplines proposées, consultez les horaires et trouvez la formule qui correspond à vos envies.</p>
+            <div class="acts">
+              <a href="https://www.studio-9.fr/tarifs-studio9-toulouse">S'inscrire</a>
+              <a href="https://www.studio-9.fr/planning-studio9-toulouse">Planning</a>
+              <a href="https://www.studio-9.fr/ecole-de-danse-toulouse">Découvrir</a>
+            </div>
+          </div></article>
+          <article class="persp"><div class="school tilt">
+            <span class="num">C</span>
+            <div class="addr">9 place Alfred Sauvy, 31270 Cugnaux</div>
+            <h3>Studio 9 Cugnaux</h3>
+            <p>Découvrez notre école de danse à Cugnaux et profitez d’un large choix de cours pour enfants et adultes. Nos équipes vous accueillent dans une ambiance conviviale pour apprendre et progresser.</p>
+            <div class="acts">
+              <a href="https://www.studio-9.fr/tarifs-studio9-cugnaux">S'inscrire</a>
+              <a href="https://www.studio-9.fr/planning-studio9-cugnaux">Planning</a>
+              <a href="https://www.studio-9.fr/ecole-de-danse-cugnaux">Découvrir</a>
+            </div>
+          </div></article>
+          <article class="persp"><div class="school tilt">
+            <span class="num">A</span>
+            <div class="addr">9 rue Clément Ader, 31130 Aucamville</div>
+            <h3>Studio9 Aucamville</h3>
+            <p>Participez à nos cours de danse à Aucamville dans des espaces accueillants, conçus pour les débutants comme pour les danseurs confirmés. Explorez les différentes disciplines, et découvrez notre planning.</p>
+            <div class="acts">
+              <a href="https://www.studio-9.fr/tarifs-studio9-aucamville">S'inscrire</a>
+              <a href="https://www.studio-9.fr/planning-studio9-aucamville">Planning</a>
+              <a href="https://www.studio-9.fr/ecole-de-danse-aucamville">Découvrir</a>
+            </div>
+          </div></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHIFFRES : station 2 (tunnel) -->
+    <section class="scene" id="chiffres" data-station="2">
+      <div class="panel right">
+        <div class="eyebrow">Studio9 en quelques chiffres</div>
+        <h2>Une grande famille de danseurs</h2>
+        <div class="stats">
+          <div class="stat"><div class="big" data-count="3">3</div><h3>écoles de danse</h3><p>À Toulouse et Cugnaux et Aucamville</p></div>
+          <div class="stat"><div class="big" data-count="7">7</div><h3>salles</h3><p>Des espaces adaptés à la pratique de nombreuses disciplines.</p></div>
+          <div class="stat"><div class="big word">Pour tous</div><h3>Des cours pour tous</h3><p>Enfants, adolescents et adultes, du débutant au confirmé.</p></div>
+          <div class="stat"><div class="big word">Passion</div><h3>Une équipe passionnée</h3><p>Des professeurs expérimentés pour vous accompagner.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COURS : station 3 (cercle de danseuses) -->
+    <section class="scene" id="cours" data-station="3">
+      <div class="panel wide clear">
+        <div class="eyebrow">Nos cours de danse</div>
+        <h2>30 disciplines sur un plateau tournant</h2>
+        <p class="intro">Fais tourner le carrousel (glisse, molette ou flèches) et clique sur une danse pour découvrir le cours. Filtre par univers pour voir ce qui te ressemble.</p>
+        <div class="filters" id="filters" role="group" aria-label="Filtrer les cours"></div>
+        <div class="ring-zone" id="ringZone">
+          <div class="ring-scale" id="ringScale"><div class="ring" id="ring"></div></div>
+        </div>
+        <div class="ring-ctrl">
+          <button id="prev" aria-label="Tourner vers la gauche">←</button>
+          <button id="next" aria-label="Tourner vers la droite">→</button>
+        </div>
+        <p class="extra-courses">Aussi au programme : <a href="https://www.studio-9.fr/danse-de-salon">Danse de salon</a> · <a href="https://www.studio-9.fr/copie-de-pole-dance">Power Dance</a> · <a href="https://www.studio-9.fr/cours-soft-heels-toulouse">Soft Heels</a></p>
+      </div>
+    </section>
+
+    <!-- POURQUOI : station 4 (danseuse géante) -->
+    <section class="scene" id="pourquoi" data-station="4">
+      <div class="panel left">
+        <div class="eyebrow">L'esprit Studio9</div>
+        <h2>Pourquoi choisir Studio 9 ?</h2>
+        <p>Studio 9 propose une approche accessible de la danse, centrée sur le plaisir, la progression et la confiance en soi. Que vous souhaitiez découvrir une nouvelle discipline, développer votre technique ou pratiquer une activité physique régulière, nos cours s’adaptent à votre niveau et à vos objectifs.</p>
+        <p>Vous évoluez dans une ambiance conviviale, accompagné par des professeurs passionnés et attentifs. Les cours collectifs et particuliers permettent à chacun de progresser à son rythme, dans un cadre dynamique et bienveillant.</p>
+        <div class="values"><span>Plaisir</span><span>Progression</span><span>Confiance en soi</span><span>Convivialité</span><span>Tous niveaux</span><span>Bienveillance</span></div>
+      </div>
+    </section>
+
+    <!-- STAGES : station 5 (boule disco) -->
+    <section class="scene" id="stages" data-station="5">
+      <div class="panel wide">
+        <div class="events-head">
+          <div>
+            <div class="eyebrow">Stages, soirées et actualités</div>
+            <h2>Ça bouge toute l'année</h2>
+            <p class="intro">Toute l’année, Studio 9 organise des stages, des cours ponctuels et des soirées dansantes à Toulouse et Cugnaux. Ces événements permettent de découvrir de nouvelles disciplines, de rencontrer des intervenants invités et de pratiquer dans une ambiance différente des cours réguliers.</p>
+          </div>
+          <div class="cta-row">
+            <a class="btn primary" href="https://www.studio-9.fr/stages-soirees-dansantes-toulouse">Découvrir</a>
+            <a class="btn ghost" href="https://linktr.ee/studio9_officiel">Billetterie</a>
+          </div>
+        </div>
+        <div class="events">
+          <div class="persp"><a class="event tilt" href="https://www.studio-9.fr/post/portes-ouvertes-aucamville-2026">
+            <span class="tag">Portes ouvertes</span>
+            <h3>Portes ouvertes Aucamville 2026</h3>
+            <p><strong>3 semaines de portes ouvertes à Aucamville !</strong> Du 24 août au 12 septembre, profitez de cours gratuits pour tester toutes les danses qui vous attirent (1 cours d’essai gratuit par créneau).</p>
+            <p>Cette rentrée, c’est du sang neuf à Studio 9 : de nouveaux cours, de nouveaux professeurs, des ajouts spécialement pensés suite à vos demandes et vos retours.</p>
+            <p>Suivez-nous sur les réseaux et restez à l’affût de toutes nos nouveautés !</p>
+            <span class="more">Lire l'article →</span>
+          </a></div>
+          <div class="persp"><a class="event tilt" href="https://www.studio-9.fr/post/otono-bachata-lundi-19-et-26-octobre">
+            <span class="tag">Bachata</span>
+            <h3>Otoño Bachatero · lundis 19 et 26 octobre</h3>
+            <p>Même pendant les vacances… on continue de danser la bachata ! Retrouvez Nicky &amp; Isa pour deux lundis placés sous le signe de la bachata, de la progression et du partage. Lundis 19 &amp; 26 octobre 2026, Studio 9 Toulouse.</p>
+            <ul>
+              <li><b>19h30</b>Bachata Débutant : pour apprendre, revoir les bases et progresser dans une ambiance conviviale.</li>
+              <li><b>20h30</b>Bachata Intermédiaire : pour approfondir votre technique, votre musicalité et votre connexion.</li>
+              <li><b>21h30</b>Social</li>
+            </ul>
+            <span class="more">Lire l'article →</span>
+          </a></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOCATION : station 6 (soirée) -->
+    <section class="scene" id="location" data-station="6">
+      <div class="panel right rent">
+        <div class="eyebrow">Location de salles</div>
+        <h2>Ta fête, sur notre piste</h2>
+        <p>Louez l'une de nos salles à Toulouse ou Cugnaux pour organiser tous vos évènements privés ou professionnels. Anniversaire, mariage, réception, soirée ou événement d’entreprise : profitez de deux espaces adaptés. Réservez, privatisez et créez un évènement à votre image dans un lieu convivial et festif.</p>
+        <div class="cta-row">
+          <a class="btn primary" href="https://www.studio-9.fr/location-de-salles-toulouse">Découvrir</a>
+          <a class="btn ghost" href="https://www.studio-9.fr/location-salle-anniversaire-toulouse">Anniversaire</a>
+          <a class="btn ghost" href="https://www.studio-9.fr/location-salle-mariage-toulouse">Mariage</a>
+          <a class="btn ghost" href="https://www.studio-9.fr/location-salle-de-reception-toulouse">Réception</a>
+        </div>
+      </div>
+    </section>
+    <!-- station 7 : vue d'ensemble aérienne (pied de page) -->
+    <div class="fly-out" data-station="7" aria-hidden="true"></div>
+  </main>
+</div>
+
+<div class="hud">
+  <nav class="depth" aria-label="Plonger vers une section">
+    <a href="#top">Accueil</a><a href="#ecoles">Écoles</a><a href="#chiffres">Chiffres</a><a href="#cours">Cours</a><a href="#pourquoi">Esprit</a><a href="#stages">Stages</a><a href="#location">Location</a>
+  </nav>
+  <div class="depth-meter" id="depthMeter">PROFONDEUR −000 m</div>
+  <div class="loader" id="loader"><span id="loaderTxt">Les danseuses arrivent</span><i><b></b></i></div>
+</div>
+<footer>
+  <div class="inner">
+    <div class="fgrid">
+      <div>
+        <div class="big-logo">STUDIO9</div>
+        <p>Studio 9, c'est 3 écoles de danse et 7 salles ! École de danse à Toulouse, Cugnaux et Aucamville.</p>
+        <p>Téléchargez notre appli sur <a href="https://apps.apple.com/fr/app/studio-9/id6748112766">Apple Store</a> et <a href="https://play.google.com/store/apps/details?id=com.bsport_180__191_4234">Play Store</a>.</p>
+        <p><a href="https://maps.app.goo.gl/gfXPK6bHxhMkgpEY6">Donnez aussi votre avis Google !</a></p>
+        <div class="socials">
+          <a href="https://www.instagram.com/studio9_officiel/?hl=fr" aria-label="Instagram"><svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.8.1 3.3.1 4.8 1.7 4.9 4.9.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 3.2-1.7 4.8-4.9 4.9-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-3.3-.1-4.8-1.7-4.9-4.9C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8C2.4 3.9 3.9 2.4 7.2 2.3 8.4 2.2 8.8 2.2 12 2.2zM12 0C8.7 0 8.3 0 7.1.1 2.7.3.3 2.7.1 7.1 0 8.3 0 8.7 0 12s0 3.7.1 4.9c.2 4.4 2.6 6.8 7 7 1.2.1 1.6.1 4.9.1s3.7 0 4.9-.1c4.4-.2 6.8-2.6 7-7 .1-1.2.1-1.6.1-4.9s0-3.7-.1-4.9c-.2-4.4-2.6-6.8-7-7C15.7 0 15.3 0 12 0zm0 5.8a6.2 6.2 0 100 12.4 6.2 6.2 0 000-12.4zM12 16a4 4 0 110-8 4 4 0 010 8zm6.4-11.8a1.4 1.4 0 100 2.9 1.4 1.4 0 000-2.9z"/></svg></a>
+          <a href="https://www.facebook.com/studio9toulouse/" aria-label="Facebook"><svg viewBox="0 0 24 24"><path d="M9 8H6v4h3v12h5V12h3.6l.4-4h-4V6.3c0-1 .2-1.3 1.1-1.3H18V0h-3.8C10.6 0 9 1.6 9 4.6V8z"/></svg></a>
+        </div>
+      </div>
+      <div>
+        <h4>TOULOUSE</h4>
+        <address>5 Place Roger Arnaud<br>31400 Toulouse</address>
+        <h4>TOULOUSE ANNEXE</h4>
+        <address>170 av. Antoine de St Exupéry<br>31400 Toulouse</address>
+        <p><a href="mailto:studio9toulouse@gmail.com">studio9toulouse@gmail.com</a></p>
+      </div>
+      <div>
+        <h4><a href="https://www.studio-9.fr/ecole-de-danse-cugnaux" style="color:inherit;text-decoration:none">CUGNAUX</a></h4>
+        <address>9 place Alfred Sauvy<br>31270 Cugnaux</address>
+        <h4>CUGNAUX ANNEXE</h4>
+        <address>(studio Pilard and Core)<br>3 Rue Gaston Planté<br>31270 Cugnaux</address>
+        <p><a href="mailto:ecolestudio9@gmail.com">ecolestudio9@gmail.com</a></p>
+      </div>
+      <div>
+        <h4>AUCAMVILLE</h4>
+        <address>9 rue Clément Ader<br>31130 Aucamville</address>
+        <h4>TÉLÉPHONE</h4>
+        <p><a href="tel:0786016299">07.86.01.62.99</a></p>
+        <p><a href="https://www.studio-9.fr/contact">Contact</a> · <a href="https://www.studio-9.fr/nos-partenaires">Nos partenaires</a></p>
+      </div>
+    </div>
+    <div class="copy"><span>© 2026 Studio 9 — École de danse à Toulouse et Cugnaux. Tous droits réservés.</span><a href="https://www.studio-9.fr/nos-partenaires">Nos partenaires</a></div>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js"></script>
+<script>
+(function(){
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const B = 'https://www.studio-9.fr/';
+
+/* ---------- DONNÉES COURS ---------- */
+const FAM = {
+  urbain:{label:'Urbain', g:['#ff5c8a','#7a1f5c']},
+  latino:{label:'Latino & couple', g:['#ffb347','#c2410c']},
+  scene:{label:'Classique & scène', g:['#b9a6ff','#3b2a7a']},
+  fitness:{label:'Fitness & bien-être', g:['#2ec4b6','#0d4d5c']}
+};
+const C = [
+ ['Afro','cours-afro-toulouse','urbain'],
+ ['Afro - Dancehall','cours-afro-dancehall-toulouse','urbain'],
+ ['Bachata','cours-bachata-toulouse','latino'],
+ ['Bungee fitness','cours-bungee-fitness-toulouse','fitness'],
+ ['Commercial','cours-commercial-toulouse','urbain'],
+ ['Commercial girly','cours-commercial-girly-toulouse','urbain'],
+ ['Dancehall','cours-dancehall-toulouse','urbain'],
+ ['Danse classique','cours-danse-classique-toulouse','scene'],
+ ['Éveil','cours-eveil-toulouse','scene'],
+ ['Gyal','cours-gyal-toulouse','urbain'],
+ ['Heels','cours-heels-toulouse','urbain'],
+ ['Hip Hop','cours-hip-hop-commercial-toulouse','urbain'],
+ ['Hip hop commercial','cours-hip-hop-commercial-toulouse','urbain'],
+ ['Hip Hop commercial girly','cours-hip-hop-commercial-girly-toulouse','urbain'],
+ ['K-pop','cours-kpop-toulouse','urbain'],
+ ['Kizomba','cours-kizomba-toulouse','latino'],
+ ['Mariage','cours-de-danse-mariage-toulouse','latino'],
+ ['Modern Jazz','cours-modern-jazz-toulouse','scene'],
+ ['Pilates','cours-pilates-toulouse','fitness'],
+ ['Pole dance','cours-pole-dance-toulouse','fitness'],
+ ['Réformer','cours-pilates-reformer-toulouse','fitness'],
+ ['Reggaeton','cours-raggaeton-toulouse','latino'],
+ ['Renforcement musculaire','cours-renforcement-musculaire-toulouse','fitness'],
+ ['Rock','cours-rock-lindy-hop-toulouse','latino'],
+ ['Salsa','cours-salsa-toulouse','latino'],
+ ['Sensual Contemporain','cours-sensual-contemporain-toulouse','scene'],
+ ['Sexy dance','cours-sexy-dance-toulouse','urbain'],
+ ['Street jazz','cours-streetjazz-toulouse','urbain'],
+ ['West Coast','cours-west-coast-toulouse','latino'],
+ ['Zumba','cours-zumba-toulouse','fitness']
+];
+// menu "Nos cours" (liste complète du menu actuel)
+const MENU = [['Afro','cours-afro-toulouse'],['Afro - Dancehall','cours-afro-dancehall-toulouse'],['Bachata','cours-bachata-toulouse'],['Bungee Fitness','cours-bungee-fitness-toulouse'],['Commercial','cours-commercial-toulouse'],['Commercial Girly','cours-commercial-girly-toulouse'],['Dancehall','cours-dancehall-toulouse'],['Danse Classique','cours-danse-classique-toulouse'],['Danse de salon','danse-de-salon'],['Eveil','cours-eveil-toulouse'],['Gyal','cours-gyal-toulouse'],['Heels','cours-heels-toulouse'],['Hip Hop commercial','cours-hip-hop-commercial-toulouse'],['Hip Hop commercial girly','cours-hip-hop-commercial-girly-toulouse'],['K-pop','cours-kpop-toulouse'],['Kizomba','cours-kizomba-toulouse'],['Mariage & Ouverture de bal','cours-de-danse-mariage-toulouse'],['Modern Jazz','cours-modern-jazz-toulouse'],['Pilates','cours-pilates-toulouse'],['Pole Dance','cours-pole-dance-toulouse'],['Power Dance','copie-de-pole-dance'],['Pilates Reformer','cours-pilates-reformer-toulouse'],['Reggaeton','cours-raggaeton-toulouse'],['Renforcement musculaire','cours-renforcement-musculaire-toulouse'],['Rock','cours-rock-lindy-hop-toulouse'],['Salsa','cours-salsa-toulouse'],['Sensual Contemporain','cours-sensual-contemporain-toulouse'],['Soft Heels','cours-soft-heels-toulouse'],['Sexy Dance','cours-sexy-dance-toulouse'],['Street Jazz','cours-streetjazz-toulouse'],['West Coast','cours-west-coast-toulouse'],['Zumba','cours-zumba-toulouse']];
+document.getElementById('menuCourses').innerHTML = MENU.map(([n,s])=>`<li><a href="${B+s}">${n}</a></li>`).join('');
+
+/* ---------- MENU MOBILE ---------- */
+const burger=document.getElementById('burger'), menu=document.getElementById('menu');
+burger.addEventListener('click',()=>{const o=menu.classList.toggle('open');burger.setAttribute('aria-expanded',o);burger.textContent=o?'Fermer':'Menu'});
+menu.querySelectorAll(':scope>li>button').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('show')));
+
+/* ---------- CARROUSEL 3D ---------- */
+const ring=document.getElementById('ring'), zone=document.getElementById('ringZone'), scaleEl=document.getElementById('ringScale');
+const N=C.length, step=360/N, R=Math.round((170/2)/Math.tan(Math.PI/N));
+C.forEach(([n,s,f],i)=>{
+  const a=document.createElement('a');
+  a.className='card';a.href=B+s;a.dataset.fam=f;a.dataset.letter=n.replace(/[^A-Za-zÉé]/g,'').charAt(0).toUpperCase();
+  const g=FAM[f].g, hueShift=(i*17)%60;
+  a.style.setProperty('--g',`linear-gradient(${150+hueShift}deg, ${g[0]}, ${g[1]})`);
+  a.style.transform=`rotateY(${i*step}deg) translateZ(${R}px)`;
+  a.innerHTML=`<span class="fam">${FAM[f].label}</span><span class="nm">${n}</span><span class="go">Découvrir →</span>`;
+  a.addEventListener('focus',()=>{target=-i*step;});
+  ring.appendChild(a);
+});
+let rot=0,target=0,vel=0,drag=false,lastX=0,auto=!reduce,idleT=0;
+function fit(){const w=zone.clientWidth;const s=Math.min(1,Math.max(.3,w/(R*2+260)));scaleEl.style.transform=`scale(${s})`;}
+fit();addEventListener('resize',fit);
+zone.addEventListener('pointerdown',e=>{drag=true;lastX=e.clientX;auto=false;zone.setPointerCapture(e.pointerId)});
+zone.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-lastX;lastX=e.clientX;target+=dx*.35;vel=dx*.35;});
+const endDrag=()=>{if(drag){drag=false;target+=vel*8;idleT=performance.now();}};
+zone.addEventListener('pointerup',endDrag);zone.addEventListener('pointercancel',endDrag);
+zone.addEventListener('click',e=>{if(Math.abs(vel)>2){e.preventDefault();}vel=0},true);
+zone.addEventListener('wheel',e=>{if(Math.abs(e.deltaX)>Math.abs(e.deltaY)){e.preventDefault();target-=e.deltaX*.3;auto=false;idleT=performance.now();}},{passive:false});
+document.getElementById('prev').onclick=()=>{target+=step*3;auto=false;idleT=performance.now()};
+document.getElementById('next').onclick=()=>{target-=step*3;auto=false;idleT=performance.now()};
+function ringTick(t){
+  if(!auto&&!drag&&!reduce&&t-idleT>5000)auto=true;
+  if(auto)target-=.08;
+  rot+=(target-rot)*.08;
+  ring.style.transform=`rotateX(-8deg) rotateY(${rot}deg)`;
+  requestAnimationFrame(ringTick);
+}
+requestAnimationFrame(ringTick);
+
+/* filtres */
+const filters=document.getElementById('filters');
+const all=[['tous','Tous les cours',null],...Object.entries(FAM).map(([k,v])=>[k,v.label,v.g[0]])];
+filters.innerHTML=all.map(([k,l,c],i)=>`<button class="chip" data-f="${k}" aria-pressed="${i===0}">${c?`<span class="dot" style="background:${c}"></span>`:''}${l}</button>`).join('');
+filters.addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;
+  filters.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  const f=b.dataset.f;let first=-1;
+  ring.querySelectorAll('.card').forEach((c,i)=>{const on=f==='tous'||c.dataset.fam===f;c.classList.toggle('dim',!on);c.tabIndex=on?0:-1;if(on&&first<0)first=i;});
+  if(f!=='tous'){auto=false;idleT=performance.now();const cur=Math.round(-target/step);target=-(first+Math.round((cur-first)/N)*N)*step;}
+});
+
+/* ---------- TILT 3D ---------- */
+if(!reduce) document.querySelectorAll('.tilt').forEach(el=>{
+  el.addEventListener('pointermove',e=>{const r=el.getBoundingClientRect();const x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5;el.style.transform=`rotateY(${x*14}deg) rotateX(${-y*14}deg) translateZ(10px)`;});
+  el.addEventListener('pointerleave',()=>{el.style.transform='';});
+});
+
+/* titre 3D qui suit la souris */
+const h1=document.getElementById('h1main');
+if(!reduce) addEventListener('pointermove',e=>{const x=e.clientX/innerWidth-.5,y=e.clientY/innerHeight-.5;h1.style.transform=`perspective(700px) rotateY(${x*16}deg) rotateX(${-y*12}deg)`;});
+
+/* compteurs */
+const io=new IntersectionObserver(es=>es.forEach(en=>{if(!en.isIntersecting||reduce)return;const el=en.target,n=+el.dataset.count;let k=0;const t0=performance.now();(function f(t){k=Math.min(1,(t-t0)/900);el.textContent=Math.round(n*k*k*(3-2*k))||0;if(k<1)requestAnimationFrame(f);else el.textContent=n})(t0);io.unobserve(el);}),{threshold:.6});
+document.querySelectorAll('[data-count]').forEach(e=>io.observe(e));
+
+/* ---------- VOYAGE 3D : DANSEUSES, TUNNEL, DISCO ---------- */
+const cv=document.getElementById('stage');
+const loaderEl=document.getElementById('loader'), loaderBar=loaderEl.querySelector('b'), loaderTxt=document.getElementById('loaderTxt');
+const meter=document.getElementById('depthMeter');
+const depthLinks=[...document.querySelectorAll('.depth a')];
+if(!window.THREE){loaderEl.hidden=true;return;}
+let renderer;
+try{renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false,powerPreference:'high-performance'});}catch(e){loaderEl.hidden=true;return;}
+const mobile=innerWidth<700;
+renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.5:1.75));
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
+renderer.setClearColor(0x0d0a14,1);
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x0d0a14,.032);
+const cam=new THREE.PerspectiveCamera(55,1,.05,400);
+cam.position.set(0,1.4,6);
+
+/* lumières globales */
+scene.add(new THREE.HemisphereLight(0x8a5a90,0x10121a,.55));
+const camLight=new THREE.PointLight(0xffd6e2,.9,14);scene.add(camLight);
+
+/* textures utilitaires */
+function canvasTex(w,h,draw){const c=document.createElement('canvas');c.width=w;c.height=h;draw(c.getContext('2d'),w,h);const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;return t;}
+const glowTex=canvasTex(64,64,(x)=>{const g=x.createRadialGradient(32,32,0,32,32,32);g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.3,'rgba(255,190,215,.7)');g.addColorStop(1,'rgba(255,190,215,0)');x.fillStyle=g;x.fillRect(0,0,64,64);});
+const gridTex=canvasTex(256,256,(x,w,h)=>{x.fillStyle='#120d18';x.fillRect(0,0,w,h);x.strokeStyle='rgba(242,184,198,.22)';x.lineWidth=2;x.strokeRect(0,0,w,h);x.strokeStyle='rgba(46,196,182,.08)';x.lineWidth=1;x.beginPath();x.moveTo(w/2,0);x.lineTo(w/2,h);x.moveTo(0,h/2);x.lineTo(w,h/2);x.stroke();});
+gridTex.wrapS=gridTex.wrapT=THREE.RepeatWrapping;gridTex.repeat.set(30,140);gridTex.anisotropy=renderer.capabilities.getMaxAnisotropy();
+
+/* sol : un long parquet-miroir néon de 300 m */
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(60,280),new THREE.MeshStandardMaterial({map:gridTex,roughness:.22,metalness:.75,color:0xffffff}));
+floor.rotation.x=-Math.PI/2;floor.position.set(0,0,-110);scene.add(floor);
+
+/* tunnel d'arches lumineuses : la caméra passe au travers */
+const arches=[];
+const archCols=[0xff5c8a,0x2ec4b6,0xf2b8c6];
+for(let z=6,i=0;z>-200;z-=4.5,i++){
+  const r=6.2+Math.sin(i*.7)*.4;
+  const m=new THREE.Mesh(new THREE.TorusGeometry(r,.035,8,90,Math.PI),new THREE.MeshBasicMaterial({color:archCols[i%3],transparent:true,opacity:.85,blending:THREE.AdditiveBlending,depthWrite:false,fog:true}));
+  m.position.set(0,0,z);m.userData={i,base:.25+(i%3===0?.35:0)};scene.add(m);arches.push(m);
+}
+
+/* projecteurs volumétriques (faux faisceaux) */
+const beamGeo=new THREE.ConeGeometry(2.6,16,40,1,true);beamGeo.translate(0,-8,0);
+const beams=[];
+function beam(x,y,z,c,op){const m=new THREE.Mesh(beamGeo,new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:op||.07,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));m.position.set(x,y,z);m.userData.ph=Math.random()*6;scene.add(m);beams.push(m);return m;}
+function spot(x,y,z,tx,tz,c,int){const s=new THREE.SpotLight(c,int||3,30,.45,.55,1.2);s.position.set(x,y,z);s.target.position.set(tx,0,tz);scene.add(s);scene.add(s.target);return s;}
+
+/* paillettes dans tout le volume */
+const PN=mobile?900:1800,pg=new THREE.BufferGeometry(),pp=new Float32Array(PN*3),psp=new Float32Array(PN);
+for(let i=0;i<PN;i++){pp[i*3]=(Math.random()-.5)*26;pp[i*3+1]=Math.random()*14;pp[i*3+2]=8-Math.random()*200;psp[i]=.15+Math.random()*.6;}
+pg.setAttribute('position',new THREE.BufferAttribute(pp,3));
+scene.add(new THREE.Points(pg,new THREE.PointsMaterial({size:.12,map:glowTex,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,color:0xffd6e6})));
+
+/* rubans de soie autour de la danseuse principale */
+const SEG=200,ribbons=[];
+function ribbon(color,em,p){const g=new THREE.PlaneGeometry(1,1,SEG,1);const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color,emissive:em,emissiveIntensity:.6,roughness:.3,metalness:.4,side:THREE.DoubleSide}));scene.add(m);ribbons.push({g,p});}
+ribbon(0xf2b8c6,0x5a1730,{cx:1.4,cz:0,r:1.15,h:.5,w:.07,sp:1,ph:0});
+ribbon(0x2ec4b6,0x063a35,{cx:1.4,cz:0,r:1.5,h:.25,w:.05,sp:-.8,ph:2});
+ribbon(0xff5c8a,0x4a0a20,{cx:0,cz:-150,r:4,h:2.2,w:.25,sp:.6,ph:1});
+function updRibbon(r,t){const a=r.g.attributes.position,p=r.p;for(let i=0;i<=SEG;i++){const u=i/SEG;const ang=u*Math.PI*2.2+t*p.sp+p.ph;const rr=p.r+Math.sin(u*6+t)*.25;const x=p.cx+Math.cos(ang)*rr,z=p.cz+Math.sin(ang)*rr;const y=p.h+Math.sin(u*Math.PI*3+t*1.4)*.6+u*.8;const w=p.w*Math.sin(u*Math.PI);a.setXYZ(i,x,y+w,z);a.setXYZ(i+SEG+1,x,y-w,z);}a.needsUpdate=true;r.g.computeVertexNormals();}
+
+/* boule disco */
+function discoBall(x,y,z,s){
+  const g=new THREE.Group();
+  const ball=new THREE.Mesh(new THREE.IcosahedronGeometry(s,3),new THREE.MeshStandardMaterial({color:0xffffff,metalness:1,roughness:.08,flatShading:true,emissive:0x221a28}));
+  g.add(ball);
+  const wire=new THREE.Mesh(new THREE.CylinderGeometry(.01,.01,20,4),new THREE.MeshBasicMaterial({color:0x444444}));wire.position.y=10+s;g.add(wire);
+  // éclats lumineux projetés tout autour
+  const n=mobile?120:260,dg=new THREE.BufferGeometry(),dp=new Float32Array(n*3);
+  for(let i=0;i<n;i++){const v=new THREE.Vector3().randomDirection?new THREE.Vector3().randomDirection():new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize();v.multiplyScalar(9+Math.random()*5);dp.set([v.x,v.y*.6,v.z],i*3);}
+  dg.setAttribute('position',new THREE.BufferAttribute(dp,3));
+  const dots=new THREE.Points(dg,new THREE.PointsMaterial({size:.35,map:glowTex,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,color:0xffffff}));
+  g.add(dots);
+  [0xff5c8a,0x2ec4b6,0xfff0f5].forEach((c,i)=>{const l=new THREE.PointLight(c,2.2,18);l.position.set(Math.cos(i*2.1)*2.5,-1,Math.sin(i*2.1)*2.5);g.add(l);});
+  g.position.set(x,y,z);scene.add(g);g.userData={ball,dots};return g;
+}
+const balls=[discoBall(0,6.2,-128,1.1),discoBall(0,7,-153,1.4)];
+
+/* socles des 3 écoles */
+function label(text,col){return canvasTex(512,128,(x,w,h)=>{x.clearRect(0,0,w,h);x.font='900 64px Unbounded, Arial Black, sans-serif';x.textAlign='center';x.textBaseline='middle';x.shadowColor=col;x.shadowBlur=24;x.fillStyle='#fff';x.fillText(text,w/2,h/2);});}
+const pedestals=[];
+[['TOULOUSE',-3.4,'#ff5c8a',0xff5c8a],['CUGNAUX',0,'#2ec4b6',0x2ec4b6],['AUCAMVILLE',3.4,'#f2b8c6',0xf2b8c6]].forEach(([n,x,cs,c])=>{
+  const z=-31-(x===0?1.2:0);
+  const ped=new THREE.Mesh(new THREE.CylinderGeometry(1.15,1.3,.5,48),new THREE.MeshStandardMaterial({color:0x1d1424,metalness:.8,roughness:.25}));ped.position.set(x,.25,z);scene.add(ped);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(1.2,.03,8,64),new THREE.MeshBasicMaterial({color:c}));ring.rotation.x=Math.PI/2;ring.position.set(x,.5,z);scene.add(ring);
+  const lab=new THREE.Mesh(new THREE.PlaneGeometry(2.4,.6),new THREE.MeshBasicMaterial({map:label(n,cs),transparent:true,depthWrite:false}));lab.position.set(x,3.15,z);scene.add(lab);
+  beam(x,9,z,c,.09);spot(x,8,z+1,x,z,c,4);
+  pedestals.push({x,z,ring,lab});
+});
+/* lumières par station */
+spot(3,7,3,1.4,0,0xffc2d4,5);spot(-3,6,2,1.4,0,0x2ec4b6,3.5);beam(1.4,9.5,0,0xffc2d4,.08);
+spot(0,8,-72,0,-76,0xff5c8a,4);spot(0,9,-104,0,-108,0xf2b8c6,6);spot(-5,4,-104,0,-108,0x2ec4b6,6);
+spot(0,10,-150,0,-153,0xffffff,3);
+beam(-4,10,-76,0xff5c8a,.06);beam(4,10,-76,0x2ec4b6,.06);beam(0,12,-108,0xf2b8c6,.05);
+
+/* ---------- STATIONS DE CAMÉRA (une par section) ---------- */
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+const ST=[
+  {p:V(-.5,1.25,3.1), l:V(.55,1.0,0)},     // 0 accueil : la danseuse en talons
+  {p:V(0,3.4,-22.5),  l:V(0,1.3,-31)},     // 1 écoles : 3 socles
+  {p:V(0,2.4,-46),    l:V(0,2.4,-70)},     // 2 chiffres : plongée dans le tunnel
+  {p:V(0,1.25,-78),   l:V(0,1.7,-86)},     // 3 cours : au centre du cercle
+  {p:V(1.4,.7,-99),   l:V(0,5.2,-108)},    // 4 pourquoi : contre-plongée sur la géante
+  {p:V(3,2.3,-119),   l:V(0,3.2,-128)},    // 5 stages : boule disco
+  {p:V(-1.5,2.6,-143),l:V(0,1.8,-153)},    // 6 location : la soirée
+  {p:V(14,48,-40),    l:V(0,0,-95)}        // 7 vue aérienne finale
+];
+const DEPTH_M=[0,31,58,76,108,128,153,153];
+
+/* ---------- DANSEUSES (modèle animé + talons aiguilles) ---------- */
+const dancers=[];const mixers=[];
+const HEEL_ANGLE=.62;
+function addHeels(root,shoeCol,soleCol){
+  root.updateMatrixWorld(true);
+  const shoeMat=new THREE.MeshStandardMaterial({color:shoeCol,metalness:.55,roughness:.18,emissive:shoeCol,emissiveIntensity:.18});
+  const soleMat=new THREE.MeshStandardMaterial({color:soleCol,metalness:.3,roughness:.3,emissive:soleCol,emissiveIntensity:.3});
+  const flex=[];let lift=0;
+  ['Left','Right'].forEach(side=>{
+    const foot=root.getObjectByName('mixamorig'+side+'Foot')||root.getObjectByName('mixamorig:'+side+'Foot');
+    const toe=root.getObjectByName('mixamorig'+side+'ToeBase')||root.getObjectByName('mixamorig:'+side+'ToeBase');
+    const tip=root.getObjectByName('mixamorig'+side+'Toe_End')||root.getObjectByName('mixamorig:'+side+'Toe_End');
+    if(!foot||!toe||!tip)return;
+    const fw=foot.getWorldPosition(V(0,0,0)),tipW0=tip.getWorldPosition(V(0,0,0));
+    const fwd=tipW0.clone().sub(fw);fwd.y=0;fwd.normalize();
+    const lat=V(0,1,0).cross(fwd).normalize();             // axe latéral du pied
+    const toLocal=(bone,v)=>{const q=bone.getWorldQuaternion(new THREE.Quaternion()).invert();return v.clone().applyQuaternion(q).normalize();};
+    // point sous le talon, en pose de repos, exprimé dans le repère du pied
+    const heelW=fw.clone().addScaledVector(fwd,-.045);heelW.y=0;
+    const heelL=foot.worldToLocal(heelW.clone());
+    const qF=new THREE.Quaternion().setFromAxisAngle(toLocal(foot,lat),HEEL_ANGLE);
+    const qT=new THREE.Quaternion().setFromAxisAngle(toLocal(toe,lat),-HEEL_ANGLE*.85);
+    flex.push({foot,toe,qF,qT});
+    // applique la pose « talons » une fois pour mesurer
+    foot.quaternion.multiply(qF);toe.quaternion.multiply(qT);root.updateMatrixWorld(true);
+    const tipW=tip.getWorldPosition(V(0,0,0)),toeW=toe.getWorldPosition(V(0,0,0));
+    const heelNow=foot.localToWorld(heelL.clone());
+    lift=Math.max(lift,tipW0.y-tipW.y+.012);
+    // semelle : du talon à la pointe
+    const solePts=[heelNow.clone(),toeW.clone(),tipW.clone()];
+    const a=solePts[0],b=solePts[2];const mid=a.clone().add(b).multiplyScalar(.5);const len=a.distanceTo(b);
+    const sole=new THREE.Mesh(new THREE.BoxGeometry(.075,.016,len+.04),soleMat);
+    sole.position.copy(mid).add(V(0,-.012,0));sole.lookAt(b.clone().add(V(0,-.012,0)));
+    // dessus de la chaussure (escarpin) : coque arrondie
+    const vamp=new THREE.Mesh(new THREE.SphereGeometry(.5,20,12,0,Math.PI*2,0,Math.PI/2),shoeMat);
+    vamp.scale.set(.085,.06,len*.62);vamp.position.copy(toeW.clone().lerp(b,.25));vamp.lookAt(b);
+    const cup=new THREE.Mesh(new THREE.CylinderGeometry(.045,.04,.07,18,1,true),shoeMat);cup.material.side=THREE.DoubleSide;
+    cup.position.copy(heelNow).add(V(0,.035,0));
+    // talon aiguille vertical, du talon jusqu'au sol (sol = pointe après la pose)
+    const groundY=tipW.y-.012;const h=Math.max(.04,heelNow.y-groundY);
+    const spike=new THREE.Mesh(new THREE.CylinderGeometry(.012,.004,h,10),soleMat);
+    spike.position.set(heelNow.x,heelNow.y-h/2-.01,heelNow.z);
+    [sole,vamp,cup,spike].forEach(m=>foot.attach(m));
+    // remet la pose de repos (l'animation reprendra la main)
+    foot.quaternion.multiply(qF.clone().invert());toe.quaternion.multiply(qT.clone().invert());root.updateMatrixWorld(true);
+  });
+  return {flex,lift};
+}
+const MATS={
+  pink:()=>new THREE.MeshStandardMaterial({color:0xf2b8c6,metalness:.9,roughness:.18,emissive:0x5a1730,emissiveIntensity:.5,skinning:true}),
+  teal:()=>new THREE.MeshStandardMaterial({color:0x7fe8de,metalness:.95,roughness:.15,emissive:0x063a35,emissiveIntensity:.6,skinning:true}),
+  holo:()=>new THREE.MeshBasicMaterial({color:0x2ec4b6,wireframe:true,transparent:true,opacity:.55,blending:THREE.AdditiveBlending,skinning:true,depthWrite:false}),
+  gold:()=>new THREE.MeshStandardMaterial({color:0xffd1a8,metalness:1,roughness:.12,emissive:0x3a1a08,emissiveIntensity:.4,skinning:true}),
+  shadow:()=>new THREE.MeshStandardMaterial({color:0x1a0f22,metalness:.6,roughness:.35,emissive:0xff5c8a,emissiveIntensity:.08,skinning:true})
+};
+// placements : [x,y,z, échelle, rotationY, matériau, vitesse, couleur chaussure, semelle]
+const PLAN=[
+  [1.4,0,0, 1.05, -.35, null, 1, 0x111111, 0xd0103a],           // la danseuse star, texture réelle
+  [-3.4,.5,-31, 1, .2, 'pink', 1.08, 0x111111,0xff2d6b],
+  [0,.5,-32.2, 1, 0, 'teal', .94, 0xffffff,0x2ec4b6],
+  [3.4,.5,-31, 1, -.2, 'gold', 1.15, 0x111111,0xd0103a],
+  [0,0,-108, 6.2, 0, 'pink', .7, 0x111111,0xff2d6b],          // la géante
+  [-1.6,0,-127, 1, .7, 'pink', 1, 0x111111,0xd0103a],
+  [1.6,0,-127, 1, -.7, 'teal', 1.06, 0xffffff,0x2ec4b6],
+];
+// cercle de danseuses (cours)
+const CIRCLE=mobile?6:10;
+for(let i=0;i<CIRCLE;i++){const a=i/CIRCLE*Math.PI*2;PLAN.push([Math.sin(a)*4.6,0,-78-Math.cos(a)*4.6,1,a+Math.PI,['holo','pink','teal','holo','gold'][i%5],.9+((i*37)%30)/100,0x111111,0xff2d6b,'circle']);}
+// soirée location
+const PARTY=mobile?4:7;
+for(let i=0;i<PARTY;i++){const a=i/PARTY*Math.PI*2+.4;const r=2.4+(i%2)*1.6;PLAN.push([Math.cos(a)*r,0,-153+Math.sin(a)*r,1,-a+Math.PI/2,['pink','teal','gold','shadow'][i%4],.85+(i%4)*.1,0x111111,0xd0103a]);}
+
+const circleGroup=new THREE.Group();scene.add(circleGroup);circleGroup.position.set(0,0,-78);
+let heroDancer=null;
+function setProgress(f,txt){loaderBar.style.width=Math.round(f*100)+'%';if(txt)loaderTxt.textContent=txt;}
+if(THREE.GLTFLoader){
+  const ld=new THREE.GLTFLoader();
+  ld.load('/Studio9/dancer.json',gltf=>{
+    setProgress(1,'Les danseuses entrent en scène');
+    const clip=gltf.animations.find(a=>/samba/i.test(a.name))||gltf.animations[0];
+        const clones=PLAN.map((p,i)=>i===0?gltf.scene:THREE.SkeletonUtils.clone(gltf.scene));
+    clones.forEach((root,i)=>{
+      const [x,y,z,s,ry,mat,speed,shoe,sole,grp]=PLAN[i];
+      if(mat){const m=MATS[mat]();root.traverse(o=>{if(o.isMesh){o.material=m;}});}
+      const heels=addHeels(root,shoe,sole);
+      const holder=new THREE.Group();holder.add(root);root.position.y=heels.lift;
+      holder.position.set(grp==='circle'?x:x,y,grp==='circle'?z+78:z);holder.scale.setScalar(s);holder.rotation.y=ry;
+      (grp==='circle'?circleGroup:scene).add(holder);
+      const mixer=new THREE.AnimationMixer(root);const act=mixer.clipAction(clip);act.play();act.time=(i*1.37)%clip.duration;mixer.timeScale=speed;
+      mixers.push({mixer,flex:heels.flex,holder});
+      if(i===0)heroDancer=holder;
+      if(s>2)root.traverse(o=>{if(o.isMesh)o.frustumCulled=false;});
+    });
+    setTimeout(()=>{loaderEl.style.transition='opacity .6s';loaderEl.style.opacity='0';setTimeout(()=>loaderEl.hidden=true,700)},900);
+  },e=>{if(e.total)setProgress(e.loaded/e.total,'Les danseuses arrivent '+Math.round(e.loaded/e.total*100)+' %');},
+  ()=>{loaderTxt.textContent='Danseuses indisponibles';setTimeout(()=>loaderEl.hidden=true,2000);});
+}else{loaderEl.hidden=true;}
+
+/* ---------- SCROLL → PROFONDEUR ---------- */
+const anchors=[...document.querySelectorAll('[data-station]')];
+const panels=[...document.querySelectorAll('.panel')];
+let sTarget=0,s=0;
+function computeS(){
+  const mid=scrollY+innerHeight/2;
+  const cs=anchors.map(a=>{const r=a.getBoundingClientRect();return r.top+scrollY+r.height/2;});
+  cs[0]=Math.min(cs[0],innerHeight/2);
+  const last=anchors.length-1;
+  cs[last]=Math.max(cs[last-1]+1,document.documentElement.scrollHeight-innerHeight/2);
+  if(mid<=cs[0])return 0;
+  for(let i=0;i<last;i++){if(mid<cs[i+1])return i+(mid-cs[i])/(cs[i+1]-cs[i]);}
+  return last;
+}
+function panelDepth(){
+  const vh=innerHeight;
+  panels.forEach(p=>{const r=p.getBoundingClientRect();const c=(r.top+r.height/2-vh/2)/vh;const d=Math.max(-1.4,Math.min(1.4,c));
+    if(reduce){p.style.transform='';return;}
+    const side=p.classList.contains('right')?-1:p.classList.contains('left')?1:0;
+    p.style.transform=`translateZ(${-Math.abs(d)*260}px) rotateX(${d*-10}deg) rotateY(${d*side*14}deg)`;
+  });
+}
+addEventListener('scroll',()=>{sTarget=computeS();panelDepth();},{passive:true});
+addEventListener('resize',()=>{sTarget=computeS();panelDepth();});
+sTarget=computeS();s=sTarget;panelDepth();
+
+/* ---------- BOUCLE ---------- */
+let mx=0,my=0;addEventListener('pointermove',e=>{mx=e.clientX/innerWidth-.5;my=e.clientY/innerHeight-.5;});
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);cam.aspect=w/h;cam.fov=w<h?72:55;cam.updateProjectionMatrix();}
+resize();addEventListener('resize',resize);
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+const tmpP=V(0,0,0),tmpL=V(0,0,0),lookNow=ST[0].l.clone();
+const clock=new THREE.Clock();let lastStation=-1;
+window.__studio9={setS:v=>{sTarget=s=v;}};
+function frame(){
+  const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+  s+= (sTarget-s)*Math.min(1,dt*3.2);
+  const i=Math.min(ST.length-2,Math.floor(s)),f=ease(Math.min(1,Math.max(0,s-i)));
+  tmpP.lerpVectors(ST[i].p,ST[i+1].p,f);tmpL.lerpVectors(ST[i].l,ST[i+1].l,f);
+  // en transit : la caméra plonge et passe par l'axe du tunnel
+  const transit=Math.sin(Math.PI*f);
+  tmpP.x*=1-transit*.85;tmpP.y=THREE.MathUtils.lerp(tmpP.y,2.3,transit*.6)+Math.sin(t*.6)*.05;
+  if(!mobile&&heroDancer&&i===0&&f<.02){tmpP.x+=Math.sin(t*.25)*.35;}
+  tmpP.x+=mx*(.9-transit*.5);tmpP.y+=-my*.5;
+  cam.position.lerp(tmpP,Math.min(1,dt*6));
+  lookNow.lerp(tmpL,Math.min(1,dt*6));cam.lookAt(lookNow);
+  cam.rotation.z+=transit*Math.sin(s*Math.PI)*.06;   // léger roulis pendant la plongée
+  camLight.position.copy(cam.position);
+  scene.fog.density=.032-THREE.MathUtils.clamp((cam.position.y-4)/30,0,1)*.027;
+  // tempo 118 bpm
+  const beat=Math.pow(Math.max(0,Math.cos(t*Math.PI*2*118/60)),12);
+  arches.forEach(a=>{const dz=Math.abs(a.position.z-cam.position.z);a.material.opacity=Math.min(1,a.userData.base+beat*.5+(dz<9?.4:0));a.rotation.z=Math.sin(t*.4+a.userData.i*.3)*.08;a.scale.setScalar(1+beat*.03);});
+  beams.forEach(b=>{b.rotation.z=Math.sin(t*.7+b.userData.ph)*.3;b.rotation.x=Math.cos(t*.5+b.userData.ph)*.18;});
+  pedestals.forEach((p,k)=>{p.ring.scale.setScalar(1+beat*.12);p.lab.lookAt(cam.position);});
+  circleGroup.rotation.y=reduce?0:t*.12;
+  balls.forEach(b=>{b.rotation.y=t*.35;b.userData.dots.material.opacity=.55+beat*.45;});
+  ribbons.forEach(r=>updRibbon(r,t));
+  const a=pg.attributes.position.array;for(let k=0;k<PN;k++){a[k*3+1]-=psp[k]*dt;if(a[k*3+1]<0)a[k*3+1]=14;}pg.attributes.position.needsUpdate=true;
+  mixers.forEach(m=>{const d=m.holder.getWorldPosition(tmpL).distanceTo(cam.position);if(d<60||m.holder.scale.x>2){m.mixer.update(reduce?0:dt);m.flex.forEach(x=>{x.foot.quaternion.multiply(x.qF);x.toe.quaternion.multiply(x.qT);});}});
+  // HUD profondeur
+  const st=Math.round(s);if(st!==lastStation){lastStation=st;depthLinks.forEach((l,k)=>l.classList.toggle('on',k===Math.min(st,depthLinks.length-1)));}
+  const dep=THREE.MathUtils.lerp(DEPTH_M[i],DEPTH_M[i+1],f);meter.textContent='PROFONDEUR −'+dep.toFixed(0).padStart(3,'0')+' m';
+  renderer.render(scene,cam);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
