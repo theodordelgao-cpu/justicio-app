@@ -1,24 +1,80 @@
 {% extends "iris/base.html" %}
+{% block topright %}<span class="tag"><span class="dot{% if not ia %} off{% endif %}"></span>{{ 'Lecture IA active' if ia else 'Lecture IA inactive' }}</span>{% endblock %}
+{% block head %}
+<style>
+  .hero{display:grid; grid-template-columns:minmax(0,560px) 1fr; gap:24px; align-items:start; padding-top:clamp(10px,4vh,40px)}
+  @media (max-width:900px){.hero{grid-template-columns:1fr}}
+  .hero h1{font-style:italic; font-weight:900; font-stretch:122%; font-size:clamp(38px,5.6vw,68px); letter-spacing:-.01em; margin:14px 0 16px}
+  .hero h1 em{font-style:inherit; color:var(--safety)}
+  .lede{color:var(--muted); font-size:17px; max-width:34em; margin-bottom:22px}
+  .lede b{color:var(--fg)}
+  .steps{display:flex; flex-wrap:wrap; gap:8px 18px; margin:0 0 22px; padding:0; list-style:none; font-size:13.5px; color:var(--muted)}
+  .steps li{display:flex; align-items:center; gap:8px}
+  .steps b{width:22px; height:22px; border-radius:50%; display:grid; place-items:center; font:700 11px var(--f-mono); color:#1a0b00; background:var(--safety)}
+  details{border-top:1px solid var(--line); margin-top:16px; padding-top:14px}
+  summary{cursor:pointer; font-weight:600; list-style:none; display:flex; align-items:center; gap:10px; min-height:32px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"+"; width:22px; height:22px; border-radius:6px; display:grid; place-items:center; border:1px solid var(--line-2); font:600 14px var(--f-mono); color:var(--iris)}
+  details[open] summary::before{content:"–"}
+  .fields{display:grid; gap:12px; margin-top:12px}
+  .go{display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:18px}
+  .sign{position:relative; margin-top:18px; display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:center; padding:12px 14px; border-radius:12px; background:rgba(255,176,32,.08); border:1px solid rgba(255,176,32,.25); font-size:13.5px; color:#ffd58a}
+  .sign svg{width:22px; height:22px; color:var(--warn)}
+</style>
+{% endblock %}
 {% block content %}
-<h1>Votre DOE monté en quelques minutes</h1>
-<p class="sub">Déposez vos plans, fiches techniques, notices, PV et photos. Iris les lit, les classe, vous dit ce qui manque et assemble un dossier propre, paginé, prêt à remettre.</p>
+<section class="hero">
+  <div>
+    <p class="mono">Dossier des Ouvrages Exécutés</p>
+    <h1>Votre DOE monté <em>pendant que vous êtes sur le chantier.</em></h1>
+    <p class="lede">Déposez tout en vrac : plans, fiches techniques, notices, PV, attestations, <b>scans et photos prises au téléphone</b>. Iris les lit, les range, vous dit ce qui manque et sort un dossier prêt à remettre.</p>
+    <ol class="steps">
+      <li><b>1</b>Déposez</li>
+      <li><b>2</b>Iris classe et vérifie</li>
+      <li><b>3</b>Envoyez par email ou WhatsApp</li>
+    </ol>
 
-<form class="card" method="post" action="{{ url_for('.creer_chantier') }}">
-  <h2>Nouveau chantier</h2>
-  <div class="grid">
-    <div><label for="nom">Nom du chantier *</label><input type="text" id="nom" name="nom" required placeholder="Rénovation école Jean Jaurès"></div>
-    <div><label for="maitre_ouvrage">Maître d'ouvrage</label><input type="text" id="maitre_ouvrage" name="maitre_ouvrage" placeholder="Mairie de …"></div>
-    <div><label for="entreprise">Entreprise</label><input type="text" id="entreprise" name="entreprise" placeholder="Votre entreprise"></div>
-    <div><label for="adresse">Adresse du chantier</label><input type="text" id="adresse" name="adresse"></div>
-  </div>
-  <div style="margin-top:16px">
-    <label>Lots réalisés <span class="muted">(Iris vérifie les pièces obligatoires de chaque lot)</span></label>
-    <div class="chips">
-      {% for key, lot in lots.items() %}
-      <label><input type="checkbox" name="lots" value="{{ key }}"> {{ lot.label }}</label>
-      {% endfor %}
+    <form class="panel" method="post" enctype="multipart/form-data" action="{{ url_for('.creer_chantier') }}">
+      <div class="hazard" aria-hidden="true" style="margin:-4px 0 16px"></div>
+      <label class="drop" data-drop for="fichiers">
+        <input type="file" id="fichiers" name="fichiers" multiple accept="{{ accept }}">
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></span>
+        <b>Déposez vos documents ici</b>
+        <span class="muted" style="font-size:13.5px">ou touchez pour les choisir · PDF, JPG, PNG · plusieurs à la fois</span>
+        <span class="files" aria-live="polite"></span>
+      </label>
+
+      <details>
+        <summary>Infos du chantier <span class="muted" style="font-weight:400">(facultatif, modifiable ensuite)</span></summary>
+        <div class="fields">
+          <div class="grid2">
+            <div><label for="nom">Nom du chantier</label><input type="text" id="nom" name="nom" placeholder="Rénovation école Jean Jaurès"></div>
+            <div><label for="maitre_ouvrage">Maître d'ouvrage</label><input type="text" id="maitre_ouvrage" name="maitre_ouvrage" placeholder="Mairie de …"></div>
+            <div><label for="entreprise">Votre entreprise</label><input type="text" id="entreprise" name="entreprise"></div>
+            <div><label for="adresse">Adresse du chantier</label><input type="text" id="adresse" name="adresse"></div>
+          </div>
+          <div>
+            <label>Lots réalisés <span class="muted" style="font-weight:400">· Iris vérifie les pièces obligatoires de chaque lot</span></label>
+            <div class="chips">
+              {% for key, lot in lots.items() %}<label><input type="checkbox" name="lots" value="{{ key }}"> {{ lot.label }}</label>{% endfor %}
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div class="go">
+        <button class="btn btn-safety" type="submit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>
+          Lancer Iris
+        </button>
+        <span class="muted" style="font-size:13px">Sans documents, Iris crée un chantier vide que vous remplirez ensuite.</span>
+      </div>
+    </form>
+
+    <div class="sign">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"/><path d="M12 10v5M12 18h.01"/></svg>
+      <span>Version de démonstration : gardez le lien de votre chantier, il n'y a pas encore de compte.</span>
     </div>
   </div>
-  <div style="margin-top:20px"><button class="btn" type="submit">Créer le chantier</button></div>
-</form>
+</section>
 {% endblock %}

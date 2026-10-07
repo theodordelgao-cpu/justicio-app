@@ -34,7 +34,20 @@ Module Flask autonome, à brancher dans Justicio. Il est servi sur
 5. Si Nginx est devant : `client_max_body_size 200M;` sur le server block,
    sinon les gros envois seront coupés.
 
-### Classement par IA
+### Lecture et classement par IA
+
+Avec `OPENAI_API_KEY`, Iris lit aussi les scans et les photos de documents
+(GPT vision, 3 pages max par fichier) et classe chaque pièce avec un titre propre.
+Appels en HTTP direct (`iris_doe/ai.py`), indépendants de la version du SDK.
+
+### Envoi du DOE
+
+- WhatsApp : bouton qui ouvre WhatsApp avec un message et le lien de téléchargement.
+- Email : envoyé par le serveur via le SMTP Brevo de Justicio (`BREVO_SMTP_KEY`,
+  `BREVO_SMTP_LOGIN`, `IRIS_MAIL_FROM`). PDF joint s'il fait moins de 8 Mo.
+- Lien de partage en lecture seule : `/standia/AgentIA_DEO/partage/<jeton>`.
+
+### Ancien classement par IA
 
 Sans clé, Iris classe par mots-clés (référentiel métier) : ça suffit pour une démo.
 Avec `OPENAI_API_KEY` dans l'environnement, Iris utilise GPT (modèle réglable via

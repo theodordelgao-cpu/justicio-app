@@ -5,9 +5,7 @@ Deux moteurs :
 - mots-clés (référentiel) sinon, ou si l'appel LLM échoue. La démo marche donc sans clé.
 """
 
-import json
 import logging
-import os
 import re
 import unicodedata
 
@@ -53,8 +51,8 @@ def _par_mots_cles(filename: str, text: str, kind: str) -> dict:
     name_n = normalize(filename)
     text_n = normalize(text)
 
-    # Photo avec très peu de texte lisible : c'est une photo de chantier
-    if kind == "image" and len(text_n.strip()) < 40:
+    # Photo avec très peu de texte lisible (ou reconnue comme telle par l'IA) : photo de chantier
+    if kind == "image" and (len(text_n.strip()) < 40 or text_n.strip().startswith("photo de chantier")):
         return {"categorie": "photos", "titre": titre_depuis_fichier(filename), "source": "regles"}
 
     scores = {}
@@ -85,27 +83,15 @@ Début du contenu :
 
 
 def _par_llm(filename: str, text: str, kind: str) -> dict | None:
-    if not os.environ.get("OPENAI_API_KEY"):
+    from . import ai
+    if not ai.disponible():
         return None
-    try:
-        from openai import OpenAI
-        client = OpenAI()
-        cats = "\n".join(f"- {c['key']} : {c['label']}" for c in CATEGORIES)
-        resp = client.chat.completions.create(
-            model=os.environ.get("IRIS_LLM_MODEL", "gpt-4o-mini"),
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[{"role": "user", "content": _PROMPT.format(
-                cats=cats, filename=filename, kind=kind, text=(text or "")[:3000])}],
-        )
-        data = json.loads(resp.choices[0].message.content)
-        if data.get("categorie") not in CATEGORY_LABELS:
-            return None
-        titre = (data.get("titre") or "").strip() or titre_depuis_fichier(filename)
-        return {"categorie": data["categorie"], "titre": titre[:120], "source": "ia"}
-    except Exception as exc:
-        log.warning("Classement LLM échoué, repli sur les mots-clés : %s", exc)
+    cats = "\n".join(f"- {c['key']} : {c['label']}" for c in CATEGORIES)
+    data = ai.chat_json(_PROMPT.format(cats=cats, filename=filename, kind=kind, text=(text or "")[:3000]))
+    if not data or data.get("categorie") not in CATEGORY_LABELS:
         return None
+    titre = (data.get("titre") or "").strip() or titre_depuis_fichier(filename)
+    return {"categorie": data["categorie"], "titre": titre[:120], "source": "ia"}
 
 
 def classify(filename: str, text: str, kind: str) -> dict:

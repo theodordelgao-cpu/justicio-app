@@ -47,6 +47,8 @@ def create(data: dict) -> dict:
         "lots": [l for l in data.get("lots", []) if l in LOTS],
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "documents": [],
+        "share_token": secrets.token_urlsafe(12),
+        "envois": [],
     }
     files_dir(cid)
     save(meta)
@@ -57,7 +59,36 @@ def load(chantier_id: str) -> dict:
     path = _dir(chantier_id) / "meta.json"
     if not path.exists():
         raise FileNotFoundError(chantier_id)
-    return json.loads(path.read_text(encoding="utf-8"))
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    meta.setdefault("envois", [])
+    if not meta.get("share_token"):
+        meta["share_token"] = secrets.token_urlsafe(12)
+        save(meta)
+    return meta
+
+
+def find_by_share_token(token: str) -> dict:
+    """Retrouve un chantier par son lien de partage (lecture seule)."""
+    if not token or not token.replace("-", "").replace("_", "").isalnum():
+        raise FileNotFoundError(token)
+    for meta_path in root().glob("*/meta.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if secrets.compare_digest(meta.get("share_token", ""), token):
+            return meta
+    raise FileNotFoundError(token)
+
+
+def update_infos(meta: dict, data: dict) -> None:
+    for key, limit in (("nom", 200), ("maitre_ouvrage", 200), ("entreprise", 200), ("adresse", 300)):
+        if key in data:
+            value = (data.get(key) or "").strip()[:limit]
+            if key != "nom" or value:
+                meta[key] = value
+    if "lots" in data:
+        meta["lots"] = [l for l in data["lots"] if l in LOTS]
 
 
 def save(meta: dict) -> None:
